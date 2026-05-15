@@ -2210,11 +2210,15 @@ function startApp() {
     document.getElementById("app").classList.remove("hidden");
     loadUserPrefs();
     applyScordAppearance();
-    // Default: sapphire theme + animations OFF
-    if (!state.theme || state.theme === "sapphire" || !localStorage.getItem("scord_theme")) {
-        state.theme = "sapphire";
-        if (typeof applyTheme === "function") applyTheme("sapphire");
+    // Restore saved theme (auto-login already did, this catches manual login)
+    var st = localStorage.getItem("scord_theme");
+    if (st && st !== state.theme) {
+        state.theme = st;
+        if (typeof applyTheme === "function") applyTheme(st);
     }
+    // If no theme saved yet, default to sapphire
+    if (!st && typeof applyTheme === "function") applyTheme("sapphire");
+    // Animations always OFF by default
     document.documentElement.setAttribute("data-animations", "off");
     applyFocusModeButton();
     // Load runtime config (ICE/TURN) for better P2P reliability.
