@@ -23940,7 +23940,7 @@ function showUserSettingsModal() {
     // Profil tab
     html += '<div class="scord-settings-panel" data-panel="profil" style="display:none">';
     html += '<div style="margin:16px 0;padding:12px 16px;background:rgba(255,255,255,0.03);border-radius:10px;">';
-    html += '<label style="display:flex;flex-direction:column;gap:4px;font-size:13px;color:#ccc;margin:8px 0;">Kullanıcı Adı <input type="text" value="' + escapeHtml(state.username || '') + '" onchange="state.username=this.value;localStorage.setItem(\'scord_username\',this.value)" style="background:#2a2a3e;color:#fff;border:1px solid #444;border-radius:6px;padding:8px;width:100%;box-sizing:border-box;"></label>';
+    html += '<label style="display:flex;flex-direction:column;gap:4px;font-size:13px;color:#ccc;margin:8px 0;">Kullanıcı Adı <input type="text" value="' + escapeHtml(state.username || '') + '" onchange="state.username=this.value;localStorage.setItem(\'scord_username\',this.value);var nb=document.getElementById(\'user-bar-name\');if(nb)nb.textContent=this.value;var sn=document.getElementById(\'sidebar-server-name\');var dm=document.getElementById(\'dm-target-name\');if(sn&&!state.activeServerId)sn.textContent=this.value;if(dm)dm.textContent=\'@\'+this.value;if(state.mesh)state.mesh.broadcast({type:\'broadcast\',payload:{type:\'profile_update\',username:this.value}});if(typeof applyAvatarToElement===\'function\'){var ua=document.getElementById(\'user-bar-avatar\');applyAvatarToElement(ua,state.avatarColor,state.avatarImage,this.value)}" style="background:#2a2a3e;color:#fff;border:1px solid #444;border-radius:6px;padding:8px;width:100%;box-sizing:border-box;"></label>';
     html += '<label style="display:flex;flex-direction:column;gap:4px;font-size:13px;color:#ccc;margin:8px 0;">Biyografi <textarea onchange="state.bio=this.value;localStorage.setItem(\'scord_bio\',this.value)" style="background:#2a2a3e;color:#fff;border:1px solid #444;border-radius:6px;padding:8px;width:100%;height:80px;box-sizing:border-box;resize:vertical;">' + escapeHtml(state.bio || '') + '</textarea></label>';
     html += '<label style="display:flex;flex-direction:column;gap:4px;font-size:13px;color:#ccc;margin:8px 0;">Avatar URL <input type="text" value="' + escapeHtml(state.avatarImage || '') + '" onchange="state.avatarImage=this.value;localStorage.setItem(\'scord_avatar_image\',this.value);applyAvatarToElement(document.getElementById(\'user-bar-avatar\'),state.avatarColor,state.avatarImage,state.username)" style="background:#2a2a3e;color:#fff;border:1px solid #444;border-radius:6px;padding:8px;width:100%;box-sizing:border-box;"></label>';
     html += '<label style="display:flex;flex-direction:column;gap:4px;font-size:13px;color:#ccc;margin:8px 0;">Banner URL <input type="text" value="' + escapeHtml(state.bannerUrl || '') + '" onchange="state.bannerUrl=this.value;localStorage.setItem(\'scord_banner_url\',this.value)" style="background:#2a2a3e;color:#fff;border:1px solid #444;border-radius:6px;padding:8px;width:100%;box-sizing:border-box;"></label>';
@@ -24451,7 +24451,7 @@ console.log("[App] Final Override watchdog active");
         'html[data-theme="cyberpunk"]{--bg-primary:#0a0a0f;--bg-secondary:#1a0a2e;--bg-elevated:#2a0a4e;--accent:#ff00ff;--text-primary:#00ffcc;--text-muted:#8888aa;--border:rgba(255,0,255,0.2)}',
         'html[data-theme="cyberpunk"] .btn-primary{background:linear-gradient(135deg,#ff00ff,#00ffcc);color:#000;text-transform:uppercase}',
         "/* Animation toggle */",
-        'html[data-animations="off"] *{transition:none!important;animation:none!important}',
+        'html[data-animations="off"],html[data-animations="off"] *,html[data-animations="off"] *::before,html[data-animations="off"] *::after{transition-duration:0s!important;transition-delay:0s!important;animation-duration:0s!important;animation-delay:0s!important;animation-name:none!important}',
         "/* Glassmorphism */",
         ".sidebar-header,.user-bar,.voice-status-bar{backdrop-filter:blur(12px)}",
         ".modal-content{backdrop-filter:blur(20px)}.toast{backdrop-filter:blur(16px)}",
@@ -25414,3 +25414,157 @@ setTimeout(function() {
 }, 1000);
 
 console.log("[App] Critical fixes: Animations OFF, Emoji realtime, Sound OFF, Profile preview, Server kick");
+
+// ══════════════════════════════════════════════════════════
+// SETTINGS LAYOUT FIX + FONT SIZE + PROFILE SYNC
+// ══════════════════════════════════════════════════════════
+
+// 1. Settings CSS fix - prevent labels from breaking
+(function() {
+    if (document.getElementById("scord-settings-layout-fix")) return;
+    var s = document.createElement("style");
+    s.id = "scord-settings-layout-fix";
+    s.textContent = [
+        ".scord-settings-group label{display:flex!important;flex-direction:column!important;gap:6px!important;font-size:13px!important;color:#ccc!important;margin:10px 0!important;text-align:left!important}",
+        ".scord-settings-group label input[type='range']{width:100%!important;max-width:200px!important}",
+        ".scord-settings-group label input[type='checkbox']{width:18px!important;height:18px!important;margin-right:8px!important}",
+        ".scord-settings-group label span.val{color:#fff!important;font-weight:600!important;margin-left:auto!important}",
+        ".scord-settings-tabs{display:flex!important;flex-wrap:wrap!important}",
+        ".scord-settings-tab{padding:8px 10px!important;font-size:11px!important}",
+    ].join("\n");
+    document.head.appendChild(s);
+})();
+
+// 2. Font size - apply to messages and chat
+(function() {
+    var fs = state.settings?.fontSize || 14;
+    if (fs !== 14) {
+        var style = document.createElement("style");
+        style.id = "scord-font-size";
+        style.textContent = ".msg-text,.msg-bubble,.dm-body span{font-size:"+fs+"px!important}.msg-author{font-size:"+(fs-1)+"px!important}";
+        document.head.appendChild(style);
+    }
+})();
+
+// 3. Profile sync: broadcast profile changes + update local peers
+setInterval(function() {
+    if (typeof state === "undefined" || !state.mesh) return;
+    // Broadcast my profile to peers every 30s
+    state.mesh.broadcast({
+        type: "profile_sync",
+        peerId: state.peerId,
+        username: state.username,
+        avatarImage: state.avatarImage || "",
+        avatarColor: state.avatarColor || "#5865f2",
+        bannerUrl: state.bannerUrl || "",
+        bio: state.bio || "",
+    });
+}, 30000);
+
+// Handle profile sync from others
+(function() {
+    var _origP2P = window.handleIncomingP2P;
+    if (_origP2P) {
+        window.handleIncomingP2P = function(fromPeerId, data, roomId) {
+            if (data && data.type === "profile_sync") {
+                if (!state.peers) state.peers = {};
+                state.peers[data.peerId] = {
+                    username: data.username,
+                    avatarImage: data.avatarImage,
+                    avatarColor: data.avatarColor,
+                    bannerUrl: data.bannerUrl,
+                    bio: data.bio,
+                };
+                if (!state.peerProfiles) state.peerProfiles = {};
+                state.peerProfiles[data.peerId] = {
+                    banner: data.bannerUrl,
+                    bio: data.bio,
+                    avatarImage: data.avatarImage,
+                    avatarColor: data.avatarColor,
+                };
+                return;
+            }
+            return _origP2P.apply(this, arguments);
+        };
+    }
+})();
+
+// 4. Trigger profile sync on avatar/banner/bio change
+setTimeout(function() {
+    var avatarInput = document.querySelector('.scord-settings-panel[data-panel="profil"] input[type="text"]');
+    if (avatarInput && !avatarInput.dataset.syncPatched) {
+        avatarInput.dataset.syncPatched = "1";
+        var origChange = avatarInput.onchange;
+        avatarInput.onchange = function(e) {
+            if (origChange) origChange.call(this, e);
+            if (state.mesh) {
+                state.mesh.broadcast({
+                    type: "profile_sync",
+                    peerId: state.peerId,
+                    username: state.username,
+                    avatarImage: state.avatarImage || "",
+                    avatarColor: state.avatarColor || "#5865f2",
+                    bannerUrl: state.bannerUrl || "",
+                    bio: state.bio || "",
+                });
+            }
+        };
+    }
+}, 2000);
+
+console.log("[App] Settings layout + Font size + Profile sync loaded");
+
+// ══════════════════════════════════════════════════════════
+// THEME BACKGROUND FIX + EMOJI GUARANTEE
+// ══════════════════════════════════════════════════════════
+
+// 1. Force theme variables on all containers
+(function() {
+    var s = document.createElement("style");
+    s.id = "scord-theme-force";
+    s.textContent = [
+        "body,.app,.channel-sidebar,.chat-view,#chat-view,.home-view,#home-view,.voice-view,#voice-view{background:var(--bg-primary,#0f172a)!important}",
+        ".channel-item,.member-item,.msg-row,.voice-participant-card,.server-rail-item{background:var(--bg-secondary,transparent)!important}",
+        ".sidebar-header,.chat-header,.modal-content,.user-bar,.voice-status-bar{background:var(--bg-elevated,#1e293b)!important}",
+        ".btn-primary{background:var(--accent,#6366f1)!important}",
+        "*{color:var(--text-primary,inherit)}",
+        ".channel-item,.member-item,.msg-time,.dm-sidebar-empty{color:var(--text-muted,#94a3b8)!important}",
+    ].join("\n");
+    document.head.appendChild(s);
+})();
+
+// 2. Emoji replacer: aggressive guarantee
+(function() {
+    var MAP = { ":D":"😄", ":)":"😊", ":(":"😢", ":P":"😛", ";)":"😉", ":/":"😕", ":|":"😐", ":O":"😮", ":*":"😘", "<3":"❤️", ":'(":"😢", "XD":"😆", "xD":"😆", "xDD":"😂", "B)":"😎", ">:(":"😠", ":))":"😂", "^^":"😊", "-_-":"😑", "O_o":"🤔" };
+    window._emojiReplacer = function(t) {
+        if (!t || typeof t !== "string") return t;
+        var keys = Object.keys(MAP).sort(function(a,b){return b.length-a.length;});
+        for (var i = 0; i < keys.length; i++) { t = t.replace(new RegExp(keys[i].replace(/[.*+?^${}()|[\]\\]/g,"\\$&"),"g"), MAP[keys[i]]); }
+        return t;
+    };
+    // Keyup on chat inputs
+    document.addEventListener("keyup", function(e) {
+        var inp = e.target;
+        if ((inp.id === "chat-input" || inp.id === "dm-main-input") && window._emojiReplacer) {
+            var v = inp.value, r = window._emojiReplacer(v);
+            if (r !== v) { var s = inp.selectionStart; inp.value = r; inp.selectionStart = inp.selectionEnd = s; }
+        }
+    });
+    // DOM scan every second
+    setInterval(function() {
+        if (!window._emojiReplacer) return;
+        document.querySelectorAll(".msg-text,.dm-body span,.dm-msg-row span").forEach(function(el) {
+            if (el.dataset.edone) return; el.dataset.edone = "1";
+            var t = el.textContent || ""; if (t.length < 500) el.textContent = window._emojiReplacer(t);
+        });
+    }, 1000);
+})();
+
+// 3. Also force animations off on load
+setTimeout(function() {
+    if (typeof state !== "undefined" && state.settings && state.settings.animations === false) {
+        document.documentElement.setAttribute("data-animations", "off");
+    }
+}, 100);
+
+console.log("[App] Theme BG + Emoji guarantee + Animation off force loaded");
