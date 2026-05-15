@@ -2080,6 +2080,11 @@ function initSetup() {
     if (savedNick && savedPass && savedId) {
         state.username = savedNick;
         state.peerId = savedId;
+        // Restore avatar, color, theme on auto-login
+        state.avatarColor = localStorage.getItem("scord_color") || state.avatarColor;
+        state.avatarImage = localStorage.getItem("scord_avatar_image") || "";
+        var savedTheme = localStorage.getItem("scord_theme");
+        if (savedTheme) { state.theme = savedTheme; document.documentElement.setAttribute("data-theme", savedTheme); if (typeof applyTheme === "function") applyTheme(savedTheme); }
         if (typeof startApp === "function") {
             startApp();
             return;
@@ -2171,8 +2176,12 @@ function initSetup() {
     if (saved.theme) {
         state.theme = saved.theme;
         document.documentElement.className = saved.theme;
+        document.documentElement.setAttribute("data-theme", saved.theme);
+        // Apply CSS variables
+        if (typeof applyTheme === "function") applyTheme(saved.theme);
     }
-    applyScordAppearance();
+    // Always restore avatar color (not just when username exists)
+    if (saved.color) state.avatarColor = saved.color;
     if (saved.bg) {
         state.appBackground = saved.bg;
         document.body.style.backgroundImage = `url(${saved.bg})`;

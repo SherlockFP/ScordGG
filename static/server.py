@@ -33,7 +33,7 @@ app = FastAPI(title="SCORD Signaling Server")
 # ── Global State ──────────────────────────────────────────────────────────────
 
 rooms: Dict[str, "Room"] = {}
-DATABASE_FILE = "rooms.json"
+DATABASE_FILE = str(Path(__file__).parent.parent / "rooms.json")
 
 DEFAULT_ROLE_PERMISSIONS = {
     "owner": {
