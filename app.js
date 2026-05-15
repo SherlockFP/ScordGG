@@ -2210,6 +2210,12 @@ function startApp() {
     document.getElementById("app").classList.remove("hidden");
     loadUserPrefs();
     applyScordAppearance();
+    // Default: sapphire theme + animations OFF
+    if (!state.theme || state.theme === "sapphire" || !localStorage.getItem("scord_theme")) {
+        state.theme = "sapphire";
+        if (typeof applyTheme === "function") applyTheme("sapphire");
+    }
+    document.documentElement.setAttribute("data-animations", "off");
     applyFocusModeButton();
     // Load runtime config (ICE/TURN) for better P2P reliability.
     loadRuntimeConfig();
