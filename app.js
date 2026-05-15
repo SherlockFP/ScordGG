@@ -12694,15 +12694,15 @@ function applyTheme(themeId) {
         },
         'cyberpunk': {
             '--bg-primary': '#0a0a0f',
-            '--bg-surface': '#111118',
-            '--bg-elevated': '#1a1a24',
-            '--bg-highlight': '#252530',
-            '--text-primary': '#e0ffe0',
-            '--text-secondary': '#b0ffb0',
-            '--text-muted': '#5eff5e',
-            '--accent': '#00ff88',
-            '--accent-light': '#33ffaa',
-            '--border': '#1a3a2a'
+            '--bg-surface': '#1a0a2e',
+            '--bg-elevated': '#2a0a4e',
+            '--bg-highlight': '#3a0a6e',
+            '--text-primary': '#00ffcc',
+            '--text-secondary': '#00e6b8',
+            '--text-muted': '#8888aa',
+            '--accent': '#ff00ff',
+            '--accent-light': '#ff66ff',
+            '--border': 'rgba(255,0,255,0.2)'
         },
         'sunset': {
             '--bg-primary': '#1a0f0a',
@@ -12715,6 +12715,16 @@ function applyTheme(themeId) {
             '--accent': '#f97316',
             '--accent-light': '#fb923c',
             '--border': '#4a2e22'
+        },
+        'forest': {
+            '--bg-primary': '#0a140a', '--bg-surface': '#142014', '--bg-elevated': '#202c20',
+            '--bg-highlight': '#2a302a', '--text-primary': '#f0fdf4', '--text-secondary': '#bbf7d0',
+            '--text-muted': '#86efac', '--accent': '#22c55e', '--accent-light': '#4ade80', '--border': '#2a402a'
+        },
+        'iphone': {
+            '--bg-primary': '#1c1c1e', '--bg-surface': '#2c2c2e', '--bg-elevated': '#3a3a3c',
+            '--bg-highlight': '#48484a', '--text-primary': '#f5f5f7', '--text-secondary': '#e5e5ea',
+            '--text-muted': '#8e8e93', '--accent': '#007aff', '--accent-light': '#0a84ff', '--border': '#38383a'
         }
     };
 
@@ -24442,13 +24452,20 @@ console.log("[App] Final Override watchdog active");
         "/* Buttons */",
         ".btn-primary{background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;padding:10px 20px;border-radius:8px;font-weight:600}.btn-primary:hover{transform:translateY(-1px);box-shadow:0 4px 16px rgba(99,102,241,0.4)}",
         ".btn-secondary{background:rgba(255,255,255,0.08);color:#dcddde;padding:10px 20px;border-radius:8px;font-weight:600}.btn-secondary:hover{background:rgba(255,255,255,0.12)}",
-        "/* Themes */",
-        'html[data-theme="midnight"]{--bg-primary:#0f0f1a;--bg-secondary:#1a1a2e;--bg-elevated:#222240;--accent:#818cf8;--text-primary:#f1f5f9;--text-muted:#94a3b8;--border:rgba(255,255,255,0.06)}',
-        'html[data-theme="sunset"]{--bg-primary:#1a0f0a;--bg-secondary:#2e1a10;--bg-elevated:#402820;--accent:#f97316;--text-primary:#fff7ed;--text-muted:#fdba74;--border:rgba(255,255,255,0.06)}',
-        'html[data-theme="forest"]{--bg-primary:#0a140a;--bg-secondary:#142014;--bg-elevated:#202c20;--accent:#22c55e;--text-primary:#f0fdf4;--text-muted:#86efac;--border:rgba(255,255,255,0.06)}',
-        'html[data-theme="iphone"]{--bg-primary:#1c1c1e;--bg-secondary:#2c2c2e;--bg-elevated:#3a3a3c;--accent:#007aff;--text-primary:#f5f5f7;--text-muted:#8e8e93;--border:rgba(255,255,255,0.08)}',
+        "/* Themes - ALL 12 */",
+        'html[data-theme="sapphire"]{--bg-primary:#0f172a;--bg-surface:#1e293b;--bg-elevated:#334155;--accent:#3b82f6;--text-primary:#f8fafc;--text-muted:#94a3b8;--border:#475569}',
+        'html[data-theme="dark"]{--bg-primary:#000000;--bg-surface:#1a1a1a;--bg-elevated:#2d2d2d;--accent:#6366f1;--text-primary:#ffffff;--text-muted:#a3a3a3;--border:#404040}',
+        'html[data-theme="light"]{--bg-primary:#ffffff;--bg-surface:#f5f5f5;--bg-elevated:#e5e5e5;--accent:#3b82f6;--text-primary:#000000;--text-muted:#737373;--border:#d4d4d4}',
+        'html[data-theme="emerald"]{--bg-primary:#064e3b;--bg-surface:#047857;--bg-elevated:#059669;--accent:#10b981;--text-primary:#ecfdf5;--text-muted:#6ee7b7;--border:#10b981}',
+        'html[data-theme="ruby"]{--bg-primary:#7f1d1d;--bg-surface:#991b1b;--bg-elevated:#b91c1c;--accent:#dc2626;--text-primary:#fef2f2;--text-muted:#fca5a5;--border:#dc2626}',
+        'html[data-theme="gold"]{--bg-primary:#451a03;--bg-surface:#78350f;--bg-elevated:#92400e;--accent:#d97706;--text-primary:#fef3c7;--text-muted:#fcd34d;--border:#b45309}',
+        'html[data-theme="ocean"]{--bg-primary:#0a1628;--bg-surface:#0f1f3d;--bg-elevated:#162a52;--accent:#0ea5e9;--text-primary:#e0f0ff;--text-muted:#5e8ab4;--border:#1e3a6e}',
+        'html[data-theme="midnight"]{--bg-primary:#0d0a1a;--bg-surface:#15112b;--bg-elevated:#1f1a3c;--accent:#7c3aed;--text-primary:#e8e0ff;--text-muted:#8b7cc8;--border:#2d2554}',
+        'html[data-theme="sunset"]{--bg-primary:#1a0f0a;--bg-surface:#2a1810;--bg-elevated:#3a2218;--accent:#f97316;--text-primary:#fff0e6;--text-muted:#c89070;--border:#4a2e22}',
+        'html[data-theme="forest"]{--bg-primary:#0a140a;--bg-surface:#142014;--bg-elevated:#202c20;--accent:#22c55e;--text-primary:#f0fdf4;--text-muted:#86efac;--border:rgba(255,255,255,0.06)}',
+        'html[data-theme="iphone"]{--bg-primary:#1c1c1e;--bg-surface:#2c2c2e;--bg-elevated:#3a3a3c;--accent:#007aff;--text-primary:#f5f5f7;--text-muted:#8e8e93;--border:rgba(255,255,255,0.08)}',
         'html[data-theme="iphone"] .btn-primary{background:#007aff;border-radius:12px}',
-        'html[data-theme="cyberpunk"]{--bg-primary:#0a0a0f;--bg-secondary:#1a0a2e;--bg-elevated:#2a0a4e;--accent:#ff00ff;--text-primary:#00ffcc;--text-muted:#8888aa;--border:rgba(255,0,255,0.2)}',
+        'html[data-theme="cyberpunk"]{--bg-primary:#0a0a0f;--bg-surface:#1a0a2e;--bg-elevated:#2a0a4e;--accent:#ff00ff;--text-primary:#00ffcc;--text-muted:#8888aa;--border:rgba(255,0,255,0.2)}',
         'html[data-theme="cyberpunk"] .btn-primary{background:linear-gradient(135deg,#ff00ff,#00ffcc);color:#000;text-transform:uppercase}',
         "/* Animation toggle */",
         'html[data-animations="off"],html[data-animations="off"] *,html[data-animations="off"] *::before,html[data-animations="off"] *::after{transition-duration:0s!important;transition-delay:0s!important;animation-duration:0s!important;animation-delay:0s!important;animation-name:none!important}',
@@ -25512,7 +25529,42 @@ setTimeout(function() {
     }
 }, 2000);
 
-console.log("[App] Settings layout + Font size + Profile sync loaded");
+// 6. Profile photo + avatar sync everywhere
+setInterval(function() {
+    if (typeof state === "undefined" || !state.mesh) return;
+    // Broadcast my profile to all peers
+    state.mesh.broadcast({
+        type: "profile_sync",
+        peerId: state.peerId,
+        username: state.username,
+        avatarImage: state.avatarImage || "",
+        avatarColor: state.avatarColor || "#5865f2",
+        bannerUrl: state.bannerUrl || "",
+        bio: state.bio || "",
+    });
+}, 30000);
+
+// Update member list avatars when profile changes
+document.addEventListener("DOMContentLoaded", function() {
+    var avatarInput = document.querySelector('.scord-settings-panel[data-panel="profil"] input[type="text"]');
+    if (avatarInput) {
+        avatarInput.addEventListener("change", function() {
+            setTimeout(function() {
+                // Update all member items with same peerId
+                if (typeof updateMembersPanel === "function" && state.activeServerId) {
+                    updateMembersPanel(state.activeServerId);
+                }
+                // Update user bar avatar
+                var ua = document.getElementById("user-bar-avatar");
+                if (ua && typeof applyAvatarToElement === "function") {
+                    applyAvatarToElement(ua, state.avatarColor, state.avatarImage, state.username);
+                }
+            }, 100);
+        });
+    }
+});
+
+console.log("[App] Theme 12 + Profile sync + updateTheme fix loaded");
 
 // ══════════════════════════════════════════════════════════
 // THEME BACKGROUND FIX + EMOJI GUARANTEE
@@ -25524,7 +25576,7 @@ console.log("[App] Settings layout + Font size + Profile sync loaded");
     s.id = "scord-theme-force";
     s.textContent = [
         "body,.app,.channel-sidebar,.chat-view,#chat-view,.home-view,#home-view,.voice-view,#voice-view{background:var(--bg-primary,#0f172a)!important}",
-        ".channel-item,.member-item,.msg-row,.voice-participant-card,.server-rail-item{background:var(--bg-secondary,transparent)!important}",
+        ".channel-item,.member-item,.msg-row,.voice-participant-card,.server-rail-item{background:var(--bg-surface,transparent)!important}",
         ".sidebar-header,.chat-header,.modal-content,.user-bar,.voice-status-bar{background:var(--bg-elevated,#1e293b)!important}",
         ".btn-primary{background:var(--accent,#6366f1)!important}",
         "*{color:var(--text-primary,inherit)}",
