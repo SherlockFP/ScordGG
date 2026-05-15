@@ -1,0 +1,909 @@
+{
+  "tpl-creative-hub": {
+    "room_id": "tpl-creative-hub",
+    "name": "Creator Forge",
+    "owner_id": "shercord-bot",
+    "channels": [
+      {
+        "id": "rules",
+        "name": "kurallar-ve-baslangic",
+        "type": "text",
+        "category": "GIRIS"
+      },
+      {
+        "id": "announcements",
+        "name": "duyurular",
+        "type": "text",
+        "category": "GIRIS"
+      },
+      {
+        "id": "showcase",
+        "name": "eser-vitrini",
+        "type": "text",
+        "category": "TOPLULUK"
+      },
+      {
+        "id": "collab",
+        "name": "ekip-bul",
+        "type": "text",
+        "category": "TOPLULUK"
+      },
+      {
+        "id": "resources",
+        "name": "kaynaklar",
+        "type": "text",
+        "category": "URETIM"
+      },
+      {
+        "id": "feedback",
+        "name": "geri-bildirim",
+        "type": "text",
+        "category": "URETIM"
+      },
+      {
+        "id": "voice-lounge",
+        "name": "studio-lounge",
+        "type": "voice",
+        "category": "SES"
+      },
+      {
+        "id": "voice-focus",
+        "name": "sessiz-calisma",
+        "type": "voice",
+        "category": "SES"
+      },
+      {
+        "id": "voice-stage",
+        "name": "sunum-sahnesi",
+        "type": "voice",
+        "category": "ETKINLIK"
+      }
+    ],
+    "roles": {
+      "admin": {
+        "name": "Admin",
+        "color": "#ef4444",
+        "hoist": true,
+        "permissions": {
+          "join_voice": true,
+          "manage_roles": true,
+          "manage_channels": true,
+          "kick_members": true,
+          "screen_share": true,
+          "move_members": true,
+          "force_disconnect": true,
+          "send_messages": true,
+          "manage_server": true,
+          "speak": true,
+          "music_control": true,
+          "camera": true
+        }
+      },
+      "mod": {
+        "name": "Moderator",
+        "color": "#22c55e",
+        "hoist": true,
+        "permissions": {
+          "join_voice": true,
+          "kick_members": true,
+          "screen_share": true,
+          "move_members": true,
+          "force_disconnect": true,
+          "send_messages": true,
+          "speak": true,
+          "music_control": true,
+          "camera": true
+        }
+      },
+      "member": {
+        "name": "Uye",
+        "color": "#94a3b8",
+        "hoist": false,
+        "permissions": {
+          "join_voice": true,
+          "send_messages": true,
+          "speak": true,
+          "screen_share": true,
+          "camera": true
+        }
+      },
+      "bot": {
+        "name": "Shercord Bot",
+        "color": "#8b5cf6",
+        "hoist": true,
+        "permissions": {
+          "join_voice": true,
+          "kick_members": true,
+          "screen_share": true,
+          "move_members": true,
+          "force_disconnect": true,
+          "send_messages": true,
+          "speak": true,
+          "music_control": true,
+          "camera": true
+        }
+      }
+    },
+    "channel_permissions": {},
+    "peer_roles": {
+      "shercord-bot": "bot"
+    },
+    "pinned_messages": [
+      {
+        "id": "seed-rules",
+        "type": "chat",
+        "channelId": "rules",
+        "author": "Shercord Guide",
+        "authorId": "shercord-bot",
+        "avatarColor": "#5865f2",
+        "text": "Creator Forge kurallari: saygili ol, spam yapma, izin almadan kayit/paylasim yapma, ses odalarinda sirayi bozma, muzik botunda baskalarinin dinleme deneyimini ezme. Burasi Discord hissi tasir ama Shercord'a ozgu daha sakin ve uretken bir topluluk alanidir.",
+        "time": "09:00"
+      }
+    ],
+    "messages": {
+      "rules": [
+        {
+          "id": "seed-rules",
+          "type": "chat",
+          "channelId": "rules",
+          "author": "Shercord Guide",
+          "authorId": "shercord-bot",
+          "avatarColor": "#5865f2",
+          "text": "Creator Forge kurallari: saygili ol, spam yapma, izin almadan kayit/paylasim yapma, ses odalarinda sirayi bozma, muzik botunda baskalarinin dinleme deneyimini ezme. Burasi Discord hissi tasir ama Shercord'a ozgu daha sakin ve uretken bir topluluk alanidir.",
+          "time": "09:00"
+        }
+      ]
+    },
+    "channel_backgrounds": {},
+    "icon_url": null,
+    "invite_code": "E4526B"
+  },
+  "tpl-gaming-lounge": {
+    "room_id": "tpl-gaming-lounge",
+    "name": "Arcade Lobby",
+    "owner_id": "shercord-bot",
+    "channels": [
+      {
+        "id": "rules",
+        "name": "kurallar",
+        "type": "text",
+        "category": "GIRIS"
+      },
+      {
+        "id": "patch",
+        "name": "yama-notlari",
+        "type": "text",
+        "category": "HABER"
+      },
+      {
+        "id": "looking",
+        "name": "takim-ara",
+        "type": "text",
+        "category": "OYUN"
+      },
+      {
+        "id": "clips",
+        "name": "klipler",
+        "type": "text",
+        "category": "OYUN"
+      },
+      {
+        "id": "builds",
+        "name": "rehber-ve-build",
+        "type": "text",
+        "category": "OYUN"
+      },
+      {
+        "id": "voice-ranked",
+        "name": "ranked-1",
+        "type": "voice",
+        "category": "PARTI"
+      },
+      {
+        "id": "voice-casual",
+        "name": "casual-sohbet",
+        "type": "voice",
+        "category": "PARTI"
+      },
+      {
+        "id": "voice-music",
+        "name": "muzik-odasi",
+        "type": "voice",
+        "category": "PARTI"
+      }
+    ],
+    "roles": {
+      "admin": {
+        "name": "Admin",
+        "color": "#ef4444",
+        "hoist": true,
+        "permissions": {
+          "join_voice": true,
+          "manage_roles": true,
+          "manage_channels": true,
+          "kick_members": true,
+          "screen_share": true,
+          "move_members": true,
+          "force_disconnect": true,
+          "send_messages": true,
+          "manage_server": true,
+          "speak": true,
+          "music_control": true,
+          "camera": true
+        }
+      },
+      "mod": {
+        "name": "Moderator",
+        "color": "#22c55e",
+        "hoist": true,
+        "permissions": {
+          "join_voice": true,
+          "kick_members": true,
+          "screen_share": true,
+          "move_members": true,
+          "force_disconnect": true,
+          "send_messages": true,
+          "speak": true,
+          "music_control": true,
+          "camera": true
+        }
+      },
+      "member": {
+        "name": "Uye",
+        "color": "#94a3b8",
+        "hoist": false,
+        "permissions": {
+          "join_voice": true,
+          "send_messages": true,
+          "speak": true,
+          "screen_share": true,
+          "camera": true
+        }
+      },
+      "bot": {
+        "name": "Shercord Bot",
+        "color": "#22c55e",
+        "hoist": true,
+        "permissions": {
+          "join_voice": true,
+          "kick_members": true,
+          "screen_share": true,
+          "move_members": true,
+          "force_disconnect": true,
+          "send_messages": true,
+          "speak": true,
+          "music_control": true,
+          "camera": true
+        }
+      }
+    },
+    "channel_permissions": {},
+    "peer_roles": {
+      "shercord-bot": "bot"
+    },
+    "pinned_messages": [
+      {
+        "id": "seed-rules",
+        "type": "chat",
+        "channelId": "rules",
+        "author": "Shercord Guide",
+        "authorId": "shercord-bot",
+        "avatarColor": "#5865f2",
+        "text": "Arcade Lobby kurallari: saygili ol, spam yapma, izin almadan kayit/paylasim yapma, ses odalarinda sirayi bozma, muzik botunda baskalarinin dinleme deneyimini ezme. Burasi Discord hissi tasir ama Shercord'a ozgu daha sakin ve uretken bir topluluk alanidir.",
+        "time": "09:00"
+      }
+    ],
+    "messages": {
+      "rules": [
+        {
+          "id": "seed-rules",
+          "type": "chat",
+          "channelId": "rules",
+          "author": "Shercord Guide",
+          "authorId": "shercord-bot",
+          "avatarColor": "#5865f2",
+          "text": "Arcade Lobby kurallari: saygili ol, spam yapma, izin almadan kayit/paylasim yapma, ses odalarinda sirayi bozma, muzik botunda baskalarinin dinleme deneyimini ezme. Burasi Discord hissi tasir ama Shercord'a ozgu daha sakin ve uretken bir topluluk alanidir.",
+          "time": "09:00"
+        }
+      ]
+    },
+    "channel_backgrounds": {},
+    "icon_url": null,
+    "invite_code": "EC2AE7"
+  },
+  "tpl-music-room": {
+    "room_id": "tpl-music-room",
+    "name": "Midnight Sessions",
+    "owner_id": "shercord-bot",
+    "channels": [
+      {
+        "id": "rules",
+        "name": "dinleme-kurallari",
+        "type": "text",
+        "category": "GIRIS"
+      },
+      {
+        "id": "drops",
+        "name": "yeni-cikanlar",
+        "type": "text",
+        "category": "MUZIK"
+      },
+      {
+        "id": "queue",
+        "name": "sarki-onerileri",
+        "type": "text",
+        "category": "MUZIK"
+      },
+      {
+        "id": "playlists",
+        "name": "playlist-paylas",
+        "type": "text",
+        "category": "MUZIK"
+      },
+      {
+        "id": "production",
+        "name": "produksiyon",
+        "type": "text",
+        "category": "STUDYO"
+      },
+      {
+        "id": "voice-listen",
+        "name": "senkron-dinleme",
+        "type": "voice",
+        "category": "CANLI"
+      },
+      {
+        "id": "voice-dj",
+        "name": "dj-kabini",
+        "type": "voice",
+        "category": "CANLI"
+      },
+      {
+        "id": "voice-after",
+        "name": "after-talk",
+        "type": "voice",
+        "category": "CANLI"
+      }
+    ],
+    "roles": {
+      "admin": {
+        "name": "Admin",
+        "color": "#ef4444",
+        "hoist": true,
+        "permissions": {
+          "join_voice": true,
+          "manage_roles": true,
+          "manage_channels": true,
+          "kick_members": true,
+          "screen_share": true,
+          "move_members": true,
+          "force_disconnect": true,
+          "send_messages": true,
+          "manage_server": true,
+          "speak": true,
+          "music_control": true,
+          "camera": true
+        }
+      },
+      "mod": {
+        "name": "Moderator",
+        "color": "#22c55e",
+        "hoist": true,
+        "permissions": {
+          "join_voice": true,
+          "kick_members": true,
+          "screen_share": true,
+          "move_members": true,
+          "force_disconnect": true,
+          "send_messages": true,
+          "speak": true,
+          "music_control": true,
+          "camera": true
+        }
+      },
+      "member": {
+        "name": "Uye",
+        "color": "#94a3b8",
+        "hoist": false,
+        "permissions": {
+          "join_voice": true,
+          "send_messages": true,
+          "speak": true,
+          "screen_share": true,
+          "camera": true
+        }
+      },
+      "bot": {
+        "name": "Shercord Bot",
+        "color": "#f43f5e",
+        "hoist": true,
+        "permissions": {
+          "join_voice": true,
+          "kick_members": true,
+          "screen_share": true,
+          "move_members": true,
+          "force_disconnect": true,
+          "send_messages": true,
+          "speak": true,
+          "music_control": true,
+          "camera": true
+        }
+      }
+    },
+    "channel_permissions": {},
+    "peer_roles": {
+      "shercord-bot": "bot"
+    },
+    "pinned_messages": [
+      {
+        "id": "seed-rules",
+        "type": "chat",
+        "channelId": "rules",
+        "author": "Shercord Guide",
+        "authorId": "shercord-bot",
+        "avatarColor": "#5865f2",
+        "text": "Midnight Sessions kurallari: saygili ol, spam yapma, izin almadan kayit/paylasim yapma, ses odalarinda sirayi bozma, muzik botunda baskalarinin dinleme deneyimini ezme. Burasi Discord hissi tasir ama Shercord'a ozgu daha sakin ve uretken bir topluluk alanidir.",
+        "time": "09:00"
+      }
+    ],
+    "messages": {
+      "rules": [
+        {
+          "id": "seed-rules",
+          "type": "chat",
+          "channelId": "rules",
+          "author": "Shercord Guide",
+          "authorId": "shercord-bot",
+          "avatarColor": "#5865f2",
+          "text": "Midnight Sessions kurallari: saygili ol, spam yapma, izin almadan kayit/paylasim yapma, ses odalarinda sirayi bozma, muzik botunda baskalarinin dinleme deneyimini ezme. Burasi Discord hissi tasir ama Shercord'a ozgu daha sakin ve uretken bir topluluk alanidir.",
+          "time": "09:00"
+        }
+      ]
+    },
+    "channel_backgrounds": {},
+    "icon_url": null,
+    "invite_code": "56F0D3"
+  },
+  "tpl-dev-lab": {
+    "room_id": "tpl-dev-lab",
+    "name": "Open Source Lab",
+    "owner_id": "shercord-bot",
+    "channels": [
+      {
+        "id": "rules",
+        "name": "katki-kurallari",
+        "type": "text",
+        "category": "GIRIS"
+      },
+      {
+        "id": "roadmap",
+        "name": "roadmap",
+        "type": "text",
+        "category": "PROJE"
+      },
+      {
+        "id": "bugs",
+        "name": "bug-raporlari",
+        "type": "text",
+        "category": "PROJE"
+      },
+      {
+        "id": "prs",
+        "name": "pull-request",
+        "type": "text",
+        "category": "PROJE"
+      },
+      {
+        "id": "snippets",
+        "name": "kod-parcalari",
+        "type": "text",
+        "category": "BILGI"
+      },
+      {
+        "id": "voice-standup",
+        "name": "daily-standup",
+        "type": "voice",
+        "category": "SES"
+      },
+      {
+        "id": "voice-pair",
+        "name": "pair-programming",
+        "type": "voice",
+        "category": "SES"
+      },
+      {
+        "id": "voice-debug",
+        "name": "debug-odasi",
+        "type": "voice",
+        "category": "SES"
+      }
+    ],
+    "roles": {
+      "admin": {
+        "name": "Admin",
+        "color": "#ef4444",
+        "hoist": true,
+        "permissions": {
+          "join_voice": true,
+          "manage_roles": true,
+          "manage_channels": true,
+          "kick_members": true,
+          "screen_share": true,
+          "move_members": true,
+          "force_disconnect": true,
+          "send_messages": true,
+          "manage_server": true,
+          "speak": true,
+          "music_control": true,
+          "camera": true
+        }
+      },
+      "mod": {
+        "name": "Moderator",
+        "color": "#22c55e",
+        "hoist": true,
+        "permissions": {
+          "join_voice": true,
+          "kick_members": true,
+          "screen_share": true,
+          "move_members": true,
+          "force_disconnect": true,
+          "send_messages": true,
+          "speak": true,
+          "music_control": true,
+          "camera": true
+        }
+      },
+      "member": {
+        "name": "Uye",
+        "color": "#94a3b8",
+        "hoist": false,
+        "permissions": {
+          "join_voice": true,
+          "send_messages": true,
+          "speak": true,
+          "screen_share": true,
+          "camera": true
+        }
+      },
+      "bot": {
+        "name": "Shercord Bot",
+        "color": "#38bdf8",
+        "hoist": true,
+        "permissions": {
+          "join_voice": true,
+          "kick_members": true,
+          "screen_share": true,
+          "move_members": true,
+          "force_disconnect": true,
+          "send_messages": true,
+          "speak": true,
+          "music_control": true,
+          "camera": true
+        }
+      }
+    },
+    "channel_permissions": {},
+    "peer_roles": {
+      "shercord-bot": "bot"
+    },
+    "pinned_messages": [
+      {
+        "id": "seed-rules",
+        "type": "chat",
+        "channelId": "rules",
+        "author": "Shercord Guide",
+        "authorId": "shercord-bot",
+        "avatarColor": "#5865f2",
+        "text": "Open Source Lab kurallari: saygili ol, spam yapma, izin almadan kayit/paylasim yapma, ses odalarinda sirayi bozma, muzik botunda baskalarinin dinleme deneyimini ezme. Burasi Discord hissi tasir ama Shercord'a ozgu daha sakin ve uretken bir topluluk alanidir.",
+        "time": "09:00"
+      }
+    ],
+    "messages": {
+      "rules": [
+        {
+          "id": "seed-rules",
+          "type": "chat",
+          "channelId": "rules",
+          "author": "Shercord Guide",
+          "authorId": "shercord-bot",
+          "avatarColor": "#5865f2",
+          "text": "Open Source Lab kurallari: saygili ol, spam yapma, izin almadan kayit/paylasim yapma, ses odalarinda sirayi bozma, muzik botunda baskalarinin dinleme deneyimini ezme. Burasi Discord hissi tasir ama Shercord'a ozgu daha sakin ve uretken bir topluluk alanidir.",
+          "time": "09:00"
+        }
+      ]
+    },
+    "channel_backgrounds": {},
+    "icon_url": null,
+    "invite_code": "C81A61"
+  },
+  "tpl-study-cafe": {
+    "room_id": "tpl-study-cafe",
+    "name": "Focus Cafe",
+    "owner_id": "shercord-bot",
+    "channels": [
+      {
+        "id": "rules",
+        "name": "topluluk-notlari",
+        "type": "text",
+        "category": "GIRIS"
+      },
+      {
+        "id": "planner",
+        "name": "haftalik-plan",
+        "type": "text",
+        "category": "CALISMA"
+      },
+      {
+        "id": "notes",
+        "name": "ders-notlari",
+        "type": "text",
+        "category": "CALISMA"
+      },
+      {
+        "id": "questions",
+        "name": "soru-cevap",
+        "type": "text",
+        "category": "CALISMA"
+      },
+      {
+        "id": "wins",
+        "name": "bugunun-kazanimi",
+        "type": "text",
+        "category": "MOTIVASYON"
+      },
+      {
+        "id": "voice-pomodoro",
+        "name": "pomodoro-50-10",
+        "type": "voice",
+        "category": "ODAK"
+      },
+      {
+        "id": "voice-library",
+        "name": "kutuphane-sessiz",
+        "type": "voice",
+        "category": "ODAK"
+      },
+      {
+        "id": "voice-break",
+        "name": "mola-sohbeti",
+        "type": "voice",
+        "category": "ODAK"
+      }
+    ],
+    "roles": {
+      "admin": {
+        "name": "Admin",
+        "color": "#ef4444",
+        "hoist": true,
+        "permissions": {
+          "join_voice": true,
+          "manage_roles": true,
+          "manage_channels": true,
+          "kick_members": true,
+          "screen_share": true,
+          "move_members": true,
+          "force_disconnect": true,
+          "send_messages": true,
+          "manage_server": true,
+          "speak": true,
+          "music_control": true,
+          "camera": true
+        }
+      },
+      "mod": {
+        "name": "Moderator",
+        "color": "#22c55e",
+        "hoist": true,
+        "permissions": {
+          "join_voice": true,
+          "kick_members": true,
+          "screen_share": true,
+          "move_members": true,
+          "force_disconnect": true,
+          "send_messages": true,
+          "speak": true,
+          "music_control": true,
+          "camera": true
+        }
+      },
+      "member": {
+        "name": "Uye",
+        "color": "#94a3b8",
+        "hoist": false,
+        "permissions": {
+          "join_voice": true,
+          "send_messages": true,
+          "speak": true,
+          "screen_share": true,
+          "camera": true
+        }
+      },
+      "bot": {
+        "name": "Shercord Bot",
+        "color": "#f59e0b",
+        "hoist": true,
+        "permissions": {
+          "join_voice": true,
+          "kick_members": true,
+          "screen_share": true,
+          "move_members": true,
+          "force_disconnect": true,
+          "send_messages": true,
+          "speak": true,
+          "music_control": true,
+          "camera": true
+        }
+      }
+    },
+    "channel_permissions": {},
+    "peer_roles": {
+      "shercord-bot": "bot"
+    },
+    "pinned_messages": [
+      {
+        "id": "seed-rules",
+        "type": "chat",
+        "channelId": "rules",
+        "author": "Shercord Guide",
+        "authorId": "shercord-bot",
+        "avatarColor": "#5865f2",
+        "text": "Focus Cafe kurallari: saygili ol, spam yapma, izin almadan kayit/paylasim yapma, ses odalarinda sirayi bozma, muzik botunda baskalarinin dinleme deneyimini ezme. Burasi Discord hissi tasir ama Shercord'a ozgu daha sakin ve uretken bir topluluk alanidir.",
+        "time": "09:00"
+      }
+    ],
+    "messages": {
+      "rules": [
+        {
+          "id": "seed-rules",
+          "type": "chat",
+          "channelId": "rules",
+          "author": "Shercord Guide",
+          "authorId": "shercord-bot",
+          "avatarColor": "#5865f2",
+          "text": "Focus Cafe kurallari: saygili ol, spam yapma, izin almadan kayit/paylasim yapma, ses odalarinda sirayi bozma, muzik botunda baskalarinin dinleme deneyimini ezme. Burasi Discord hissi tasir ama Shercord'a ozgu daha sakin ve uretken bir topluluk alanidir.",
+          "time": "09:00"
+        }
+      ]
+    },
+    "channel_backgrounds": {},
+    "icon_url": null,
+    "invite_code": "D4146A"
+  },
+  "97795d2b-03fe-498e-bec9-f44ebf63382f": {
+    "room_id": "97795d2b-03fe-498e-bec9-f44ebf63382f",
+    "name": "Sher",
+    "owner_id": "sc_9n05fq_i7ma",
+    "channels": [
+      {
+        "id": "ch-genel",
+        "name": "genel",
+        "type": "text"
+      },
+      {
+        "id": "ch-duyurular",
+        "name": "duyurular",
+        "type": "text"
+      },
+      {
+        "id": "ch-sesli",
+        "name": "sesli-sohbet",
+        "type": "voice"
+      },
+      {
+        "id": "ch-muzik",
+        "name": "müzik",
+        "type": "voice"
+      }
+    ],
+    "roles": {
+      "admin": {
+        "name": "Admin",
+        "color": "#ef4444",
+        "hoist": true,
+        "permissions": {
+          "manage_roles": true,
+          "screen_share": true,
+          "music_control": true,
+          "manage_channels": true,
+          "camera": true,
+          "kick_members": true,
+          "move_members": true,
+          "join_voice": true,
+          "speak": true,
+          "manage_server": true,
+          "send_messages": true,
+          "force_disconnect": true
+        }
+      },
+      "mod": {
+        "name": "Moderator",
+        "color": "#22c55e",
+        "hoist": true,
+        "permissions": {
+          "screen_share": true,
+          "music_control": true,
+          "camera": true,
+          "kick_members": true,
+          "move_members": true,
+          "join_voice": true,
+          "speak": true,
+          "send_messages": true,
+          "force_disconnect": true
+        }
+      },
+      "member": {
+        "name": "Üye",
+        "color": "#94a3b8",
+        "hoist": false,
+        "permissions": {
+          "screen_share": true,
+          "send_messages": true,
+          "join_voice": true,
+          "speak": true,
+          "camera": true
+        }
+      }
+    },
+    "channel_permissions": {},
+    "peer_roles": {
+      "sc_9n05fq_i7ma": "admin"
+    },
+    "pinned_messages": [],
+    "messages": {
+      "ch-genel": [
+        {
+          "type": "chat",
+          "channelId": "ch-genel",
+          "text": "oglum",
+          "author": "Sher",
+          "authorId": "sc_9n05fq_r4hn",
+          "avatarColor": "#7c3aed",
+          "avatarImage": null,
+          "time": "17:16",
+          "id": "4ad0c396-efc9-420e-ac15-54e42b7c5ca7",
+          "isPinned": false
+        },
+        {
+          "type": "chat",
+          "channelId": "ch-genel",
+          "text": "nolmus buraya",
+          "author": "Sher",
+          "authorId": "sc_9n05fq_r4hn",
+          "avatarColor": "#7c3aed",
+          "avatarImage": null,
+          "time": "17:16",
+          "id": "b45d0118-9290-4583-bb35-a0457c091bf1",
+          "isPinned": false
+        },
+        {
+          "type": "chat",
+          "channelId": "ch-genel",
+          "text": "boyle",
+          "author": "Sher",
+          "authorId": "sc_9n05fq_r4hn",
+          "avatarColor": "#7c3aed",
+          "avatarImage": null,
+          "time": "17:16",
+          "id": "b3af5100-662d-42d0-8d8f-df53000d6da6",
+          "isPinned": false
+        },
+        {
+          "type": "chat",
+          "channelId": "ch-genel",
+          "text": ":D",
+          "author": "Sher",
+          "authorId": "sc_9n05fq_r4hn",
+          "avatarColor": "#7c3aed",
+          "avatarImage": null,
+          "time": "17:16",
+          "id": "aaa585e1-626e-4fff-9b50-55d7521693a4",
+          "isPinned": false
+        }
+      ]
+    },
+    "channel_backgrounds": {},
+    "icon_url": null,
+    "invite_code": "A94179"
+  }
+}

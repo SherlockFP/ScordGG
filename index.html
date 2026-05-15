@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="tr">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SCORD</title>
+  <meta name="description" content="P2P Discord-like chat and voice app — no central server" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="static/style.css" />
+  <script src="https://www.youtube.com/iframe_api"></script>
+</head>
+
+<body oncontextmenu="if(!event.target.closest('#ctx-menu,.ctx-menu')&&event.target.tagName!=='INPUT'&&event.target.tagName!=='TEXTAREA'){event.preventDefault();return false}">
+  <!-- Hidden YouTube Player Container for Music Bot -->
+  <div id="music-player-dock" class="music-player-dock" aria-hidden="true">
+    <div id="yt-player"></div>
+  </div>
+
+  <!-- ── Setup / Onboarding Overlay ─────────────────────────────────────────── -->
+  <div id="setup-overlay" class="overlay active">
+    <div class="setup-card">
+      <div class="setup-logo">
+        <svg width="56" height="56" viewBox="0 0 56 56" fill="none">
+          <circle cx="28" cy="28" r="28" fill="url(#grad1)" />
+          <path d="M18 20c4-3 16-3 20 0l1 10c-6 5-16 5-22 0l1-10z" fill="white" opacity=".9" />
+          <circle cx="22" cy="26" r="2.5" fill="#1a1a2e" />
+          <circle cx="34" cy="26" r="2.5" fill="#1a1a2e" />
+          <defs>
+            <linearGradient id="grad1" x1="0" y1="0" x2="56" y2="56" gradientUnits="userSpaceOnUse">
+              <stop stop-color="#7c3aed" />
+              <stop offset="1" stop-color="#4f46e5" />
+            </linearGradient>
+          </defs>
+        </svg>
+      </div>
+      <h1 class="setup-title">SCORD'a Hoş Geldin</h1>
+      <p class="setup-sub">Tamamen P2P — merkezi sunucu yok.</p>
+
+      <div class="form-group">
+        <label for="username-input">Kullanıcı Adı</label>
+        <input id="username-input" type="text" placeholder="Bir kullanıcı adı seç..." maxlength="32"
+          autocomplete="off" />
+      </div>
+
+      <div class="form-group" style="margin-top:12px;">
+        <label for="scord-pass-input">Şifre</label>
+        <input id="scord-pass-input" type="password" placeholder="Şifreni gir" maxlength="64" 
+          autocomplete="off" style="width:100%;padding:10px 14px;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,0.06);color:#fff;font-size:14px;outline:none;box-sizing:border-box;" />
+      </div>
+
+      <p class="setup-hint">Giriş yaptıktan sonra ayarlardan profilini özelleştirebilirsin.</p>
+
+      <button id="enter-btn" class="btn-primary" disabled>Giriş Yap</button>
+    </div>
+  </div>
+
+  <!-- ── Main App ────────────────────────────────────────────────────────────── -->
+  <div id="app" class="app hidden" data-scord-focus="0">
+
+    <!-- Server / DM Rail -->
+    <nav class="server-rail" id="server-rail">
+      <button class="rail-icon home-btn active" id="home-btn" title="Ana Sayfa">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" />
+        </svg>
+      </button>
+      <div class="rail-divider"></div>
+      <div id="server-icons"></div>
+      <button class="rail-icon add-server-btn" id="add-server-btn" title="Sunucu Ekle / Oluştur">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M19 11h-6V5h-2v6H5v2h6v6h2v-6h6z" />
+        </svg>
+      </button>
+      <button class="rail-icon discover-btn" id="discover-btn" title="Sunucu Keşfet">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z" />
+          <path
+            d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z" />
+        </svg>
+      </button>
+    </nav>
+
+    <!-- Channel Sidebar -->
+    <aside class="channel-sidebar" id="channel-sidebar">
+      <div class="sidebar-header" id="sidebar-header">
+        <span id="sidebar-server-name" style="cursor:pointer;" onclick="showServerStatsModal()">SCORD</span>
+        <div class="sidebar-header-actions">
+          <button class="sidebar-header-btn" id="server-stats-btn" title="Sunucu istatistikleri" onclick="showServerStatsModal()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/>
+            </svg>
+          </button>
+          <button class="sidebar-header-btn" id="server-invite-btn" title="Sunucuya davet et">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 5v14m7-7H5" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+            </svg>
+          </button>
+          <button class="sidebar-header-btn" id="server-settings-btn" title="Sunucu ayarları">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path
+                d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96a7.01 7.01 0 0 0-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.477.477 0 0 0-.59.22L2.74 8.87a.49.49 0 0 0 .12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 0 0-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="channel-list" id="channel-list">
+        <!-- Populated by JS -->
+      </div>
+
+      <!-- User Profile Bar -->
+      <div class="user-bar">
+        <div class="vsb-stream-grid" id="voice-streams"></div>
+        <div id="local-screen-preview" class="local-preview hidden">
+          <video id="self-share-video" autoplay muted playsinline></video>
+          <span id="local-preview-label">Kendi Ekranın</span>
+        </div>
+        <div class="vsb-controls">
+          <span class="user-bar-name" id="user-bar-name">Loading...</span>
+          <div id="status-bar" class="status-bar">
+            <div class="status-indicator" style="--status-color: #3ba55c">
+              <span class="status-dot"></span>
+              <span class="status-text">Çevrimiçi</span>
+            </div>
+            <div class="status-custom"></div>
+          </div>
+        </div>
+        <div class="user-bar-controls">
+          <button class="user-ctrl-btn" id="mic-toggle-btn" title="Mikrofon">
+            <svg id="mic-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <path
+                d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15a.998.998 0 0 0-.98-.85c-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V20c0 .55.45 1 1 1s1-.45 1-1v-2.08a6.994 6.994 0 0 0 5.91-5.78c.1-.6-.39-1.14-1-1.14z" />
+            </svg>
+          </button>
+          <button class="user-ctrl-btn" id="deafen-toggle-btn" title="Kulaklık">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <path
+                d="M12 3a9 9 0 0 0-9 9v7c0 1.1.9 2 2 2h4v-8H5v-1c0-3.87 3.13-7 7-7s7 3.13 7 7v1h-4v8h4c1.1 0 2-.9 2-2v-7a9 9 0 0 0-9-9z" />
+            </svg>
+          </button>
+          <button class="user-ctrl-btn" id="settings-btn" title="Ayarlar">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <path
+                d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96a7.01 7.01 0 0 0-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.477.477 0 0 0-.59.22L2.74 8.87a.49.49 0 0 0 .12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 0 0-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content" id="main-content">
+
+      <!-- Welcome / Home screen -->
+      <div id="home-view" class="home-view">
+        <div class="home-hero">
+          <svg width="80" height="80" viewBox="0 0 56 56" fill="none">
+            <circle cx="28" cy="28" r="28" fill="url(#grad2)" />
+            <path d="M18 20c4-3 16-3 20 0l1 10c-6 5-16 5-22 0l1-10z" fill="white" opacity=".9" />
+            <circle cx="22" cy="26" r="2.5" fill="#1a1a2e" />
+            <circle cx="34" cy="26" r="2.5" fill="#1a1a2e" />
+            <defs>
+              <linearGradient id="grad2" x1="0" y1="0" x2="56" y2="56">
+                <stop stop-color="#7c3aed" />
+                <stop offset="1" stop-color="#4f46e5" />
+              </linearGradient>
+            </defs>
+          </svg>
+          <h2>SCORD'a hoş geldin!</h2>
+          <p>Tamamen P2P, merkezi sunucu yok. Ses ve metin sohbeti, kendi internetin üzerinden.</p>
+          <div class="hero-actions">
+            <button class="hero-btn primary" id="create-server-hero-btn">
+              <span class="icon">➕</span>
+              Bir Sunucu Oluştur
+            </button>
+            <button class="hero-btn" id="join-server-hero-btn">
+              <span class="icon">🔗</span>
+              Bir Sunucuya Katıl
+            </button>
+            <div class="hero-join-code">
+              <input type="text" id="join-invite-input" placeholder="Davet Kodu (Örn: ABCDEF)">
+              <button class="hero-btn tiny" id="join-by-code-btn">Katıl</button>
+            </div>
+          </div>
+          <div class="discover-section" id="discover-section">
+            <h3>Aktif Sunucular</h3>
+            <div id="room-list-home" class="room-grid"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Chat View -->
+      <div id="chat-view" class="chat-view hidden">
+        <div class="chat-header">
+          <div class="header-left">
+            <!-- V17: Mobile Sidebar Toggle -->
+            <button id="mobile-menu-btn" class="mobile-only-btn" title="Menüyü Aç">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z" />
+              </svg>
+            </button>
+            <span class="channel-hash">#</span>
+            <h3 id="active-channel-name">genel</h3>
+            <div id="channel-stats" class="channel-stats"></div>
+          </div>
+
+          <div class="chat-header-right">
+            <span id="connection-badge" class="connection-badge" title="P2P ve sinyal durumu" role="status" aria-live="polite"></span>
+            <button type="button" id="focus-mode-toggle" class="header-btn focus-mode-btn" title="Odak modu (üye panelini gizle)">⛶</button>
+            <span id="peer-count-badge" class="peer-badge">0 kişi</span>
+            <button class="header-btn" id="pins-toggle-btn" title="Sabitlenmiş Mesajlar">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                <path
+                  d="M16 9V4l1 0c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1l1 0v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z" />
+              </svg>
+            </button>
+            <button class="header-btn" id="members-toggle-btn" title="Üyeler">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                <path
+                  d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zM16 13c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="chat-body">
+          <div class="messages-column">
+            <div id="messages-load-more-wrap" class="messages-load-more-wrap hidden">
+              <button type="button" id="messages-load-more-btn" class="messages-load-more-btn">Daha eski mesajlar</button>
+            </div>
+            <button type="button" id="new-msgs-chip" class="new-msgs-chip hidden" aria-live="polite">Yeni mesajlar ↓</button>
+            <div class="messages-area" id="messages-area">
+              <div class="messages-welcome">
+                <div class="messages-welcome-icon">💬</div>
+                <h3>Kanalın başlangıcı!</h3>
+                <p>Bu P2P kanalın ilk mesajı olmak için hazır mısın?</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="members-split-handle" id="members-split-handle" title="Sürükleyerek üye panelini genişlet"></div>
+
+          <!-- Members panel -->
+          <aside class="members-panel" id="members-panel">
+            <h4>Üyeler — <span id="member-count">0</span></h4>
+            <div id="members-list"></div>
+          </aside>
+        </div>
+
+        <!-- Typing Indicator -->
+        <div id="typing-indicator" class="typing-indicator hidden">
+          <span class="typing-dots">
+            <span></span><span></span><span></span>
+          </span>
+          <span id="typing-text">Birisi yazıyor...</span>
+        </div>
+
+        <div class="chat-input-area">
+          <div id="reply-preview-bar" class="reply-preview-bar hidden" aria-live="polite">
+            <div class="reply-preview-inner">
+              <span class="reply-preview-label">Yanıt</span>
+              <span id="reply-preview-author" class="reply-preview-author"></span>
+              <span id="reply-preview-snippet" class="reply-preview-snippet"></span>
+            </div>
+            <button type="button" id="reply-preview-close" class="reply-preview-close" title="Yanıtı iptal">✕</button>
+          </div>
+          <div class="chat-input-wrapper">
+            <div id="gif-search-popover" class="gif-popover hidden">
+              <input type="text" id="gif-input" placeholder="GIF Ara...">
+              <div id="gif-results" class="gif-results"></div>
+            </div>
+            <!-- Mention Popup -->
+            <div id="mention-popup" class="mention-popup hidden"></div>
+            <button class="input-action-btn" id="gif-btn" title="GIF Gönder">GIF</button>
+            <button class="input-action-btn" id="emoji-btn">😀</button>
+            <textarea id="chat-input" placeholder="#genel kanalına mesaj gönder" rows="1"></textarea>
+            <button class="input-action-btn" id="translate-toggle-btn" title="Yazarken Çevir">🌐</button>
+            <button class="input-action-btn" id="chat-attach-btn">📎</button>
+            <input type="file" id="chat-file-upload" class="hidden" accept="image/*, .txt, .pdf, .zip, .rar" />
+            <button class="input-send-btn" id="send-btn" title="Gönder">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Voice Channel View -->
+      <div id="voice-view" class="voice-view hidden">
+    <div class="voice-header">
+      <span class="channel-type-icon voice">🔊</span>
+      <span id="voice-channel-name">Sesli Sohbet</span>
+      <span id="voice-connection-badge" class="connection-badge connection-badge--voice" title="Bağlantı" role="status"></span>
+      <span id="voice-participant-count" class="voice-count">0 kişi</span>
+      <span id="voice-sync-meta" class="voice-sync-meta" title="SCORD_TIMING ile ayarlanan gecikme ölçümleri"></span>
+    </div>
+    <div class="voice-participants" id="voice-participants">
+      <p class="voice-empty">Sesli kanala katılmak için aşağıdaki butona tıkla.</p>
+    </div>
+    <div class="voice-controls">
+      <button class="voice-ctrl-btn" id="voice-join-btn">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+          <path
+            d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15a.998.998 0 0 0-.98-.85c-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V20c0 .55.45 1 1 1s1-.45 1-1v-2.08a6.994 6.994 0 0 0 5.91-5.78c.1-.6-.39-1.14-1-1.14z" />
+        </svg>
+        Kanala Katıl
+      </button>
+      <button class="voice-ctrl-btn danger hidden" id="voice-leave-btn">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+          <path
+            d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.956.956 0 0 1-.29-.7c0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.1-.7-.28a11.27 11.27 0 0 0-2.67-1.85.996.996 0 0 1-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z" />
+        </svg>
+        Ayrıl
+      </button>
+       <button class="voice-ctrl-btn hidden" id="voice-screen-btn" style="background: rgba(255,255,255,0.1);">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+          <path
+            d="M21 3H3C1.9 3 1 3.9 1 5v12c0 1.1.9 2 2 2h5v2h8v-2h5c1.1 0 1.99-.9 1.99-2L23 5c0-1.1-.9-2-2-2zm0 14H3V5h18v12z" />
+        </svg>
+        Ekran Paylaş
+      </button>
+      <button class="voice-ctrl-btn hidden" id="voice-camera-btn" style="background: rgba(255,255,255,0.1);">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+          <path
+            d="M15 8v8H5V8h10m1-2H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4V7c0-.55-.45-1-1-1z" />
+        </svg>
+        Kamera Aç
+      </button>
+    </div>
+
+    <!-- Members panel for voice view -->
+    <aside class="members-panel" id="voice-members-panel">
+      <h4>Üyeler — <span id="voice-member-count">0</span></h4>
+      <div id="voice-members-list"></div>
+    </aside>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- ── Modals ───────────────────────────────────────────────────────────────── -->
+  <div id="modal-backdrop" class="modal-backdrop hidden">
+    <div class="modal" id="modal">
+      <div class="modal-header">
+        <h3 id="modal-title">Modal</h3>
+        <button class="modal-close" id="modal-close">✕</button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+      <div class="modal-footer" id="modal-footer"></div>
+    </div>
+  </div>
+
+  <!-- ── Voice status bar (fixed bottom) ────────────────────────────────────── -->
+  <div id="voice-status-bar" class="voice-status-bar hidden">
+    <div class="vsb-left">
+      <span class="vsb-dot"></span>
+      <span id="vsb-channel-name">Sesli Kanal</span>
+    </div>
+    <div class="vsb-right">
+      <button class="vsb-btn" id="vsb-disconnect-btn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <path
+            d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.956.956 0 0 1-.29-.7c0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.1-.7-.28a11.27 11.27 0 0 0-2.67-1.85.996.996 0 0 1-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z" />
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- ── DM Overlay (desktop: köşe / mobil: alt sayfa) ─────────────────────── -->
+  <div id="dm-overlay" class="dm-overlay hidden" aria-hidden="true">
+    <div class="dm-sheet">
+      <div class="dm-header">
+        <div class="dm-peer-block">
+          <div id="dm-header-avatar" class="dm-header-avatar" aria-hidden="true"></div>
+          <div class="dm-header-text">
+            <span id="dm-target-name">@User</span>
+            <span class="dm-sub">Özel mesaj · P2P</span>
+          </div>
+        </div>
+        <button type="button" class="dm-close-btn" id="dm-close-btn" title="Kapat (Esc)">✕</button>
+      </div>
+      <div class="dm-body" id="dm-messages-area"></div>
+      <div class="dm-input-area">
+        <textarea id="dm-input" rows="1" placeholder="Mesaj yaz…" maxlength="2000" autocomplete="off"></textarea>
+        <button type="button" class="dm-send-btn" id="dm-send-btn" title="Gönder">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div id="quick-switcher" class="quick-switcher hidden" role="dialog" aria-modal="true" aria-labelledby="qs-title">
+    <div class="quick-switcher-panel">
+      <div class="quick-switcher-head">
+        <span id="qs-title">Kanal veya sunucu</span>
+        <kbd class="qs-kbd">Esc</kbd>
+      </div>
+      <input type="text" id="quick-switcher-input" class="quick-switcher-input" placeholder="Ara… (örn. genel, sunucu adı)" autocomplete="off" />
+      <div id="quick-switcher-results" class="quick-switcher-results"></div>
+      <p class="quick-switcher-hint"><kbd>Ctrl</kbd>+<kbd>K</kbd> aç/kapat · Enter ile seç</p>
+    </div>
+  </div>
+
+  <div id="sr-announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+
+  <!-- Notification toast container -->
+  <div id="toast-container"></div>
+
+  <!-- Mobile Navigation Mask -->
+  <div id="mobile-nav-mask" class="mobile-mask hidden"></div>
+
+  <!-- Mobile Bottom Navigation -->
+  <nav class="mobile-bottom-nav hidden" id="mobile-bottom-nav">
+    <button class="mobile-nav-btn active" data-tab="chat" title="Sohbet">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z"/>
+      </svg>
+      <span>Sohbet</span>
+    </button>
+    <button class="mobile-nav-btn" data-tab="channels" title="Kanallar">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/>
+      </svg>
+      <span>Kanallar</span>
+    </button>
+    <button class="mobile-nav-btn" data-tab="members" title="Üyeler">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5z"/>
+      </svg>
+      <span>Üyeler</span>
+    </button>
+    <button class="mobile-nav-btn" data-tab="voice" title="Ses">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
+        <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+      </svg>
+      <span>Ses</span>
+    </button>
+  </nav>
+
+  <script src="static/timing.js?v=3"></script>
+  <script src="static/p2p.js?v=3"></script>
+  <script src="app.js?v=3"></script>
+
+  <script>
+  document.addEventListener("click", function(e) {
+    if (e.target.closest("#voice-screen-btn")) {
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+      // If already sharing, stop it
+      if (window.state && (window.state.screenStream || (window.state.mesh && window.state.mesh.screenStream))) {
+        if (typeof window.state.mesh.stopScreenShare === "function") window.state.mesh.stopScreenShare();
+        var streams = window.state.screenStream;
+        if (streams && typeof streams.getTracks === "function") streams.getTracks().forEach(function(t){t.stop()});
+        window.state.screenStream = null;
+        if (window.state.mesh) window.state.mesh.screenStream = null;
+        var btn = document.getElementById("voice-screen-btn");
+        if (btn) btn.classList.remove("active");
+        return false;
+      }
+      // Not sharing: show FPS picker modal
+      var fps = (window.state && window.state.screenShareFPS) || 60;
+      var h = '<div style="text-align:center;padding:10px;">';
+      h += '<button onclick="window.__doShare('+fps+')" style="width:100%;background:rgba(99,102,241,0.15);border:2px solid rgba(99,102,241,0.3);border-radius:10px;padding:18px;cursor:pointer;color:#fff;font-size:14px;font-weight:600;margin-bottom:12px;">🖥️  Ekranı Paylaş</button>';
+      h += '<div style="background:rgba(0,0,0,0.2);border-radius:8px;padding:10px;margin-bottom:8px;">';
+      h += '<label style="display:flex;justify-content:space-between;color:#ccc;font-size:13px;">Yayın FPS <select id="__fpsSel" style="background:#2a2a3e;color:#fff;border:1px solid #444;border-radius:6px;padding:6px;">';
+      h += '<option '+(fps===30?'selected':'')+'>30</option><option '+(fps===60?'selected':'')+'>60</option><option '+(fps===120?'selected':'')+'>120</option>';
+      h += '</select></label></div></div>';
+      if (typeof showModal === "function") {
+        showModal("📺 Ekran Paylaşımı", h, '<button class="btn-primary" onclick="window.__doShare(parseInt(document.getElementById(\'__fpsSel\').value))">Başlat</button><button class="btn-secondary" onclick="typeof hideModal===typeof Function&&hideModal()">İptal</button>');
+      }
+      window.__doShare = function(v) {
+        if (typeof hideModal === "function") hideModal();
+        if (window.state) { window.state.screenShareFPS = v; window.state.screenShareQuality = v >= 60 ? "1080p" : "720p"; localStorage.setItem("scord_screen_fps", v); }
+        if (typeof startScreenShare === "function") setTimeout(function(){ startScreenShare(); }, 300);
+      };
+      return false;
+    }
+  }, true);
+  
+  setTimeout(function(){
+    var btn = document.getElementById("voice-screen-btn");
+    if (btn) btn.onclick = null;
+  }, 2000);
+  </script>
+</body>
+
+</html>
