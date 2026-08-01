@@ -16,6 +16,9 @@ import threading
 import urllib.request
 import urllib.parse
 import re
+import sqlite3
+import hashlib
+import secrets
 from typing import Dict, Set, Optional, Any
 from pathlib import Path
 
@@ -38,6 +41,7 @@ rooms: Dict[str, "Room"] = {}
 deleted_room_ids: Set[str] = set()
 DELETED_TOMBSTONE_CAP = 500
 DATABASE_FILE = str(Path(__file__).parent.parent / "rooms.json")
+ACCOUNTS_DB_FILE = str(Path(__file__).parent.parent / "scord_accounts.db")
 
 DEFAULT_ROLE_PERMISSIONS = {
     "owner": {
@@ -57,6 +61,100 @@ DEFAULT_ROLE_PERMISSIONS = {
     "member": {"join_voice", "speak", "screen_share", "camera", "send_messages"},
 }
 
+
+# ── Accounts / üyelik sistemi ────────────────────────────────────────────────
+# SQLite üzerinde gerçek kayıt: kullanıcı adı + şifre (pbkdf2 ile hash'lenmiş),
+# profil (avatar/bio/banner) buraya bağlı — artık sadece o an açık olan
+# tarayıcının localStorage'ında değil, giriş yapan her cihazda aynı hesap.
+
+def _db():
+    conn = sqlite3.connect(ACCOUNTS_DB_FILE)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_accounts_db():
+    with _db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS accounts (
+                peer_id TEXT PRIMARY KEY,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                salt TEXT NOT NULL,
+                avatar_image TEXT NOT NULL DEFAULT '',
+                avatar_color TEXT NOT NULL DEFAULT '#7c3aed',
+                bio TEXT NOT NULL DEFAULT '',
+                banner_url TEXT NOT NULL DEFAULT '',
+                created_at REAL NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS sessions (
+                token TEXT PRIMARY KEY,
+                peer_id TEXT NOT NULL,
+                created_at REAL NOT NULL
+            )
+        """)
+    log.info(f"Accounts DB ready at {ACCOUNTS_DB_FILE}")
+
+
+def _to_int32(n: int) -> int:
+    n &= 0xFFFFFFFF
+    return n - 0x100000000 if n >= 0x80000000 else n
+
+
+def _js_shl5(h: int) -> int:
+    u = h & 0xFFFFFFFF
+    shifted = (u << 5) & 0xFFFFFFFF
+    return shifted - 0x100000000 if shifted >= 0x80000000 else shifted
+
+
+def legacy_peer_id(username: str, password: str) -> str:
+    """
+    Eski istemci tarayıcıda kullanıcı adı+şifreden deterministik bir peer_id
+    türetiyordu (gerçek dogrulama yoktu). Var olan oda sahiplikleri
+    (peer_roles/owner_id) o id'lere göre kayıtlı olduğu için, gerçek üyelik
+    sistemine geçerken AYNI formülü koruyoruz — aksi halde herkes kendi
+    sunucusunun sahipliğini kaybederdi.
+    """
+    h = 0
+    s = (username or "").lower().strip() + ":" + (password or "")
+    for ch in s:
+        h = _to_int32(_js_shl5(h) - h + ord(ch))
+    n = abs(h)
+    digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+    if n == 0:
+        return "id_0"
+    b36 = ""
+    while n:
+        n, r = divmod(n, 36)
+        b36 = digits[r] + b36
+    return "id_" + b36
+
+
+def _hash_password(password: str, salt: str) -> str:
+    return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 100_000).hex()
+
+
+def _account_public(row: sqlite3.Row) -> dict:
+    return {
+        "peer_id": row["peer_id"],
+        "username": row["username"],
+        "avatar_image": row["avatar_image"],
+        "avatar_color": row["avatar_color"],
+        "bio": row["bio"],
+        "banner_url": row["banner_url"],
+    }
+
+
+def _account_by_token(token: str) -> Optional[sqlite3.Row]:
+    if not token:
+        return None
+    with _db() as conn:
+        sess = conn.execute("SELECT peer_id FROM sessions WHERE token = ?", (token,)).fetchone()
+        if not sess:
+            return None
+        return conn.execute("SELECT * FROM accounts WHERE peer_id = ?", (sess["peer_id"],)).fetchone()
 
 def _role_defaults(role_id: str) -> dict:
     return {p: True for p in DEFAULT_ROLE_PERMISSIONS.get(role_id, DEFAULT_ROLE_PERMISSIONS["member"])}
@@ -427,22 +525,96 @@ def _can_control_music(room: Room, peer_id: str) -> bool:
 def list_rooms():
     return [r.to_dict() for r in rooms.values()]
 
-@app.post("/api/auth/verify")
-def verify_password(body: dict):
-    """Verify password for identity generation."""
-    username = body.get("username", "").strip().lower()
-    password = body.get("password", "")
-    if not username or not password:
-        return {"valid": False, "error": "Username and password required"}
-    if len(username) < 2 or len(password) < 1:
-        return {"valid": False, "error": "Invalid credentials"}
-    h = 0
-    seed = f"{username}:{password}:scord-v2"
-    for ch in seed:
-        h = ((h << 5) - h) + ord(ch)
-        h &= 0xFFFFFFFF
-    identity_id = f"sc_{abs(h) & 0xFFFFFFFF:08x}"
-    return {"valid": True, "identity_id": identity_id, "username": username}
+@app.post("/api/auth/register")
+def register_account(body: dict):
+    username = (body.get("username") or "").strip()
+    password = body.get("password") or ""
+    if len(username) < 2 or len(username) > 32:
+        return {"error": "invalid_username"}
+    if len(password) < 1:
+        return {"error": "invalid_password"}
+    peer_id = legacy_peer_id(username, password)
+    salt = secrets.token_hex(16)
+    pw_hash = _hash_password(password, salt)
+    with _db() as conn:
+        existing = conn.execute(
+            "SELECT 1 FROM accounts WHERE lower(username) = lower(?)", (username,)
+        ).fetchone()
+        if existing:
+            return {"error": "username_taken"}
+        try:
+            conn.execute(
+                "INSERT INTO accounts (peer_id, username, password_hash, salt, created_at) VALUES (?, ?, ?, ?, ?)",
+                (peer_id, username, pw_hash, salt, time.time()),
+            )
+        except sqlite3.IntegrityError:
+            return {"error": "already_registered"}
+        token = secrets.token_urlsafe(32)
+        conn.execute(
+            "INSERT INTO sessions (token, peer_id, created_at) VALUES (?, ?, ?)",
+            (token, peer_id, time.time()),
+        )
+        row = conn.execute("SELECT * FROM accounts WHERE peer_id = ?", (peer_id,)).fetchone()
+    log.info(f"Account registered: {username!r} ({peer_id})")
+    return {"success": True, "token": token, **_account_public(row)}
+
+
+@app.post("/api/auth/login")
+def login_account(body: dict):
+    username = (body.get("username") or "").strip()
+    password = body.get("password") or ""
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT * FROM accounts WHERE lower(username) = lower(?)", (username,)
+        ).fetchone()
+        if not row:
+            return {"error": "not_found"}
+        if _hash_password(password, row["salt"]) != row["password_hash"]:
+            return {"error": "wrong_password"}
+        token = secrets.token_urlsafe(32)
+        conn.execute(
+            "INSERT INTO sessions (token, peer_id, created_at) VALUES (?, ?, ?)",
+            (token, row["peer_id"], time.time()),
+        )
+    return {"success": True, "token": token, **_account_public(row)}
+
+
+@app.post("/api/auth/logout")
+def logout_account(body: dict):
+    token = body.get("token") or ""
+    with _db() as conn:
+        conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+    return {"success": True}
+
+
+@app.get("/api/account/me")
+def get_account_me(token: str = ""):
+    row = _account_by_token(token)
+    if not row:
+        return {"error": "unauthorized"}
+    return {"success": True, **_account_public(row)}
+
+
+@app.post("/api/account/update")
+def update_account(body: dict):
+    token = body.get("token") or ""
+    row = _account_by_token(token)
+    if not row:
+        return {"error": "unauthorized"}
+    fields = {}
+    for key in ("avatar_image", "avatar_color", "bio", "banner_url"):
+        if key in body:
+            fields[key] = str(body[key])[:8000]
+    if not fields:
+        return {"success": True, **_account_public(row)}
+    with _db() as conn:
+        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        conn.execute(
+            f"UPDATE accounts SET {set_clause} WHERE peer_id = ?",
+            (*fields.values(), row["peer_id"]),
+        )
+        updated = conn.execute("SELECT * FROM accounts WHERE peer_id = ?", (row["peer_id"],)).fetchone()
+    return {"success": True, **_account_public(updated)}
 
 @app.get("/api/config")
 def get_runtime_config():
@@ -1123,6 +1295,7 @@ def health_root():
 def startup_event():
     load_db()
     ensure_template_rooms()
+    init_accounts_db()
 
 if __name__ == "__main__":
     import uvicorn
