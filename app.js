@@ -2072,22 +2072,120 @@ function hideModal() {
     document.getElementById("modal-backdrop").classList.add("hidden");
 }
 
-/* ── Setup overlay ────────────────────────────────────────── */
-function initSetup() {
-    // Auto-login if previously logged in
-    var savedNick = localStorage.getItem("scord_username");
-    var savedPass = localStorage.getItem("scord_pass");
-    var savedId = localStorage.getItem("scord_peer_id");
-    if (savedNick && savedPass && savedId) {
+/* ── Setup overlay — gerçek üyelik sistemi ───────────────────
+   Eskiden kullanıcı adı+şifre sadece yerel bir hash üretip localStorage'a
+   yazıyordu, sunucu hiç doğrulamıyordu. Artık /api/auth/register ve
+   /api/auth/login gerçek hesap oluşturuyor/doğruluyor; avatar/bio/banner
+   sunucudaki hesaba bağlı, tarayıcı değiştirince de geliyor. */
+
+var _authMode = "login";
+
+function switchAuthTab(mode) {
+    _authMode = mode;
+    document.getElementById("auth-tab-login")?.classList.toggle("active", mode === "login");
+    document.getElementById("auth-tab-register")?.classList.toggle("active", mode === "register");
+    document.getElementById("auth-confirm-group")?.classList.toggle("hidden", mode !== "register");
+    const hint = document.getElementById("auth-hint");
+    if (hint) hint.textContent = mode === "register"
+        ? "Yeni hesabın oluşturulunca otomatik giriş yapılır."
+        : "Giriş yaptıktan sonra ayarlardan profilini özelleştirebilirsin.";
+    const btn = document.getElementById("enter-btn");
+    if (btn) btn.textContent = mode === "register" ? "Kayıt Ol" : "Giriş Yap";
+    hideAuthError();
+}
+window.switchAuthTab = switchAuthTab;
+
+function showAuthError(msg) {
+    const el = document.getElementById("auth-error");
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.remove("hidden");
+}
+function hideAuthError() {
+    document.getElementById("auth-error")?.classList.add("hidden");
+}
+
+/** Hesap verisini (sunucudan gelen) state + localStorage'a uygula. */
+function applyAccountToState(acc) {
+    state.peerId = acc.peer_id;
+    state.username = acc.username;
+    state.avatarImage = acc.avatar_image || "";
+    state.avatarColor = acc.avatar_color || state.avatarColor;
+    state.bio = acc.bio || "";
+    state.bannerUrl = acc.banner_url || "";
+    localStorage.setItem("scord_username", acc.username);
+    localStorage.setItem("scord_peer_id", acc.peer_id);
+    localStorage.setItem("scord_color", state.avatarColor);
+    localStorage.setItem("scord_avatar_image", state.avatarImage);
+    localStorage.setItem("scord_bio", state.bio);
+    localStorage.setItem("scord_banner_url", state.bannerUrl);
+}
+
+/** Profil alanlarını hem localStorage'a hem hesaba (sunucuya) yazar. */
+function syncProfileField(fields) {
+    Object.keys(fields).forEach(k => { state[k] = fields[k]; });
+    if ("avatarImage" in fields) localStorage.setItem("scord_avatar_image", fields.avatarImage || "");
+    if ("avatarColor" in fields) localStorage.setItem("scord_color", fields.avatarColor || "");
+    if ("bio" in fields) localStorage.setItem("scord_bio", fields.bio || "");
+    if ("bannerUrl" in fields) localStorage.setItem("scord_banner_url", fields.bannerUrl || "");
+    const token = localStorage.getItem("scord_token");
+    if (!token) return;
+    const body = { token };
+    if ("avatarImage" in fields) body.avatar_image = fields.avatarImage || "";
+    if ("avatarColor" in fields) body.avatar_color = fields.avatarColor || "";
+    if ("bio" in fields) body.bio = fields.bio || "";
+    if ("bannerUrl" in fields) body.banner_url = fields.bannerUrl || "";
+    fetch(`${API_BASE}/account/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    }).catch(e => console.warn("[Account] profile sync failed:", e));
+    // Bağlı peer'lara da anında yay — üye listesindeki avatar/bio canlı güncellensin.
+    if (state.mesh) {
+        state.mesh.broadcast({
+            type: "profile_sync",
+            peerId: state.peerId,
+            username: state.username,
+            avatarImage: state.avatarImage || "",
+            avatarColor: state.avatarColor || "#7c3aed",
+            bannerUrl: state.bannerUrl || "",
+            bio: state.bio || "",
+        });
+    }
+}
+window.syncProfileField = syncProfileField;
+
+async function initSetup() {
+    const token = localStorage.getItem("scord_token");
+    const savedId = localStorage.getItem("scord_peer_id");
+    const savedNick = localStorage.getItem("scord_username");
+
+    if (token && savedId && savedNick) {
+        // Hızlı yol: yerelden hemen başla, arka planda hesabı doğrula/tazele.
         state.username = savedNick;
         state.peerId = savedId;
-        // Restore avatar, color, theme on auto-login
         state.avatarColor = localStorage.getItem("scord_color") || state.avatarColor;
         state.avatarImage = localStorage.getItem("scord_avatar_image") || "";
+        state.bio = localStorage.getItem("scord_bio") || "";
+        state.bannerUrl = localStorage.getItem("scord_banner_url") || "";
         var savedTheme = localStorage.getItem("scord_theme");
         if (savedTheme) { state.theme = savedTheme; document.documentElement.setAttribute("data-theme", savedTheme); if (typeof applyTheme === "function") applyTheme(savedTheme); }
         if (typeof startApp === "function") {
             startApp();
+            fetch(`${API_BASE}/account/me?token=${encodeURIComponent(token)}`)
+                .then(r => r.json())
+                .then(data => {
+                    if (data && data.success) {
+                        applyAccountToState(data);
+                        const ua = document.getElementById("user-bar-avatar");
+                        if (ua && typeof applyAvatarToElement === "function") applyAvatarToElement(ua, state.avatarColor, state.avatarImage, state.username);
+                    } else {
+                        // Token artık geçersiz (örn. başka yerden çıkış yapıldı) — sadece
+                        // token'ı temizle, yeniden açılışta login ekranı gösterilir.
+                        localStorage.removeItem("scord_token");
+                    }
+                })
+                .catch(() => { });
             return;
         }
     }
@@ -2095,67 +2193,77 @@ function initSetup() {
     const nameInput = document.getElementById("username-input");
     const enterBtn = document.getElementById("enter-btn");
     const passInput = document.getElementById("scord-pass-input");
+    const confirmInput = document.getElementById("scord-pass-confirm-input");
 
-    // Enable button when both username and password have values
     function updateBtnState() {
         var nick = nameInput ? nameInput.value.trim() : "";
         var pass = passInput ? passInput.value : "";
-        console.log("[Setup] Nick:", nick.length, "Pass:", pass.length);
         if (enterBtn) {
-            enterBtn.disabled = nick.length < 1 || pass.length < 1;
+            enterBtn.disabled = nick.length < 2 || pass.length < 1;
             enterBtn.style.opacity = enterBtn.disabled ? "0.5" : "1";
         }
     }
 
-    if (nameInput) {
-        nameInput.addEventListener("input", updateBtnState);
-    }
-    if (passInput) {
-        passInput.addEventListener("input", updateBtnState);
-    }
-
-    if (nameInput) {
-        nameInput.addEventListener("keydown", e => {
-            if (e.key === "Enter" && !enterBtn.disabled) enterBtn.click();
-        });
-    }
-
-    if (enterBtn) {
-        enterBtn.addEventListener("click", () => {
-            var nick = nameInput.value.trim();
-            var pass = passInput ? passInput.value : "";
+    if (nameInput) nameInput.addEventListener("input", updateBtnState);
+    if (passInput) passInput.addEventListener("input", updateBtnState);
+    if (confirmInput) confirmInput.addEventListener("input", updateBtnState);
+    if (nameInput) nameInput.addEventListener("keydown", e => { if (e.key === "Enter" && enterBtn && !enterBtn.disabled) enterBtn.click(); });
+    if (passInput) passInput.addEventListener("keydown", e => { if (e.key === "Enter" && enterBtn && !enterBtn.disabled) enterBtn.click(); });
             
-            if (!nick || !pass) {
-                toast("Kullanıcı adı ve şifre gerekli!", "error");
+    async function submitAuth() {
+        var nick = nameInput.value.trim();
+        var pass = passInput ? passInput.value : "";
+        if (!nick || !pass) { showAuthError("Kullanıcı adı ve şifre gerekli."); return; }
+        if (_authMode === "register") {
+            var confirmPass = confirmInput ? confirmInput.value : "";
+            if (pass !== confirmPass) { showAuthError("Şifreler eşleşmiyor."); return; }
+            if (pass.length < 4) { showAuthError("Şifre en az 4 karakter olmalı."); return; }
+        }
+        hideAuthError();
+        enterBtn.disabled = true;
+        var origLabel = enterBtn.textContent;
+        enterBtn.textContent = _authMode === "register" ? "Kayıt olunuyor..." : "Giriş yapılıyor...";
+        try {
+            var res = await fetch(`${API_BASE}/auth/${_authMode}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ username: nick, password: pass }),
+            });
+            var data = await res.json();
+            if (!data || !data.success) {
+                var messages = {
+                    username_taken: "Bu kullanıcı adı zaten alınmış. Giriş yapmayı dene.",
+                    already_registered: "Bu hesap zaten kayıtlı. Giriş yapmayı dene.",
+                    not_found: "Böyle bir hesap yok. Önce kayıt ol.",
+                    wrong_password: "Şifre yanlış.",
+                    invalid_username: "Kullanıcı adı 2-32 karakter olmalı.",
+                    invalid_password: "Geçerli bir şifre gir.",
+                };
+                showAuthError((data && messages[data.error]) || "Bir şeyler ters gitti, tekrar dene.");
+                enterBtn.disabled = false;
+                enterBtn.textContent = origLabel;
                 return;
             }
-            
-            // Generate unique ID from nick+pass
-            var h = 0;
-            var str = nick.toLowerCase().trim() + ":" + pass;
-            for (var i = 0; i < str.length; i++) {
-                h = ((h << 5) - h) + str.charCodeAt(i);
-                h |= 0;
-            }
-            var identityId = "id_" + Math.abs(h).toString(36);
-            
-            state.username = nick;
-            state.peerId = identityId;
-            localStorage.setItem("scord_username", nick);
+            applyAccountToState(data);
+            localStorage.setItem("scord_token", data.token);
+            // Bazı eski yamalar (scord_identity_<hash> kayıtları) hâlâ
+            // kullanıcı adı+şifreden yerel bir kimlik anahtarı türetiyor;
+            // gerçek kimlik doğrulaması artık sunucuda ama o eski
+            // özellikleri kırmamak için şifreyi yerelde de tutuyoruz.
             localStorage.setItem("scord_pass", pass);
-            localStorage.setItem("scord_identity_id", identityId);
-            localStorage.setItem("scord_color", state.avatarColor);
-            localStorage.setItem("scord_peer_id", identityId);
             startApp();
-        });
+        } catch (e) {
+            console.error("[Auth] error", e);
+            showAuthError("Sunucuya ulaşılamadı. Bağlantını kontrol et.");
+            enterBtn.disabled = false;
+            enterBtn.textContent = origLabel;
+        }
     }
 
-    // Restore saved identity
+    if (enterBtn) enterBtn.addEventListener("click", submitAuth);
+
+    // Hesaba bağlı olmayan yerel tercihler (tema/arkaplan/ses ayarları vb.)
     const saved = {
-        username: localStorage.getItem("scord_username"),
-        color: localStorage.getItem("scord_color"),
-        peerId: localStorage.getItem("scord_peer_id"),
-        image: localStorage.getItem("scord_avatar_image"),
         theme: localStorage.getItem("scord_theme"),
         bg: localStorage.getItem("scord_bg_image"),
         voice: localStorage.getItem("scord_voice_settings"),
@@ -2164,25 +2272,16 @@ function initSetup() {
     };
     loadStatusFromStorage();
     loadActivitiesFromStorage();
-    if (saved.friends) {
-        try { state.friends = JSON.parse(saved.friends); } catch (e) { }
-    }
-    if (saved.recentDMs) {
-        try { state.recentDMs = JSON.parse(saved.recentDMs); } catch (e) { }
-    }
+    if (saved.friends) { try { state.friends = JSON.parse(saved.friends); } catch (e) { } }
+    if (saved.recentDMs) { try { state.recentDMs = JSON.parse(saved.recentDMs); } catch (e) { } }
     const savedBlocks = localStorage.getItem("scord_blocked_peers");
-    if (savedBlocks) {
-        try { state.blockedPeers = JSON.parse(savedBlocks); } catch (e) { }
-    }
+    if (savedBlocks) { try { state.blockedPeers = JSON.parse(savedBlocks); } catch (e) { } }
     if (saved.theme) {
         state.theme = saved.theme;
         document.documentElement.className = saved.theme;
         document.documentElement.setAttribute("data-theme", saved.theme);
-        // Apply CSS variables
         if (typeof applyTheme === "function") applyTheme(saved.theme);
     }
-    // Always restore avatar color (not just when username exists)
-    if (saved.color) state.avatarColor = saved.color;
     if (saved.bg) {
         state.appBackground = saved.bg;
         document.body.style.backgroundImage = `url(${saved.bg})`;
@@ -2191,17 +2290,6 @@ function initSetup() {
     }
     if (saved.voice) {
         try { state.voiceSettings = { ...state.voiceSettings, ...JSON.parse(saved.voice) }; } catch (e) { }
-    }
-    if (saved.image) {
-        state.avatarImage = saved.image;
-    }
-    if (saved.username) {
-        nameInput.value = saved.username;
-        enterBtn.disabled = false;
-        if (saved.color) {
-            state.avatarColor = saved.color;
-        }
-        if (saved.peerId) state.peerId = saved.peerId;
     }
 }
 
@@ -24022,94 +24110,168 @@ window.VIDEO_QUALITY = VIDEO_QUALITY;
     document.head.appendChild(s);
 })();
 
+function logoutAccount() {
+    if (!confirm("Çıkış yapmak istediğine emin misin?")) return;
+    var token = localStorage.getItem("scord_token");
+    if (token) {
+        fetch(`${API_BASE}/auth/logout`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ token }),
+        }).catch(function () { }).finally(function () {
+            localStorage.removeItem("scord_token");
+            localStorage.removeItem("scord_pass");
+            localStorage.removeItem("scord_username");
+            localStorage.removeItem("scord_peer_id");
+            location.reload();
+        });
+    } else {
+        localStorage.removeItem("scord_token");
+        location.reload();
+    }
+}
+window.logoutAccount = logoutAccount;
+
+function _settingsUniqueTag() {
+    var discrim = "0000";
+    if (state.peerId) {
+        var h = 0;
+        for (var i = 0; i < state.peerId.length; i++) { h = ((h << 5) - h) + state.peerId.charCodeAt(i); h |= 0; }
+        discrim = String(Math.abs(h) % 9999).padStart(4, "0");
+    }
+    return (state.username || "Kullanici") + "#" + discrim;
+}
+
 function showUserSettingsModal() {
     var vols = state.settings || {};
     var vs = state.voiceSettings || {};
-    var html = '<style>input[type=range]{-webkit-appearance:none!important;appearance:none!important;width:120px!important;height:6px!important;background:rgba(255,255,255,0.15)!important;border-radius:4px!important;cursor:pointer!important;accent-color:#6366f1!important}input[type=range]::-webkit-slider-thumb{-webkit-appearance:none!important;width:18px!important;height:18px!important;border-radius:50%!important;background:linear-gradient(135deg,#6366f1,#8b5cf6)!important;cursor:pointer!important;box-shadow:0 2px 8px rgba(99,102,241,0.5)!important}input[type=range]::-moz-range-thumb{width:18px!important;height:18px!important;border-radius:50%!important;background:linear-gradient(135deg,#6366f1,#8b5cf6)!important;border:none!important;cursor:pointer!important}input[type=checkbox]{accent-color:#6366f1!important;width:18px!important;height:18px!important;cursor:pointer!important}select{background:#2a2a3e!important;color:#fff!important;border:1px solid #444!important;border-radius:8px!important;padding:10px!important;width:100%!important;cursor:pointer!important;font-size:13px!important}</style><div style="max-height:70vh;overflow-y:auto;">';
-    html += '<div class="scord-settings-tabs" style="display:flex;gap:4px;margin-bottom:16px;background:rgba(255,255,255,0.05);border-radius:8px;padding:4px;">';
-    html += '<button class="scord-settings-tab active" onclick="switchSettingsTab(this,\'ses\')" style="flex:1;padding:8px;text-align:center;border-radius:6px;cursor:pointer;font-size:12px;border:none;background:rgba(99,102,241,0.3);color:#fff;">🔊 Ses</button>';
-    html += '<button class="scord-settings-tab" onclick="switchSettingsTab(this,\'goruntu\')" style="flex:1;padding:8px;text-align:center;border-radius:6px;cursor:pointer;font-size:12px;border:none;background:transparent;color:#888;">🎨 Görüntü</button>';
-    html += '<button class="scord-settings-tab" onclick="switchSettingsTab(this,\'profil\')" style="flex:1;padding:8px;text-align:center;border-radius:6px;cursor:pointer;font-size:12px;border:none;background:transparent;color:#888;">👤 Profil</button>';
-    html += '<button class="scord-settings-tab" onclick="switchSettingsTab(this,\'diger\')" style="flex:1;padding:8px;text-align:center;border-radius:6px;cursor:pointer;font-size:12px;border:none;background:transparent;color:#888;">⚙️ Diğer</button>';
+    var tag = _settingsUniqueTag();
+
+    var html = '<div class="scord-settings-shell">';
+    html += '  <nav class="scord-settings-nav">';
+    html += '    <button class="active" data-tab="account">Hesabım</button>';
+    html += '    <button data-tab="profile">Profil</button>';
+    html += '    <button data-tab="voice">Ses ve Görüntü</button>';
+    html += '    <button data-tab="appearance">Görünüm</button>';
+    html += '    <button data-tab="notifications">Bildirimler</button>';
+    html += '    <button data-tab="advanced">Diğer</button>';
+    html += '    <button class="danger" onclick="logoutAccount()">Çıkış Yap</button>';
+    html += '  </nav>';
+    html += '  <section class="scord-settings-content">';
+
+    // ── Hesabım ──────────────────────────────────────────
+    html += '    <div class="scord-settings-page" id="set-account">';
+    html += '      <h3>Hesabım</h3>';
+    html += '      <div class="settings-account-card">';
+    html += '        <div class="settings-account-avatar" style="background-color:' + (state.avatarColor || '#7c3aed') + ';' + (state.avatarImage ? "background-image:url('" + escapeHtml(state.avatarImage) + "')" : '') + '">' + (state.avatarImage ? '' : escapeHtml((state.username || '?').charAt(0).toUpperCase())) + '</div>';
+    html += '        <div class="settings-account-info"><strong>' + escapeHtml(state.username || '') + '</strong><span>' + escapeHtml(tag) + '</span></div>';
+    html += '      </div>';
+    html += '      <p class="settings-hint">Kullanıcı adı hesap oluştururken belirlenir ve değiştirilemez (sunucu sahiplikleri buna bağlı). Avatarını, biyografini ve bannerını Profil sekmesinden değiştirebilirsin — bunlar artık hesabına kayıtlı, tarayıcı değiştirsen de seninle gelir.</p>';
+    html += '    </div>';
+
+    // ── Profil ───────────────────────────────────────────
+    html += '    <div class="scord-settings-page hidden" id="set-profile">';
+    html += '      <h3>Profil</h3>';
+    html += '      <label>Biyografi<textarea class="modal-input" id="settings-bio" rows="3" onchange="syncProfileField({bio:this.value})">' + escapeHtml(state.bio || '') + '</textarea></label>';
+    html += '      <label>Avatar URL<input class="modal-input" id="settings-avatar-url" value="' + escapeHtml(state.avatarImage || '') + '" placeholder="https://..." onchange="syncProfileField({avatarImage:this.value});applyAvatarToElement(document.getElementById(\'user-bar-avatar\'),state.avatarColor,state.avatarImage,state.username)"></label>';
+    html += '      <label>Avatar Rengi<input class="modal-input" type="color" id="settings-avatar-color" value="' + (state.avatarColor || '#7c3aed') + '" onchange="syncProfileField({avatarColor:this.value});applyAvatarToElement(document.getElementById(\'user-bar-avatar\'),state.avatarColor,state.avatarImage,state.username)" style="height:40px;padding:2px;"></label>';
+    html += '      <label>Banner URL<input class="modal-input" id="settings-banner-url" value="' + escapeHtml(state.bannerUrl || '') + '" placeholder="https://..." onchange="syncProfileField({bannerUrl:this.value})"></label>';
+    html += '    </div>';
+
+    // ── Ses ve Görüntü ───────────────────────────────────
+    html += '    <div class="scord-settings-page hidden" id="set-voice">';
+    html += '      <h3>Ses ve Görüntü</h3>';
+    html += '      <label>Mikrofon Cihazı<select class="modal-input" id="settings-mic-device"><option value="default">Varsayılan</option></select></label>';
+    html += '      <label class="scord-check"><input type="checkbox" ' + (vs.noiseSuppression !== false ? 'checked' : '') + ' onchange="state.voiceSettings=state.voiceSettings||{};state.voiceSettings.noiseSuppression=this.checked;localStorage.setItem(\'scord_voice_settings\',JSON.stringify(state.voiceSettings))"> Gürültü Engelleme</label>';
+    html += '      <label class="scord-check"><input type="checkbox" ' + (vs.echoCancellation !== false ? 'checked' : '') + ' onchange="state.voiceSettings=state.voiceSettings||{};state.voiceSettings.echoCancellation=this.checked;localStorage.setItem(\'scord_voice_settings\',JSON.stringify(state.voiceSettings))"> Yankı Engelleme</label>';
+    html += '      <label class="scord-check"><input type="checkbox" ' + (vs.autoGainControl === true ? 'checked' : '') + ' onchange="state.voiceSettings=state.voiceSettings||{};state.voiceSettings.autoGainControl=this.checked;localStorage.setItem(\'scord_voice_settings\',JSON.stringify(state.voiceSettings))"> Otomatik Seviye Dengeleme</label>';
+    html += '      <label class="scord-check"><input type="checkbox" ' + (vs.gateEnabled === true ? 'checked' : '') + ' onchange="state.voiceSettings=state.voiceSettings||{};state.voiceSettings.gateEnabled=this.checked;localStorage.setItem(\'scord_voice_settings\',JSON.stringify(state.voiceSettings))"> Ses Kapısı (sessizken mikrofonu kapat — kelime başlarını kırpabilir)</label>';
+    html += '      <label>Mikrofon Hassasiyeti <span id="val-gate-vol">' + (vs.gateThreshold || 8) + '</span><input type="range" min="3" max="30" value="' + (vs.gateThreshold || 8) + '" oninput="state.voiceSettings=state.voiceSettings||{};state.voiceSettings.gateThreshold=parseInt(this.value);document.getElementById(\'val-gate-vol\').textContent=this.value;localStorage.setItem(\'scord_voice_settings\',JSON.stringify(state.voiceSettings))"></label>';
+    html += '      <label>Mikrofon Ses <span id="val-mic-vol">' + (vols.micVolume || 80) + '%</span><input type="range" min="0" max="100" value="' + (vols.micVolume || 80) + '" oninput="updateSetting(\'micVolume\',this.value);document.getElementById(\'val-mic-vol\').textContent=this.value+\'%\'"></label>';
+    html += '      <label>Kulaklık Ses <span id="val-headphone-vol">' + (vols.headphoneVolume || 80) + '%</span><input type="range" min="0" max="100" value="' + (vols.headphoneVolume || 80) + '" oninput="updateSetting(\'headphoneVolume\',this.value);document.getElementById(\'val-headphone-vol\').textContent=this.value+\'%\'"></label>';
+    html += '    </div>';
+
+    // ── Görünüm ──────────────────────────────────────────
+    html += '    <div class="scord-settings-page hidden" id="set-appearance">';
+    html += '      <h3>Görünüm</h3>';
+    html += '      <label>Tema<select class="modal-input" onchange="selectTheme(this.value)">';
+    html += '        <option value="sapphire"' + (state.theme === 'sapphire' ? ' selected' : '') + '>Sapphire</option>';
+    html += '        <option value="dark"' + (state.theme === 'dark' ? ' selected' : '') + '>Dark</option>';
+    html += '        <option value="light"' + (state.theme === 'light' ? ' selected' : '') + '>Light</option>';
+    html += '        <option value="emerald"' + (state.theme === 'emerald' ? ' selected' : '') + '>Emerald</option>';
+    html += '        <option value="ruby"' + (state.theme === 'ruby' ? ' selected' : '') + '>Ruby</option>';
+    html += '        <option value="gold"' + (state.theme === 'gold' ? ' selected' : '') + '>Gold</option>';
+    html += '        <option value="ocean"' + (state.theme === 'ocean' ? ' selected' : '') + '>Ocean</option>';
+    html += '        <option value="midnight"' + (state.theme === 'midnight' ? ' selected' : '') + '>Midnight</option>';
+    html += '        <option value="cyberpunk"' + (state.theme === 'cyberpunk' ? ' selected' : '') + '>Cyberpunk</option>';
+    html += '        <option value="sunset"' + (state.theme === 'sunset' ? ' selected' : '') + '>Sunset</option>';
+    html += '        <option value="forest"' + (state.theme === 'forest' ? ' selected' : '') + '>Forest</option>';
+    html += '        <option value="iphone"' + (state.theme === 'iphone' ? ' selected' : '') + '>iOS</option>';
+    html += '        <option value="caution"' + (state.theme === 'caution' ? ' selected' : '') + '>Caution</option>';
+    html += '      </select></label>';
+    html += '      <label>Mesaj Yoğunluğu<select class="modal-input" onchange="updateMessageDensity(this.value)">';
+    html += '        <option value="comfortable"' + ((state.settings?.messageDensity || 'cozy') === 'comfortable' ? ' selected' : '') + '>Konforlu</option>';
+    html += '        <option value="cozy"' + ((state.settings?.messageDensity || 'cozy') === 'cozy' ? ' selected' : '') + '>Rahat</option>';
+    html += '        <option value="compact"' + ((state.settings?.messageDensity || 'cozy') === 'compact' ? ' selected' : '') + '>Kompakt</option>';
+    html += '      </select></label>';
+    html += '      <label>Yazı Boyutu<select class="modal-input" onchange="document.documentElement.style.fontSize=this.value+\'px\';state.settings.fontSize=this.value;localStorage.setItem(\'scord_settings\',JSON.stringify(state.settings))">';
+    html += '        <option value="14"' + ((state.settings?.fontSize || 14) == 14 ? ' selected' : '') + '>Küçük (14px)</option>';
+    html += '        <option value="16"' + ((state.settings?.fontSize || 14) == 16 ? ' selected' : '') + '>Normal (16px)</option>';
+    html += '        <option value="18"' + ((state.settings?.fontSize || 14) == 18 ? ' selected' : '') + '>Büyük (18px)</option>';
+    html += '      </select></label>';
+    html += '      <label class="scord-check"><input type="checkbox" ' + (state.settings?.animations !== false ? 'checked' : '') + ' onchange="toggleAnimations(this.checked)"> Animasyonlar</label>';
+    html += '      <label class="scord-check"><input type="checkbox" ' + (state.settings?.streamerMode ? 'checked' : '') + ' onchange="state.settings.streamerMode=this.checked;localStorage.setItem(\'scord_settings\',JSON.stringify(state.settings))"> Yayıncı Modu (kişisel bilgileri gizle)</label>';
+    html += '    </div>';
+
+    // ── Bildirimler ──────────────────────────────────────
+    html += '    <div class="scord-settings-page hidden" id="set-notifications">';
+    html += '      <h3>Bildirimler</h3>';
+    html += '      <label>Bildirim Sesi <span id="val-notif-vol">' + (vols.notificationVolume || 50) + '%</span><input type="range" min="0" max="100" value="' + (vols.notificationVolume || 50) + '" oninput="updateSetting(\'notificationVolume\',this.value);document.getElementById(\'val-notif-vol\').textContent=this.value+\'%\'"></label>';
+    html += '      <label class="scord-check"><input type="checkbox" ' + (state.settings?.soundEffects !== false ? 'checked' : '') + ' onchange="state.settings.soundEffects=this.checked;localStorage.setItem(\'scord_settings\',JSON.stringify(state.settings))"> Ses Efektleri (join/leave/mesaj)</label>';
+    html += '    </div>';
+
+    // ── Diğer ────────────────────────────────────────────
+    html += '    <div class="scord-settings-page hidden" id="set-advanced">';
+    html += '      <h3>Diğer</h3>';
+    html += '      <label class="scord-check"><input type="checkbox" ' + (state.settings?.compactMode ? 'checked' : '') + ' onchange="state.settings.compactMode=this.checked;localStorage.setItem(\'scord_settings\',JSON.stringify(state.settings))"> Kompakt Mod</label>';
+    html += '      <div class="settings-unique-id">';
+    html += '        <div class="settings-unique-id-label">Unique ID\'n</div>';
+    html += '        <div class="settings-unique-id-row"><span>' + escapeHtml(tag) + '</span><button class="btn-secondary" onclick="copyUniqueId()">Kopyala</button></div>';
+    html += '      </div>';
+    html += '      <button class="btn-secondary" style="width:100%" onclick="showAddFriendModal()">Arkadaş Ekle (ID ile)</button>';
+    html += '    </div>';
+
+    html += '  </section>';
     html += '</div>';
-    // Ses tab
-    html += '<div class="scord-settings-panel" data-panel="ses">';
-    html += '<div style="margin:16px 0;padding:12px 16px;background:rgba(255,255,255,0.03);border-radius:10px;">';
-    html += '<label style="display:flex;justify-content:space-between;align-items:center;font-size:13px;color:#ccc;margin:8px 0;">Bildirim Ses <span id="val-notif-vol" style="color:#fff;font-weight:600;">' + (vols.notificationVolume || 50) + '%</span><input type="range" min="0" max="100" value="' + (vols.notificationVolume || 50) + '" oninput="updateSetting(\'notificationVolume\',this.value);document.getElementById(\'val-notif-vol\').textContent=this.value+\'%\'"></label>';
-    html += '<label style="display:flex;justify-content:space-between;align-items:center;font-size:13px;color:#ccc;margin:8px 0;">Mikrofon Hassasiyeti <span id="val-gate-vol" style="color:#fff;font-weight:600;">' + (vs.gateThreshold || 8) + '</span><input type="range" min="3" max="30" value="' + (vs.gateThreshold || 8) + '" oninput="state.voiceSettings=state.voiceSettings||{};state.voiceSettings.gateThreshold=parseInt(this.value);document.getElementById(\'val-gate-vol\').textContent=this.value;localStorage.setItem(\'scord_voice_settings\',JSON.stringify(state.voiceSettings))"></label>';
-    html += '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#ccc;margin:8px 0;"><input type="checkbox" ' + (state.settings?.soundEffects !== false ? 'checked' : '') + ' onchange="state.settings.soundEffects=this.checked;localStorage.setItem(\'scord_settings\',JSON.stringify(state.settings))"> 🔊 Ses Efektleri (join/leave/message)</label>';
-    html += '<label style="display:flex;justify-content:space-between;align-items:center;font-size:13px;color:#ccc;margin:8px 0;">Mikrofon Ses <span id="val-mic-vol" style="color:#fff;font-weight:600;">' + (vols.micVolume || 80) + '%</span><input type="range" min="0" max="100" value="' + (vols.micVolume || 80) + '" oninput="updateSetting(\'micVolume\',this.value);document.getElementById(\'val-mic-vol\').textContent=this.value+\'%\'"></label>';
-    html += '<label style="display:flex;justify-content:space-between;align-items:center;font-size:13px;color:#ccc;margin:8px 0;">Kulaklık Ses <span id="val-headphone-vol" style="color:#fff;font-weight:600;">' + (vols.headphoneVolume || 80) + '%</span><input type="range" min="0" max="100" value="' + (vols.headphoneVolume || 80) + '" oninput="updateSetting(\'headphoneVolume\',this.value);document.getElementById(\'val-headphone-vol\').textContent=this.value+\'%\'"></label>';
-    html += '<div style="margin-top:12px;border-top:1px solid rgba(255,255,255,0.06);padding-top:12px;">';
-    html += '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#ccc;margin:8px 0;"><input type="checkbox" ' + (vs.noiseSuppression !== false ? 'checked' : '') + ' onchange="state.voiceSettings=state.voiceSettings||{};state.voiceSettings.noiseSuppression=this.checked;localStorage.setItem(\'scord_voice_settings\',JSON.stringify(state.voiceSettings));toast(\'Gurultu engelleme \'+(this.checked?\'acildi\':\'kapatildi\'),\'info\')"> 🎙️ Gürültü Engelleme</label>';
-    html += '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#ccc;margin:8px 0;"><input type="checkbox" ' + (vs.echoCancellation !== false ? 'checked' : '') + ' onchange="state.voiceSettings=state.voiceSettings||{};state.voiceSettings.echoCancellation=this.checked;localStorage.setItem(\'scord_voice_settings\',JSON.stringify(state.voiceSettings));toast(\'Yanki engelleme \'+(this.checked?\'acildi\':\'kapatildi\'),\'info\')"> 🔄 Yankı Engelleme</label>';
-    html += '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#ccc;margin:8px 0;"><input type="checkbox" ' + (vs.autoGainControl === true ? 'checked' : '') + ' onchange="state.voiceSettings=state.voiceSettings||{};state.voiceSettings.autoGainControl=this.checked;localStorage.setItem(\'scord_voice_settings\',JSON.stringify(state.voiceSettings));toast(\'Otomatik seviye \'+(this.checked?\'acildi\':\'kapatildi\'),\'info\')"> 📶 Otomatik Seviye Dengeleme</label>';
-    html += '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#ccc;margin:8px 0;"><input type="checkbox" ' + (vs.gateEnabled === true ? 'checked' : '') + ' onchange="state.voiceSettings=state.voiceSettings||{};state.voiceSettings.gateEnabled=this.checked;localStorage.setItem(\'scord_voice_settings\',JSON.stringify(state.voiceSettings));toast(\'Ses kapisi \'+(this.checked?\'acildi (kelime baslarini kirpabilir)\':\'kapatildi\'),\'info\')"> 🚪 Ses Kapısı (Voice Gate)</label>';
-    html += '<div class="form-group" style="margin-top:12px;"><label class="modal-label" style="font-size:13px;color:#ccc;display:block;margin-bottom:6px;">Mikrofon Cihazı</label><select class="modal-input" id="settings-mic-device" style="width:100%;padding:8px;background:#2a2a3e;border:1px solid #444;border-radius:8px;color:#fff;"><option value="default">Varsayılan</option></select></div>';
-    html += '</div></div></div>';
-    // Görüntü tab
-    html += '<div class="scord-settings-panel" data-panel="goruntu" style="display:none">';
-    html += '<div style="margin:16px 0;padding:12px 16px;background:rgba(255,255,255,0.03);border-radius:10px;">';
-    html += '<label style="display:flex;flex-direction:column;gap:4px;font-size:13px;color:#ccc;margin:8px 0;">Tema <select onchange="selectTheme(this.value)" style="background:#2a2a3e;color:#fff;border:1px solid #444;border-radius:6px;padding:8px;width:100%;">';
-    html += '<option value="sapphire"' + (state.theme === 'sapphire' ? ' selected' : '') + '>Sapphire</option><option value="dark"' + (state.theme === 'dark' ? ' selected' : '') + '>Dark</option><option value="light"' + (state.theme === 'light' ? ' selected' : '') + '>Light</option><option value="emerald"' + (state.theme === 'emerald' ? ' selected' : '') + '>💚 Emerald</option><option value="ruby"' + (state.theme === 'ruby' ? ' selected' : '') + '>💎 Ruby</option><option value="gold"' + (state.theme === 'gold' ? ' selected' : '') + '>✨ Gold</option><option value="ocean"' + (state.theme === 'ocean' ? ' selected' : '') + '>🌊 Ocean</option><option value="midnight"' + (state.theme === 'midnight' ? ' selected' : '') + '>🌙 Midnight</option><option value="sunset"' + (state.theme === 'sunset' ? ' selected' : '') + '>🌅 Sunset</option><option value="forest"' + (state.theme === 'forest' ? ' selected' : '') + '>🌲 Forest</option><option value="iphone"' + (state.theme === 'iphone' ? ' selected' : '') + '>🍎 iPhone</option><option value="cyberpunk"' + (state.theme === 'cyberpunk' ? ' selected' : '') + '>💜 Cyberpunk</option>';
-    html += '</select></label>';
-    html += '<label style="display:flex;flex-direction:column;gap:4px;font-size:13px;color:#ccc;margin:8px 0;">Mesaj Yoğunluğu <select onchange="updateMessageDensity(this.value)" style="background:#2a2a3e;color:#fff;border:1px solid #444;border-radius:6px;padding:8px;width:100%;">';
-    html += '<option value="comfortable"' + ((state.settings?.messageDensity || 'cozy') === 'comfortable' ? ' selected' : '') + '>Konforlu</option><option value="cozy"' + ((state.settings?.messageDensity || 'cozy') === 'cozy' ? ' selected' : '') + '>Rahat</option><option value="compact"' + ((state.settings?.messageDensity || 'cozy') === 'compact' ? ' selected' : '') + '>Kompakt</option>';
-    html += '</select></label>';
-    html += '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#ccc;margin:8px 0;"><input type="checkbox" ' + (state.settings?.animations !== false ? 'checked' : '') + ' onchange="toggleAnimations(this.checked)"> 🎬 Animasyonlar</label>';
-    html += '<label style="display:flex;flex-direction:column;gap:4px;font-size:13px;color:#ccc;margin:8px 0;">Yazı Boyutu <select onchange="document.documentElement.style.fontSize=this.value+\'px\';state.settings.fontSize=this.value;localStorage.setItem(\'scord_settings\',JSON.stringify(state.settings))" style="background:#2a2a3e;color:#fff;border:1px solid #444;border-radius:6px;padding:8px;width:100%;"><option value="14"' + ((state.settings?.fontSize || 14) == 14 ? ' selected' : '') + '>Küçük (14px)</option><option value="16"' + ((state.settings?.fontSize || 14) == 16 ? ' selected' : '') + '>Normal (16px)</option><option value="18"' + ((state.settings?.fontSize || 14) == 18 ? ' selected' : '') + '>Büyük (18px)</option><option value="20"' + ((state.settings?.fontSize || 14) == 20 ? ' selected' : '') + '>Çok Büyük (20px)</option></select></label>';
-    html += '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#ccc;margin:8px 0;"><input type="checkbox" ' + (state.settings?.streamerMode ? 'checked' : '') + ' onchange="state.settings.streamerMode=this.checked;localStorage.setItem(\'scord_settings\',JSON.stringify(state.settings))"> 🎥 Yayıncı Modu (kişisel bilgileri gizle)</label>';
-    html += '</div></div>';
-    // Profil tab
-    html += '<div class="scord-settings-panel" data-panel="profil" style="display:none">';
-    html += '<div style="margin:16px 0;padding:12px 16px;background:rgba(255,255,255,0.03);border-radius:10px;">';
-    html += '<label style="display:flex;flex-direction:column;gap:4px;font-size:13px;color:#ccc;margin:8px 0;">Kullanıcı Adı <input type="text" value="' + escapeHtml(state.username || '') + '" onchange="state.username=this.value;localStorage.setItem(\'scord_username\',this.value);var nb=document.getElementById(\'user-bar-name\');if(nb)nb.textContent=this.value;var sn=document.getElementById(\'sidebar-server-name\');var dm=document.getElementById(\'dm-target-name\');if(sn&&!state.activeServerId)sn.textContent=this.value;if(dm)dm.textContent=\'@\'+this.value;if(state.mesh)state.mesh.broadcast({type:\'broadcast\',payload:{type:\'profile_update\',username:this.value}});if(typeof applyAvatarToElement===\'function\'){var ua=document.getElementById(\'user-bar-avatar\');applyAvatarToElement(ua,state.avatarColor,state.avatarImage,this.value)}" style="background:#2a2a3e;color:#fff;border:1px solid #444;border-radius:6px;padding:8px;width:100%;box-sizing:border-box;"></label>';
-    html += '<label style="display:flex;flex-direction:column;gap:4px;font-size:13px;color:#ccc;margin:8px 0;">Biyografi <textarea onchange="state.bio=this.value;localStorage.setItem(\'scord_bio\',this.value)" style="background:#2a2a3e;color:#fff;border:1px solid #444;border-radius:6px;padding:8px;width:100%;height:80px;box-sizing:border-box;resize:vertical;">' + escapeHtml(state.bio || '') + '</textarea></label>';
-    html += '<label style="display:flex;flex-direction:column;gap:4px;font-size:13px;color:#ccc;margin:8px 0;">Avatar URL <input type="text" value="' + escapeHtml(state.avatarImage || '') + '" onchange="state.avatarImage=this.value;localStorage.setItem(\'scord_avatar_image\',this.value);applyAvatarToElement(document.getElementById(\'user-bar-avatar\'),state.avatarColor,state.avatarImage,state.username)" style="background:#2a2a3e;color:#fff;border:1px solid #444;border-radius:6px;padding:8px;width:100%;box-sizing:border-box;"></label>';
-    html += '<label style="display:flex;flex-direction:column;gap:4px;font-size:13px;color:#ccc;margin:8px 0;">Banner URL <input type="text" value="' + escapeHtml(state.bannerUrl || '') + '" onchange="state.bannerUrl=this.value;localStorage.setItem(\'scord_banner_url\',this.value)" style="background:#2a2a3e;color:#fff;border:1px solid #444;border-radius:6px;padding:8px;width:100%;box-sizing:border-box;"></label>';
-    html += '</div></div>';
-    // Diğer tab
-    html += '<div class="scord-settings-panel" data-panel="diger" style="display:none">';
-    html += '<div style="margin:16px 0;padding:12px 16px;background:rgba(255,255,255,0.03);border-radius:10px;">';
-    html += '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#ccc;"><input type="checkbox" ' + (state.settings?.animations !== false ? 'checked' : '') + ' onchange="updateAnimations(this.checked)"> Animasyonlar</label>';
-    html += '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#ccc;"><input type="checkbox" ' + (state.settings?.compactMode ? 'checked' : '') + ' onchange="state.settings.compactMode=this.checked;localStorage.setItem(\'scord_settings\',JSON.stringify(state.settings))"> Kompakt Mod</label>';
-    html += '<div style="margin-top:12px;padding:10px;background:rgba(255,255,255,0.03);border-radius:8px;">';
-    var _discrim = "0000";
-    if (state.peerId) { var _h = 0; for (var _i = 0; _i < state.peerId.length; _i++) { _h = ((_h << 5) - _h) + state.peerId.charCodeAt(_i); _h |= 0; } _discrim = String(Math.abs(_h) % 9999).padStart(4, "0"); }
-    var _tag = (state.username || "Kullanici") + "#" + _discrim;
-    html += '<div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Senin Unique ID\'n:</div>';
-    html += '<div style="font-family:monospace;font-size:14px;color:#fff;background:rgba(0,0,0,0.3);padding:8px 12px;border-radius:6px;display:flex;justify-content:space-between;align-items:center;"><span>' + _tag + '</span><button onclick="copyUniqueId()" style="background:rgba(99,102,241,0.3);border:none;color:#fff;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:11px;">📋 Kopyala</button></div>';
-    html += '<button onclick="showAddFriendModal()" style="width:100%;margin-top:8px;padding:10px;background:rgba(99,102,241,0.2);border:1px solid rgba(99,102,241,0.3);color:#fff;border-radius:8px;cursor:pointer;font-size:13px;">👥 Arkadaş Ekle (ID ile)</button>';
-    html += '</div></div></div>';
-    html += '</div>';
-    showModal("⚙️ Kullanıcı Ayarları", html, '<button class="btn-secondary" onclick="hideModal()">Kapat</button>');
-    (function hydrateMicDeviceSelect() {
-        var sel = document.getElementById("settings-mic-device");
-        if (!sel || !navigator.mediaDevices?.enumerateDevices) return;
+
+    showModal("Kullanıcı Ayarları", html, "");
+
+    document.querySelectorAll(".scord-settings-nav button[data-tab]").forEach(function (btn) {
+        btn.onclick = function () {
+            document.querySelectorAll(".scord-settings-nav button").forEach(function (b) { b.classList.remove("active"); });
+            document.querySelectorAll(".scord-settings-page").forEach(function (p) { p.classList.add("hidden"); });
+            btn.classList.add("active");
+            document.getElementById("set-" + btn.dataset.tab)?.classList.remove("hidden");
+        };
+    });
+
+    var micSel = document.getElementById("settings-mic-device");
+    if (micSel && navigator.mediaDevices?.enumerateDevices) {
         navigator.mediaDevices.enumerateDevices().then(function (devices) {
             devices.filter(function (d) { return d.kind === "audioinput"; }).forEach(function (d, i) {
                 var opt = document.createElement("option");
                 opt.value = d.deviceId;
                 opt.textContent = d.label || ("Mikrofon " + (i + 1));
-                sel.appendChild(opt);
+                micSel.appendChild(opt);
             });
-            sel.value = (state.voiceSettings && state.voiceSettings.micId) || "default";
+            micSel.value = (state.voiceSettings && state.voiceSettings.micId) || "default";
         }).catch(function () { });
-        sel.onchange = function () {
+        micSel.onchange = function () {
             state.voiceSettings = state.voiceSettings || {};
-            state.voiceSettings.micId = sel.value;
+            state.voiceSettings.micId = micSel.value;
             localStorage.setItem("scord_voice_settings", JSON.stringify(state.voiceSettings));
             toast("Mikrofon değişikliği bir sonraki ses kanalı katılımında uygulanır.", "info");
         };
-    })();
-}
-
-function switchSettingsTab(btn, panel) {
-    document.querySelectorAll('.scord-settings-tab').forEach(function(t) { t.classList.remove('active'); t.style.background = 'transparent'; t.style.color = '#888'; });
-    btn.classList.add('active'); btn.style.background = 'rgba(99,102,241,0.3)'; btn.style.color = '#fff';
-    document.querySelectorAll('.scord-settings-panel').forEach(function(p) { p.style.display = 'none'; });
-    var target = document.querySelector('.scord-settings-panel[data-panel="' + panel + '"]');
-    if (target) target.style.display = 'block';
+    }
 }
 
 function updateSetting(key, val) {
@@ -24234,23 +24396,6 @@ console.log("[App] All features restored: Settings, UI, Animations");
 
 console.log("[App] Final features loaded: Emoji, Mute icons, Context menu, Avatar click, Perf");
 
-// FALLBACK: Force enable login button regardless of initSetup
-setTimeout(function() {
-    var btn = document.getElementById("enter-btn");
-    var nickInput = document.getElementById("username-input");
-    var passInput = document.getElementById("scord-pass-input");
-    if (btn && nickInput && passInput) {
-        function checkFields() { btn.disabled = !nickInput.value.trim() || !passInput.value; btn.style.opacity = btn.disabled ? "0.5" : "1"; btn.style.pointerEvents = btn.disabled ? "none" : "auto"; }
-        nickInput.addEventListener("input", checkFields);
-        passInput.addEventListener("input", checkFields);
-        btn.addEventListener("click", function(e) {
-            if (!btn.disabled) return;
-            var nick = nickInput.value.trim(); var pass = passInput.value;
-            if (nick && pass) { btn.disabled = false; var h = 0; var str = nick.toLowerCase().trim() + ":" + pass; for (var i = 0; i < str.length; i++) { h = ((h << 5) - h) + str.charCodeAt(i); h |= 0; } state.username = nick; state.peerId = "id_" + Math.abs(h).toString(36); localStorage.setItem("scord_username", nick); localStorage.setItem("scord_pass", pass); localStorage.setItem("scord_peer_id", state.peerId); if (typeof startApp === "function") startApp(); }
-        });
-        checkFields();
-    }
-}, 1000);
 
 // ══════════════════════════════════════════════════════════
 // MEGA FIXES: Screen Share, UI, Performance, DM Call
@@ -24299,32 +24444,6 @@ document.addEventListener("click", function(e) {
     }
 });
 
-// FIX 5: Settings checkboxes fix (noise, echo, auto gain) 
-if (typeof window.showUserSettingsModal === "function") {
-    var _origSUSM = window.showUserSettingsModal;
-    window.showUserSettingsModal = function() {
-        _origSUSM.apply(this, arguments);
-        // Fix checkbox handlers after modal renders
-        setTimeout(function() {
-            var inputs = document.querySelectorAll('.scord-settings-group input[type="checkbox"]');
-            inputs.forEach(function(cb) {
-                if (!cb._fixed) {
-                    cb._fixed = true;
-                    cb.style.accentColor = "#6366f1";
-                    cb.style.width = "18px"; cb.style.height = "18px"; cb.style.cursor = "pointer";
-                }
-            });
-            // Fix select styles
-            document.querySelectorAll('.scord-settings-group select').forEach(function(sel) {
-                sel.style.cssText = "background:#2a2a3e;color:#fff;border:1px solid #444;border-radius:8px;padding:10px;width:100%;cursor:pointer;font-size:13px;";
-            });
-            // Fix input styles
-            document.querySelectorAll('.scord-settings-group input[type="text"], .scord-settings-group textarea').forEach(function(inp) {
-                inp.style.cssText = inp.style.cssText + ";border-radius:8px;padding:10px;border:1px solid #444;";
-            });
-        }, 100);
-    };
-}
 
 // FIX 6: Hide music "yayin aktif" compact bar (slider removed at source)
 setTimeout(function() {
@@ -24693,19 +24812,6 @@ setInterval(function() {
     });
 }, 3000);
 
-// 5. SETTINGS SLIDERS CSS FIX
-setTimeout(function() {
-    var s = document.createElement("style");
-    s.id = "scord-settings-fix";
-    s.textContent = [
-        ".scord-settings-group input[type='range']{-webkit-appearance:none!important;appearance:none!important;width:120px!important;height:6px!important;background:rgba(255,255,255,0.1)!important;border-radius:4px!important;cursor:pointer!important;accent-color:#6366f1!important}",
-        ".scord-settings-group input[type='range']::-webkit-slider-thumb{-webkit-appearance:none!important;appearance:none!important;width:16px!important;height:16px!important;border-radius:50%!important;background:linear-gradient(135deg,#6366f1,#8b5cf6)!important;cursor:pointer!important;box-shadow:0 2px 8px rgba(99,102,241,0.4)!important}",
-        ".scord-settings-group input[type='checkbox']{accent-color:#6366f1!important;width:18px!important;height:18px!important;cursor:pointer!important}",
-        ".scord-settings-group select{background:#2a2a3e!important;color:#fff!important;border:1px solid #444!important;border-radius:8px!important;padding:10px!important;width:100%!important;cursor:pointer!important;font-size:13px!important}",
-        ".scord-settings-group input[type='text'],.scord-settings-group textarea{background:#2a2a3e!important;color:#fff!important;border:1px solid #444!important;border-radius:8px!important;padding:10px!important;font-size:13px!important}",
-    ].join("\n");
-    if (!document.getElementById("scord-settings-fix")) document.head.appendChild(s);
-}, 500);
 
 // 6. PERFORMANCE: kill leftover animations on static elements
 setTimeout(function() {
@@ -24831,60 +24937,6 @@ setTimeout(function() {
     console.log("[App] Interval throttler active (min 100ms)");
 }, 10000); // Run after all initial intervals are created
 
-// ══════════════════════════════════════════════════════════
-// NEW SETTINGS TABS: Keybinds + Voice/Video + Notifications
-// ══════════════════════════════════════════════════════════
-(function() {
-    if (window._settingsEnhanced) return;
-    window._settingsEnhanced = true;
-    
-    // Patch showUserSettingsModal to add more tabs
-    var _origSettings = window.showUserSettingsModal;
-    if (_origSettings) {
-        window.showUserSettingsModal = function() {
-            _origSettings.apply(this, arguments);
-            // Add extra tabs after the modal is rendered
-            setTimeout(function() {
-                var tabsDiv = document.querySelector('.scord-settings-tabs');
-                if (!tabsDiv || tabsDiv.querySelector('.scord-settings-tab-extra')) return;
-                
-                // Add Keybinds tab
-                var kbTab = document.createElement('button');
-                kbTab.className = 'scord-settings-tab scord-settings-tab-extra';
-                kbTab.textContent = '⌨️ Tuşlar';
-                kbTab.onclick = function() { switchSettingsTab(kbTab, 'tuslar'); };
-                tabsDiv.appendChild(kbTab);
-                
-                // Add keybinds panel
-                var kbPanel = document.createElement('div');
-                kbPanel.className = 'scord-settings-panel scord-settings-tab-extra';
-                kbPanel.setAttribute('data-panel', 'tuslar');
-                kbPanel.style.display = 'none';
-                kbPanel.innerHTML = '<div style="margin:16px 0;padding:12px 16px;background:rgba(255,255,255,0.03);border-radius:10px;">' +
-                    '<div style="font-size:13px;color:#ccc;margin:8px 0;">Ctrl+M: Mikrofon Aç/Kapat</div>' +
-                    '<div style="font-size:13px;color:#ccc;margin:8px 0;">Ctrl+Shift+M: Ses Aç/Kapat</div>' +
-                    '<div style="font-size:13px;color:#ccc;margin:8px 0;">Esc: Modal Kapat</div>' +
-                    '<div style="font-size:13px;color:#ccc;margin:8px 0;">Ctrl+K: Hızlı Değiştirici</div>' +
-                    '<div style="font-size:13px;color:#ccc;margin:8px 0;">Ctrl+Shift+P: Profil Ayarları</div>' +
-                    '<div style="font-size:13px;color:#ccc;margin:8px 0;">Ctrl+Shift+U: Kullanıcı Ayarları</div>' +
-                    '<div style="font-size:13px;color:#ccc;margin:8px 0;">Ctrl+Shift+F: Tam Ekran</div>' +
-                    '</div>';
-                var panels = document.querySelector('.scord-settings-panel[data-panel="diger"]');
-                if (panels && panels.parentNode) panels.parentNode.appendChild(kbPanel);
-                
-                // Add custom color picker to Goruntu tab
-                var goruntuPanel = document.querySelector('.scord-settings-panel[data-panel="goruntu"]');
-                if (goruntuPanel) {
-                    var colorDiv = goruntuPanel.querySelector('.scord-settings-group');
-                    if (colorDiv && !colorDiv.querySelector('.custom-accent')) {
-                        var accentHtml = '<label style="display:flex;flex-direction:column;gap:4px;font-size:13px;color:#ccc;margin:8px 0;" class="custom-accent">Vurgu Rengi <input type="color" value="' + (state.accentColor || '#6366f1') + '" onchange="document.documentElement.style.setProperty(\'--accent\',this.value);state.accentColor=this.value;localStorage.setItem(\'scord_accent\',this.value)" style="width:60px;height:30px;border:none;cursor:pointer;border-radius:6px;"></label>';
-                        colorDiv.innerHTML += accentHtml;
-                    }
-                }
-            }, 150);
-        };
-    }
-})();
 
 console.log("[App] Right-click blocked, Performance throttled, Settings enhanced");
 
@@ -25355,23 +25407,6 @@ console.log("[App] Volume CSS + Block enforcement loaded");
 // FINAL POLISH: Themes + Modals + Interval cleanup + XSS
 // ══════════════════════════════════════════════════════════
 
-// 1. Add missing themes (forest, ocean) to dropdown
-(function() {
-    if (window._themesDropdownFixed) return;
-    window._themesDropdownFixed = true;
-    // Patch showUserSettingsModal to add forest+ocean
-    var _origSettings2 = window.showUserSettingsModal;
-    if (_origSettings2) {
-        window.showUserSettingsModal = function() {
-            _origSettings2.apply(this, arguments);
-            setTimeout(function() {
-                var sel = document.querySelector('.scord-settings-panel[data-panel="goruntu"] select');
-                if (!sel || sel.querySelector('option[value="forest"]')) return;
-                sel.innerHTML += '<option value="forest">🌲 Forest</option><option value="ocean">🌊 Ocean</option><option value="ruby">💎 Ruby</option><option value="gold">✨ Gold</option><option value="emerald">💚 Emerald</option>';
-            }, 200);
-        };
-    }
-})();
 
 // 2. Connect notification settings modal (Ctrl+Shift+I)
 (function() {
@@ -25390,29 +25425,6 @@ console.log("[App] Volume CSS + Block enforcement loaded");
     }, 3000);
 })();
 
-// 3. Connect theme customization modal (Ctrl+Shift+H)
-(function() {
-    setTimeout(function() {
-        if (!window._themeModalPatched && typeof window.showUserSettingsModal === "function") {
-            window._themeModalPatched = true;
-            var _origSettings3 = window.showUserSettingsModal;
-            window.showUserSettingsModal = function() {
-                _origSettings3.apply(this, arguments);
-                setTimeout(function() {
-                    var goruntuTab = document.querySelector('.scord-settings-tab-extra');
-                    if (!goruntuTab || document.querySelector('.theme-custom-btn')) return;
-                    var btn = document.createElement('button');
-                    btn.className = 'theme-custom-btn';
-                    btn.style.cssText = "width:100%;margin-top:8px;padding:10px;background:rgba(99,102,241,0.2);border:1px solid rgba(99,102,241,0.3);color:#fff;border-radius:8px;cursor:pointer;font-size:13px;";
-                    btn.textContent = "🎨 Gelişmiş Tema Ayarları";
-                    btn.onclick = function() { if (typeof showThemeSettingsModal === "function") { hideModal(); showThemeSettingsModal(); } };
-                    var panel = document.querySelector('.scord-settings-panel[data-panel="goruntu"]');
-                    if (panel) panel.appendChild(btn);
-                }, 200);
-            };
-        }
-    }, 500);
-})();
 
 // 4. Interval cleanup: clear known pollers after timeout
 setTimeout(function() {
@@ -25465,27 +25477,6 @@ setTimeout(function() {
     }, 2000);
 }, 1000);
 
-// 4. Profile avatar preview in settings
-(function() {
-    if (window._profilePreviewPatched) return;
-    window._profilePreviewPatched = true;
-    setTimeout(function() {
-        if (typeof window.showUserSettingsModal !== "function") return;
-        var _origSP = window.showUserSettingsModal;
-        window.showUserSettingsModal = function() {
-            _origSP.apply(this, arguments);
-            setTimeout(function() {
-                var profilPanel = document.querySelector('.scord-settings-panel[data-panel="profil"]');
-                if (!profilPanel || profilPanel.querySelector(".scord-avatar-preview")) return;
-                var preview = document.createElement("div");
-                preview.className = "scord-avatar-preview";
-                var av = state.avatarImage || "";
-                preview.innerHTML = '<div style="display:flex;align-items:center;gap:16px;padding:12px;background:rgba(0,0,0,0.2);border-radius:10px;margin-bottom:8px;"><div style="width:64px;height:64px;border-radius:50%;background-color:'+(state.avatarColor||"#5865f2")+';background-image:url('+av+');background-size:cover;display:flex;align-items:center;justify-content:center;font-size:28px;color:#fff;font-weight:700;border:3px solid rgba(255,255,255,0.1);">'+(av?"":(state.username||"?").charAt(0).toUpperCase())+'</div><div><div style="font-size:14px;font-weight:600;color:#fff;">'+(state.username||"?")+'</div><div style="font-size:11px;color:var(--text-muted);">Profil önizleme</div></div></div>';
-                profilPanel.querySelector('.scord-settings-group').insertBefore(preview.firstChild, profilPanel.querySelector('.scord-settings-group').firstChild);
-            }, 200);
-        };
-    }, 500);
-})();
 
 // 5. Server delete → clean up members' local server list
 (function() {
@@ -25543,21 +25534,6 @@ console.log("[App] Critical fixes: Animations OFF, Emoji realtime, Sound OFF, Pr
 // SETTINGS LAYOUT FIX + FONT SIZE + PROFILE SYNC
 // ══════════════════════════════════════════════════════════
 
-// 1. Settings CSS fix - prevent labels from breaking
-(function() {
-    if (document.getElementById("scord-settings-layout-fix")) return;
-    var s = document.createElement("style");
-    s.id = "scord-settings-layout-fix";
-    s.textContent = [
-        ".scord-settings-group label{display:flex!important;flex-direction:column!important;gap:6px!important;font-size:13px!important;color:#ccc!important;margin:10px 0!important;text-align:left!important}",
-        ".scord-settings-group label input[type='range']{width:100%!important;max-width:200px!important}",
-        ".scord-settings-group label input[type='checkbox']{width:18px!important;height:18px!important;margin-right:8px!important}",
-        ".scord-settings-group label span.val{color:#fff!important;font-weight:600!important;margin-left:auto!important}",
-        ".scord-settings-tabs{display:flex!important;flex-wrap:wrap!important}",
-        ".scord-settings-tab{padding:8px 10px!important;font-size:11px!important}",
-    ].join("\n");
-    document.head.appendChild(s);
-})();
 
 // 2. Font size - apply to messages and chat
 (function() {
@@ -25613,49 +25589,8 @@ setInterval(function() {
     }
 })();
 
-// 4. Trigger profile sync on avatar/banner/bio change
-setTimeout(function() {
-    var avatarInput = document.querySelector('.scord-settings-panel[data-panel="profil"] input[type="text"]');
-    if (avatarInput && !avatarInput.dataset.syncPatched) {
-        avatarInput.dataset.syncPatched = "1";
-        var origChange = avatarInput.onchange;
-        avatarInput.onchange = function(e) {
-            if (origChange) origChange.call(this, e);
-            if (state.mesh) {
-                state.mesh.broadcast({
-                    type: "profile_sync",
-                    peerId: state.peerId,
-                    username: state.username,
-                    avatarImage: state.avatarImage || "",
-                    avatarColor: state.avatarColor || "#5865f2",
-                    bannerUrl: state.bannerUrl || "",
-                    bio: state.bio || "",
-                });
-            }
-        };
-    }
-}, 2000);
 
 
-// Update member list avatars when profile changes
-document.addEventListener("DOMContentLoaded", function() {
-    var avatarInput = document.querySelector('.scord-settings-panel[data-panel="profil"] input[type="text"]');
-    if (avatarInput) {
-        avatarInput.addEventListener("change", function() {
-            setTimeout(function() {
-                // Update all member items with same peerId
-                if (typeof updateMembersPanel === "function" && state.activeServerId) {
-                    updateMembersPanel(state.activeServerId);
-                }
-                // Update user bar avatar
-                var ua = document.getElementById("user-bar-avatar");
-                if (ua && typeof applyAvatarToElement === "function") {
-                    applyAvatarToElement(ua, state.avatarColor, state.avatarImage, state.username);
-                }
-            }, 100);
-        });
-    }
-});
 
 console.log("[App] Theme 12 + Profile sync + updateTheme fix loaded");
 
@@ -25779,64 +25714,8 @@ console.log("[App] Member avatars + Profile click + Theme guarantee loaded");
 // SETTINGS LAYOUT VERTICAL + PROFILE PREVIEW + ANIMATIONS OFF + THEME
 // ══════════════════════════════════════════════════════════
 
-// 1. Settings layout: vertical labels (not horizontal)
-(function() {
-    if (document.getElementById("scord-settings-vfix")) return;
-    var s = document.createElement("style");
-    s.id = "scord-settings-vfix";
-    s.textContent = [
-        ".scord-settings-group label{display:flex!important;flex-direction:column!important;align-items:flex-start!important;gap:4px!important;padding:8px 0!important;border-bottom:1px solid rgba(255,255,255,0.04)!important}",
-        ".scord-settings-group label input[type='range']{width:100%!important;max-width:100%!important}",
-        ".scord-settings-group label select{width:100%!important;max-width:100%!important}",
-        ".scord-settings-group label span.val{display:block!important;font-size:18px!important;color:#fff!important;font-weight:700!important;margin:4px 0!important}",
-        ".scord-settings-group label input[type='text'],.scord-settings-group label textarea{width:100%!important;max-width:100%!important}",
-    ].join("\n");
-    document.head.appendChild(s);
-})();
 
-// 2. Profile preview: avatar + banner in Profil tab
-(function() {
-    if (window._profilePreview2) return;
-    window._profilePreview2 = true;
-    var _origSHOW = window.showUserSettingsModal;
-    if (_origSHOW) {
-        window.showUserSettingsModal = function() {
-            _origSHOW.apply(this, arguments);
-            setTimeout(function() {
-                var panel = document.querySelector('.scord-settings-panel[data-panel="profil"]');
-                if (!panel || panel.querySelector(".scord-profile-av")) return;
-                var group = panel.querySelector('.scord-settings-group');
-                if (!group) return;
-                // Avatar preview
-                var av = state.avatarImage || "";
-                var color = state.avatarColor || "#5865f2";
-                var n = (state.username || "?").charAt(0).toUpperCase();
-                var preview = document.createElement("div");
-                preview.className = "scord-profile-av";
-                preview.style.cssText = "display:flex;align-items:center;gap:16px;padding:16px;background:rgba(0,0,0,0.3);border-radius:12px;margin-bottom:12px;";
-                preview.innerHTML = '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">' +
-                    '<div style="width:72px;height:72px;border-radius:50%;background-color:'+color+';background-image:url('+av+');background-size:cover;display:flex;align-items:center;justify-content:center;font-size:32px;color:#fff;font-weight:700;border:4px solid rgba(255,255,255,0.15);flex-shrink:0;">'+(av?"":n)+'</div>' +
-                    '<div><div style="font-size:16px;font-weight:700;color:#fff;">'+(state.username||"?")+'</div><div style="font-size:12px;color:var(--text-muted);">'+(state.bio?state.bio.slice(0,50):"Henuz biyografi yok")+'</div></div>' +
-                    '<div style="width:100%;height:60px;background:'+(state.bannerUrl?'url('+state.bannerUrl+') center/cover':'linear-gradient(135deg,'+color+',#333)')+';border-radius:8px;margin-top:8px;"></div>' +
-                    '</div>';
-                group.insertBefore(preview, group.firstChild);
-            }, 200);
-        };
-    }
-})();
 
-// 3. Animations: GUARANTEED OFF - aggressive CSS + HTML attribute
-(function() {
-    // Set on HTML element immediately
-    document.documentElement.setAttribute("data-animations", "off");
-    // Aggressive CSS
-    var s = document.createElement("style");
-    s.id = "scord-anim-off";
-    s.textContent = "html[data-animations=\"off\"],html[data-animations=\"off\"] *,html[data-animations=\"off\"] *::before,html[data-animations=\"off\"] *::after{transition-duration:0s!important;transition-delay:0s!important;animation-duration:0s!important;animation-delay:0s!important;animation-name:none!important;animation-iteration-count:0!important}html[data-animations=\"off\"] .btn-primary:hover,html[data-animations=\"off\"] .btn-secondary:hover{transform:none!important}";
-    document.head.appendChild(s);
-    // Re-enforce every 5 seconds
-    setInterval(function() { document.documentElement.setAttribute("data-animations", "off"); }, 5000);
-})();
 
 // 4. New theme: Caution (Yellow/Black)
 (function() {
@@ -25865,13 +25744,6 @@ console.log("[App] Member avatars + Profile click + Theme guarantee loaded");
             return _origAT.apply(this, arguments);
         };
     }
-    // Add to dropdown
-    setTimeout(function() {
-        var sel = document.querySelector('.scord-settings-panel[data-panel="goruntu"] select');
-        if (sel && !sel.querySelector('option[value="caution"]')) {
-            sel.innerHTML += '<option value="caution">⚠️ Caution</option>';
-        }
-    }, 3000);
 })();
 
 console.log("[App] Settings V-layout + Profile preview + Animations OFF + Caution theme loaded");

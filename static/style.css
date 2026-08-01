@@ -10226,3 +10226,490 @@ input, textarea, select, button {
 }
 
 
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SCORD 2026 — görsel kimlik katmanı
+   Amaç: "Discord klonu" hissini kırmak. Kendi renk imzamız (menekşe → camgöbeği
+   duotone), display tipografi (Space Grotesk), aurora arkaplan, cam doku,
+   tanecik (grain) ve mikro-etkileşimler. Katman en sonda: cascade'i kazanır.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  --sc-a: #a78bfa;            /* menekşe */
+  --sc-b: #22d3ee;            /* camgöbeği */
+  --sc-ink: #0b0714;          /* en koyu zemin */
+  --sc-grad: linear-gradient(135deg, var(--sc-a), var(--sc-b));
+  --sc-glow-a: rgba(167, 139, 250, 0.35);
+  --sc-glow-b: rgba(34, 211, 238, 0.25);
+  --sc-display: "Space Grotesk", "Inter", sans-serif;
+}
+
+/* ── Login / hero ekranı ──────────────────────────────────────────────────── */
+
+#setup-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background:
+    radial-gradient(1200px 800px at 15% 0%, #17102b 0%, transparent 60%),
+    radial-gradient(1000px 700px at 100% 100%, #062a33 0%, transparent 55%),
+    var(--sc-ink);
+  z-index: 1000;
+}
+
+/* Tanecik dokusu — düz degrade yüzeylerin "ucuz" görünmesini engeller */
+#setup-overlay::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.05;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
+}
+
+.aurora-bg {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  filter: blur(90px) saturate(1.3);
+}
+
+.aurora-blob {
+  position: absolute;
+  border-radius: 50%;
+  opacity: 0.5;
+  will-change: transform;
+}
+
+.aurora-blob--1 {
+  width: 46vw; height: 46vw;
+  left: -12vw; top: -14vh;
+  background: radial-gradient(circle at 30% 30%, #7c3aed, transparent 65%);
+  animation: sc-drift-1 26s ease-in-out infinite alternate;
+}
+
+.aurora-blob--2 {
+  width: 38vw; height: 38vw;
+  right: -10vw; bottom: -16vh;
+  background: radial-gradient(circle at 70% 60%, #0891b2, transparent 65%);
+  animation: sc-drift-2 32s ease-in-out infinite alternate;
+}
+
+.aurora-blob--3 {
+  width: 26vw; height: 26vw;
+  left: 42vw; top: 46vh;
+  background: radial-gradient(circle at 50% 50%, #db2777, transparent 60%);
+  opacity: 0.22;
+  animation: sc-drift-3 40s ease-in-out infinite alternate;
+}
+
+@keyframes sc-drift-1 { from { transform: translate(0, 0) scale(1); } to { transform: translate(9vw, 12vh) scale(1.15); } }
+@keyframes sc-drift-2 { from { transform: translate(0, 0) scale(1.1); } to { transform: translate(-8vw, -10vh) scale(0.95); } }
+@keyframes sc-drift-3 { from { transform: translate(0, 0); } to { transform: translate(-14vw, -8vh); } }
+
+.setup-split {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(340px, 420px);
+  gap: clamp(32px, 6vw, 96px);
+  align-items: center;
+  width: min(1080px, 92vw);
+  animation: sc-fade-up 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes sc-fade-up {
+  from { opacity: 0; transform: translateY(24px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.setup-hero-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: clamp(20px, 4vh, 40px);
+}
+
+.setup-hero-wordmark {
+  font-family: var(--sc-display);
+  font-weight: 700;
+  font-size: 20px;
+  letter-spacing: 0.22em;
+  color: #f5f3ff;
+}
+
+.setup-hero-title {
+  font-family: var(--sc-display);
+  font-size: clamp(38px, 5.2vw, 64px);
+  font-weight: 700;
+  line-height: 1.04;
+  letter-spacing: -0.02em;
+  color: #f8fafc;
+  margin: 0 0 18px;
+}
+
+.setup-hero-title em {
+  font-style: normal;
+  background: var(--sc-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.setup-hero-sub {
+  max-width: 46ch;
+  color: rgba(226, 232, 240, 0.72);
+  font-size: 15px;
+  line-height: 1.65;
+  margin: 0 0 26px;
+}
+
+/* Ses dalgası — platformun "sesli" kimliğini tek bakışta anlatır */
+.setup-hero-wave {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 44px;
+  margin-bottom: 26px;
+}
+
+.setup-hero-wave span {
+  width: 4px;
+  border-radius: 4px;
+  background: var(--sc-grad);
+  height: 100%;
+  transform-origin: center;
+  animation: sc-wave 1.5s ease-in-out infinite;
+}
+
+.setup-hero-wave span:nth-child(1) { animation-delay: 0.00s; }
+.setup-hero-wave span:nth-child(2) { animation-delay: 0.10s; }
+.setup-hero-wave span:nth-child(3) { animation-delay: 0.20s; }
+.setup-hero-wave span:nth-child(4) { animation-delay: 0.30s; }
+.setup-hero-wave span:nth-child(5) { animation-delay: 0.40s; }
+.setup-hero-wave span:nth-child(6) { animation-delay: 0.50s; }
+.setup-hero-wave span:nth-child(7) { animation-delay: 0.60s; }
+.setup-hero-wave span:nth-child(8) { animation-delay: 0.70s; }
+.setup-hero-wave span:nth-child(9) { animation-delay: 0.80s; }
+.setup-hero-wave span:nth-child(10) { animation-delay: 0.90s; }
+.setup-hero-wave span:nth-child(11) { animation-delay: 1.00s; }
+.setup-hero-wave span:nth-child(12) { animation-delay: 1.10s; }
+
+@keyframes sc-wave {
+  0%, 100% { transform: scaleY(0.25); opacity: 0.55; }
+  50% { transform: scaleY(1); opacity: 1; }
+}
+
+.setup-hero-feats {
+  list-style: none;
+  display: grid;
+  gap: 12px;
+  padding: 0;
+  margin: 0;
+}
+
+.setup-hero-feats li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: rgba(226, 232, 240, 0.82);
+  font-size: 14px;
+}
+
+.feat-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--sc-grad);
+  box-shadow: 0 0 10px var(--sc-glow-a);
+  flex-shrink: 0;
+}
+
+/* Login kartı — cam panel + degrade kenar */
+#setup-overlay .setup-card {
+  position: relative;
+  width: 100%;
+  max-width: 420px;
+  padding: 34px 32px 30px;
+  border-radius: 20px;
+  background: rgba(17, 12, 32, 0.66);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow:
+    0 24px 70px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  text-align: left;
+}
+
+#setup-overlay .setup-card::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: 21px;
+  padding: 1px;
+  background: linear-gradient(160deg, var(--sc-glow-a), transparent 35%, transparent 70%, var(--sc-glow-b));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+#setup-overlay .setup-title {
+  font-family: var(--sc-display);
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 0 0 6px;
+  color: #f8fafc;
+}
+
+#setup-overlay .setup-sub {
+  color: rgba(203, 213, 225, 0.65);
+  font-size: 13.5px;
+  margin: 0 0 22px;
+}
+
+.auth-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  margin-bottom: 18px;
+}
+
+.auth-tab {
+  border: 0;
+  border-radius: 9px;
+  padding: 9px 0;
+  font-size: 13.5px;
+  font-weight: 650;
+  font-family: inherit;
+  color: rgba(203, 213, 225, 0.6);
+  background: transparent;
+  cursor: pointer;
+  transition: color 0.18s, background 0.18s, box-shadow 0.18s;
+}
+
+.auth-tab:hover { color: #e2e8f0; }
+
+.auth-tab.active {
+  color: #fff !important;
+  background: var(--sc-grad);
+  box-shadow: 0 4px 18px var(--sc-glow-a);
+}
+
+.auth-error {
+  margin-bottom: 14px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  color: #fecaca;
+  background: rgba(153, 27, 27, 0.25);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+}
+
+#setup-overlay .form-group label {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.85);
+  margin-bottom: 7px;
+}
+
+#setup-overlay .form-group input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px 15px;
+  border-radius: 11px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(2, 2, 8, 0.45);
+  color: #f1f5f9;
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.18s, box-shadow 0.18s;
+}
+
+#setup-overlay .form-group input:focus {
+  border-color: var(--sc-a);
+  box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.18);
+}
+
+#setup-overlay .setup-hint {
+  font-size: 12px;
+  color: rgba(148, 163, 184, 0.55);
+  margin: 14px 0 16px;
+}
+
+#setup-overlay #enter-btn {
+  width: 100%;
+  padding: 13px 0;
+  border: 0;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 700;
+  font-family: var(--sc-display);
+  letter-spacing: 0.02em;
+  color: #fff;
+  background: var(--sc-grad);
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.2s, opacity 0.15s;
+  box-shadow: 0 8px 28px var(--sc-glow-a);
+}
+
+#setup-overlay #enter-btn:not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 36px var(--sc-glow-a), 0 4px 18px var(--sc-glow-b);
+}
+
+#setup-overlay #enter-btn:disabled { cursor: not-allowed; }
+
+@media (max-width: 900px) {
+  .setup-split { grid-template-columns: 1fr; width: min(440px, 92vw); }
+  .setup-hero { display: none; }
+}
+
+/* ── Uygulama içi kimlik dokunuşları ─────────────────────────────────────── */
+
+/* Display tipografi: başlıklar ve marka alanları */
+.sidebar-header .server-name,
+#modal-title,
+.home-view h2,
+.home-view h3,
+.scord-settings-page h3,
+.scord-server-settings-main h2 {
+  font-family: var(--sc-display);
+  letter-spacing: -0.01em;
+}
+
+/* Seçim rengi ve odak halkası — marka imzası */
+::selection { background: rgba(167, 139, 250, 0.35); color: #fff; }
+
+:focus-visible {
+  outline: 2px solid var(--sc-a);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Sunucu rayı: yumuşak squircle morph + aktif göstergesi */
+.server-rail .rail-icon,
+.server-rail-item {
+  transition: border-radius 0.22s cubic-bezier(0.16, 1, 0.3, 1), background 0.18s, box-shadow 0.2s !important;
+}
+
+.server-rail .rail-icon:hover,
+.server-rail-item:hover {
+  border-radius: 14px !important;
+  box-shadow: 0 6px 20px var(--sc-glow-a);
+}
+
+/* Ana ekran kartları: degrade kenar + kalkış */
+.room-card,
+.home-view .server-card {
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.25s, border-color 0.2s;
+}
+
+.room-card:hover,
+.home-view .server-card:hover {
+  transform: translateY(-3px);
+  border-color: rgba(167, 139, 250, 0.4) !important;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45), 0 4px 20px var(--sc-glow-a);
+}
+
+/* Modal: cam yüzey yükseltmesi */
+.modal {
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  box-shadow: 0 32px 90px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
+}
+
+/* Ayarlar: hesap kartı ve unique-id bileşenleri */
+.settings-account-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 18px;
+  border-radius: 14px;
+  background: linear-gradient(160deg, rgba(167, 139, 250, 0.10), rgba(34, 211, 238, 0.06));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.settings-account-avatar {
+  width: 68px; height: 68px;
+  border-radius: 50%;
+  background-size: cover;
+  background-position: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  font-weight: 700;
+  color: #fff;
+  border: 3px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 6px 24px var(--sc-glow-a);
+  flex-shrink: 0;
+}
+
+.settings-account-info { display: grid; gap: 2px; }
+.settings-account-info strong { font-family: var(--sc-display); font-size: 18px; color: #f8fafc; }
+.settings-account-info span { font-size: 13px; color: rgba(148, 163, 184, 0.8); font-family: monospace; }
+
+.settings-hint {
+  font-size: 13px;
+  line-height: 1.6;
+  color: rgba(148, 163, 184, 0.75);
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  margin: 0;
+}
+
+.settings-unique-id {
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.settings-unique-id-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.7);
+  margin-bottom: 8px;
+}
+
+.settings-unique-id-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-family: monospace;
+  font-size: 14px;
+  color: #f1f5f9;
+}
+
+/* Toast: cam çip */
+.toast {
+  backdrop-filter: blur(14px) !important;
+  -webkit-backdrop-filter: blur(14px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+}
+
+/* Sohbet girişi odak: marka halkası */
+#chat-input:focus {
+  border-color: var(--sc-a) !important;
+  box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.15) !important;
+}
+
+/* data-animations="off" iken aurora/dalga durur (global kural zaten
+   animation-duration'ı sıfırlıyor; blur'lu bloblar statik degrade olur). */

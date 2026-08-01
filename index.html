@@ -4,11 +4,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SCORD</title>
-  <meta name="description" content="SCORD - Discord-like chat and voice app" />
+  <title>SCORD — Sesin, senin ağında</title>
+  <meta name="description" content="SCORD — uçtan uca P2P sesli sohbet platformu. Sunucu yok, aracı yok: sesin doğrudan arkadaşlarına akar." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="static/style.css" />
   <script src="https://www.youtube.com/iframe_api"></script>
 </head>
@@ -21,39 +21,69 @@
 
   <!-- ── Setup / Onboarding Overlay ─────────────────────────────────────────── -->
   <div id="setup-overlay" class="overlay active">
-    <div class="setup-card">
-      <div class="setup-logo">
-        <svg width="56" height="56" viewBox="0 0 56 56" fill="none">
-          <circle cx="28" cy="28" r="28" fill="url(#grad1)" />
-          <path d="M18 20c4-3 16-3 20 0l1 10c-6 5-16 5-22 0l1-10z" fill="white" opacity=".9" />
-          <circle cx="22" cy="26" r="2.5" fill="#1a1a2e" />
-          <circle cx="34" cy="26" r="2.5" fill="#1a1a2e" />
-          <defs>
-            <linearGradient id="grad1" x1="0" y1="0" x2="56" y2="56" gradientUnits="userSpaceOnUse">
-              <stop stop-color="#7c3aed" />
-              <stop offset="1" stop-color="#4f46e5" />
-            </linearGradient>
-          </defs>
-        </svg>
+    <div class="aurora-bg" aria-hidden="true">
+      <div class="aurora-blob aurora-blob--1"></div>
+      <div class="aurora-blob aurora-blob--2"></div>
+      <div class="aurora-blob aurora-blob--3"></div>
+    </div>
+    <div class="setup-split">
+      <section class="setup-hero" aria-hidden="true">
+        <div class="setup-hero-brand">
+          <svg width="44" height="44" viewBox="0 0 56 56" fill="none">
+            <circle cx="28" cy="28" r="28" fill="url(#grad1)" />
+            <path d="M18 20c4-3 16-3 20 0l1 10c-6 5-16 5-22 0l1-10z" fill="white" opacity=".9" />
+            <circle cx="22" cy="26" r="2.5" fill="#0b0714" />
+            <circle cx="34" cy="26" r="2.5" fill="#0b0714" />
+            <defs>
+              <linearGradient id="grad1" x1="0" y1="0" x2="56" y2="56" gradientUnits="userSpaceOnUse">
+                <stop stop-color="#a78bfa" />
+                <stop offset="1" stop-color="#22d3ee" />
+              </linearGradient>
+            </defs>
+          </svg>
+          <span class="setup-hero-wordmark">SCORD</span>
+        </div>
+        <h2 class="setup-hero-title">Sesin,<br /><em>senin ağında.</em></h2>
+        <p class="setup-hero-sub">Sunucu yok, aracı yok. Sesin ve mesajların doğrudan arkadaşlarına akar — uçtan uca P2P.</p>
+        <div class="setup-hero-wave" aria-hidden="true">
+          <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+        </div>
+        <ul class="setup-hero-feats">
+          <li><span class="feat-dot"></span>Kristal netliğinde P2P ses</li>
+          <li><span class="feat-dot"></span>Ekran paylaşımı &amp; kamera</li>
+          <li><span class="feat-dot"></span>Hesabın her cihazda seninle</li>
+        </ul>
+      </section>
+      <div class="setup-card">
+        <h1 class="setup-title">Tekrar hoş geldin</h1>
+        <p class="setup-sub">Hesabınla giriş yap ya da yeni bir hesap oluştur.</p>
+
+        <div class="auth-tabs" role="tablist">
+          <button type="button" class="auth-tab active" id="auth-tab-login" onclick="switchAuthTab('login')">Giriş Yap</button>
+          <button type="button" class="auth-tab" id="auth-tab-register" onclick="switchAuthTab('register')">Kayıt Ol</button>
+        </div>
+
+        <div id="auth-error" class="auth-error hidden"></div>
+
+        <div class="form-group">
+          <label for="username-input">Kullanıcı Adı</label>
+          <input id="username-input" type="text" placeholder="Kullanıcı adın..." maxlength="32" autocomplete="username" />
+        </div>
+
+        <div class="form-group" style="margin-top:12px;">
+          <label for="scord-pass-input">Şifre</label>
+          <input id="scord-pass-input" type="password" placeholder="Şifren" maxlength="64" autocomplete="current-password" />
+        </div>
+
+        <div class="form-group hidden" id="auth-confirm-group" style="margin-top:12px;">
+          <label for="scord-pass-confirm-input">Şifreni Onayla</label>
+          <input id="scord-pass-confirm-input" type="password" placeholder="Şifreni tekrar gir" maxlength="64" autocomplete="new-password" />
+        </div>
+
+        <p class="setup-hint" id="auth-hint">Giriş yaptıktan sonra ayarlardan profilini özelleştirebilirsin.</p>
+
+        <button id="enter-btn" class="btn-primary" disabled>Giriş Yap</button>
       </div>
-      <h1 class="setup-title">SCORD'a Hoş Geldin</h1>
-       <p class="setup-sub">Tamamen güvenli — merkezi sunucu yok.</p>
-
-      <div class="form-group">
-        <label for="username-input">Kullanıcı Adı</label>
-        <input id="username-input" type="text" placeholder="Bir kullanıcı adı seç..." maxlength="32"
-          autocomplete="off" />
-      </div>
-
-      <div class="form-group" style="margin-top:12px;">
-        <label for="scord-pass-input">Şifre</label>
-        <input id="scord-pass-input" type="password" placeholder="Şifreni gir" maxlength="64" 
-          autocomplete="off" style="width:100%;padding:10px 14px;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,0.06);color:#fff;font-size:14px;outline:none;box-sizing:border-box;" />
-      </div>
-
-      <p class="setup-hint">Giriş yaptıktan sonra ayarlardan profilini özelleştirebilirsin.</p>
-
-      <button id="enter-btn" class="btn-primary" disabled>Giriş Yap</button>
     </div>
   </div>
 
