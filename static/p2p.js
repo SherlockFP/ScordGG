@@ -162,6 +162,14 @@ class P2PMesh {
                 this.cb.onMessage?.(msg.from, msg.data);
                 break;
 
+            case "room_deleted":
+                // Sunucu tarafında silindi: yeniden bağlanma döngüsüne girmeden
+                // app.js'e haber ver, sonra kendimizi kapat.
+                this.cb.onServerEvent?.(msg);
+                this._terminal = true;
+                this.disconnect();
+                break;
+
             case "voice_state_snapshot":
             case "voice_state":
             case "media_status":
@@ -179,7 +187,12 @@ class P2PMesh {
             case "error":
                 console.error("[P2P] Server error:", msg.message);
                 if (String(msg.message || "").toLowerCase().includes("room not found")) {
+                    // Sunucu bu odayı tanımıyor (silinmiş/redeploy sonrası kaybolmuş).
+                    // Sonsuz 3sn reconnect döngüsüne girmeyi burada kes; app.js
+                    // reconcile akışıyla karar versin (restore dener ya da temizler).
+                    this._terminal = true;
                     this.cb.onStatusChange?.("room_not_found");
+                    this.disconnect();
                 } else {
                     this.cb.onStatusChange?.("server_error");
                 }
@@ -188,6 +201,29 @@ class P2PMesh {
     }
 
     /* ── Create a peer connection ─────────────────────────────── */
+    /**
+     * Opus SDP ayarı: tarayıcı varsayılanı ~32kbps mono ve FEC kapalı gelir.
+     * Burada bitrate/FEC açıkça istenerek konuşma netliği artırılır.
+     */
+    _tuneOpusSdp(sdp) {
+        try {
+            const lines = sdp.split("\r\n");
+            const rtpmapIdx = lines.findIndex(l => /^a=rtpmap:\d+ opus\/48000/i.test(l));
+            if (rtpmapIdx === -1) return sdp;
+            const pt = lines[rtpmapIdx].match(/^a=rtpmap:(\d+)/)[1];
+            const tuned = "maxaveragebitrate=64000;maxplaybackrate=48000;stereo=0;useinbandfec=1;usedtx=0";
+            const fmtpIdx = lines.findIndex(l => l.startsWith(`a=fmtp:${pt}`));
+            if (fmtpIdx !== -1) {
+                if (!/maxaveragebitrate/.test(lines[fmtpIdx])) lines[fmtpIdx] += `;${tuned}`;
+            } else {
+                lines.splice(rtpmapIdx + 1, 0, `a=fmtp:${pt} ${tuned}`);
+            }
+            return lines.join("\r\n");
+        } catch {
+            return sdp;
+        }
+    }
+
     async _initiatePeer(peerId, info, makeOffer) {
         if (this.peers[peerId]) return; // already connected
 
@@ -264,6 +300,7 @@ class P2PMesh {
                         offerToReceiveAudio: true,
                         offerToReceiveVideo: true,
                     });
+                    offer.sdp = this._tuneOpusSdp(offer.sdp);
                     await pc.setLocalDescription(offer);
 
                     this._send({ type: "offer", target: peerId, sdp: pc.localDescription });
@@ -297,6 +334,7 @@ class P2PMesh {
                 offerToReceiveAudio: true,
                 offerToReceiveVideo: true,
             });
+            offer.sdp = this._tuneOpusSdp(offer.sdp);
             await pc.setLocalDescription(offer);
             this._send({ type: "offer", target: peerId, sdp: pc.localDescription });
         } else {
@@ -366,6 +404,7 @@ class P2PMesh {
             offerToReceiveAudio: true,
             offerToReceiveVideo: true,
         });
+        answer.sdp = this._tuneOpusSdp(answer.sdp);
         await pc.setLocalDescription(answer);
         this._send({ type: "answer", target: fromId, sdp: pc.localDescription });
     }
@@ -399,6 +438,7 @@ class P2PMesh {
         p.dc && p.dc.close();
         p.pc.close();
         delete this.peers[peerId];
+        if (this.remoteStreams) delete this.remoteStreams[peerId];
     }
 
     /* ── Send text message over DataChannels ──────────────────── */
@@ -451,7 +491,10 @@ class P2PMesh {
     /* ── Voice ───────────────────────────────────────────────── */
     async startVoice(stream = null) {
         try {
-            this.localStream = stream || await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+            this.localStream = stream || await navigator.mediaDevices.getUserMedia({
+                audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+                video: false,
+            });
             this.voiceActive = true;
             for (const [, peerObj] of Object.entries(this.peers)) {
                 this.localStream.getTracks().forEach(t => {
@@ -483,20 +526,24 @@ class P2PMesh {
     /* ── Screen Sharing ──────────────────────────────────────── */
     async startScreenShare() {
         try {
-            this.screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+            this.screenStream = await navigator.mediaDevices.getDisplayMedia({
+                video: { cursor: "always" },
+                audio: true,
+            });
 
-            const screenTrack = this.screenStream.getVideoTracks()[0];
-            screenTrack.onended = () => {
-                this.stopScreenShare();
-            };
+            const videoTrack = this.screenStream.getVideoTracks()[0];
+            if (videoTrack) videoTrack.contentHint = "detail";
+            if (videoTrack) videoTrack.onended = () => this.stopScreenShare();
 
-            // Add track to all existing peers -> triggers onnegotiationneeded automatically
+            // Her track (video + varsa sistem sesi) için AYRI sender eklenir.
+            // Asla replaceTrack kullanılmaz — aksi halde mevcut mic/kamera
+            // sender'ının track'i sessizce ekran paylaşımınkiyle değişir.
             for (const [, peerObj] of Object.entries(this.peers)) {
-                try {
-                    peerObj.pc.addTrack(screenTrack, this.screenStream);
-                } catch (e) {
-                    console.warn("[P2P] Failed to add screen track to peer", e);
-                }
+                this.screenStream.getTracks().forEach(track => {
+                    try { peerObj.pc.addTrack(track, this.screenStream); } catch (e) {
+                        console.warn("[P2P] Failed to add screen track to peer", e);
+                    }
+                });
             }
             return true;
         } catch (err) {
@@ -508,20 +555,17 @@ class P2PMesh {
     stopScreenShare() {
         if (!this.screenStream) return;
 
-        const screenTrack = this.screenStream.getVideoTracks()[0];
+        const tracks = this.screenStream.getTracks();
 
-        // Remove track from all existing peers -> triggers onnegotiationneeded automatically
+        // Her peer'da bu stream'e ait TÜM sender'ları kaldır (video + audio).
         for (const [, peerObj] of Object.entries(this.peers)) {
             const senders = peerObj.pc.getSenders();
-            const sender = senders.find(s => s.track === screenTrack);
-            if (sender) {
-                try {
-                    peerObj.pc.removeTrack(sender);
-                } catch (e) { }
-            }
+            senders.filter(s => s.track && tracks.includes(s.track)).forEach(sender => {
+                try { peerObj.pc.removeTrack(sender); } catch (e) { }
+            });
         }
 
-        screenTrack.stop();
+        tracks.forEach(t => t.stop());
         this.screenStream = null;
 
         // Trigger callback if defined globally in app.js
@@ -546,6 +590,7 @@ class P2PMesh {
     }
 
     _startPing() {
+        clearInterval(this._pingTimer);
         const pingMs = _scordTiming().P2P_SIGNALING_PING_INTERVAL_MS ?? 25000;
         this._pingTimer = setInterval(() => {
             this._send({ type: "ping" });
