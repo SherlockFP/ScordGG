@@ -21609,6 +21609,7 @@ console.log("[App] Performance + Mobile optimization loaded");
     }, 1500);
 
     console.log("[Fixes] Password system ready");
+    }
   }
 
   /* ══════════════════════════════════════════════════════════
@@ -22758,7 +22759,6 @@ function init() {
       }
     `;
     document.head.appendChild(burstStyle);
-  }
   }
 
   /* ══════════════════════════════════════════════════════════
