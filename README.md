@@ -6,16 +6,22 @@ Canlısı burada: `https://scord.onrender.com` gibi bir Render adresinde host'la
 
 ## Nasıl çalışıyor
 
-İki katman var:
+Üç katman var:
 
-1. **Sinyal / kayıt sunucusu** (`static/server.py`, FastAPI) — Render'da 7/24 açık duran tek sunucu. İşi şu:
+1. **Hesap sistemi** (SQLite, `scord_accounts.db`) — gerçek üyelik: kayıt ol /
+   giriş yap. Şifreler pbkdf2 ile hash'lenip saklanıyor, girişte oturum token'ı
+   veriliyor. Avatar, biyografi ve banner hesaba bağlı — başka tarayıcıdan
+   girsen de profilin seninle gelir. (Peer ID hâlâ eski deterministik formülle
+   üretiliyor ki mevcut sunucu sahiplikleri kırılmasın.)
+
+2. **Sinyal / kayıt sunucusu** (`static/server.py`, FastAPI) — Render'da 7/24 açık duran tek sunucu. İşi şu:
    - Hangi sunucuların (server/guild) var olduğunu tutar (`/api/rooms`), oluşturma/silme/davet kodu gibi işlemleri yönetir.
    - WebRTC bağlantısını kurmak için gereken signaling'i (offer/answer/ICE candidate mesajlarını iki peer arasında forward etmek) yapar — kendisi asla ses/video/mesaj içeriğini görmez, sadece "şu paketi şu peer'a ilet" der.
    - Kanal listesi, roller, mesaj geçmişi gibi *sunucu metadata'sını* diskte (`rooms.json`) tutar. Bunun sebebi basit: Render'ın ücretsiz planında disk ephemeral, yani container her redeploy'da sıfırlanabiliyor. Bir client'ın elinde hâlâ eski bir sunucunun tam kopyası varsa, açılışta bunu backend'e geri "restore" edip kaybı telafi ediyor. Sahiden silinmiş bir sunucu ise (owner sildiyse) tombstone listesinde tutuluyor ki geri dirilmesin.
 
-2. **P2P mesh** (`static/p2p.js`) — chat, ses, ekran paylaşımı, kamera burada. Odaya giren her peer, odadaki diğer herkesle ayrı ayrı `RTCPeerConnection` açar (full mesh). Metin `RTCDataChannel` üzerinden, ses/görüntü track olarak gider. Sinyalleşme WebSocket üzerinden yukarıdaki sunucuya gidip geliyor, ama trafiğin kendisi doğrudan iki tarayıcı arasında.
+3. **P2P mesh** (`static/p2p.js`) — chat, ses, ekran paylaşımı, kamera burada. Odaya giren her peer, odadaki diğer herkesle ayrı ayrı `RTCPeerConnection` açar (full mesh). Metin `RTCDataChannel` üzerinden, ses/görüntü track olarak gider. Sinyalleşme WebSocket üzerinden yukarıdaki sunucuya gidip geliyor, ama trafiğin kendisi doğrudan iki tarayıcı arasında.
 
-Yani kısaca: "kim nerede, hangi sunucu hâlâ var, davet kodu ne" gibi sorular için tek bir otorite var (backend), ama "ne konuşuluyor / kim konuşuyor" tamamen uçtan uca.
+Yani kısaca: "kim kimdir, kim nerede, hangi sunucu hâlâ var" gibi sorular için tek bir otorite var (backend), ama "ne konuşuluyor / kim konuşuyor" tamamen uçtan uca.
 
 ## Kurulum
 
@@ -24,7 +30,7 @@ pip install -r requirements.txt
 python app.py        # ya da: uvicorn app:app --reload --port 8000
 ```
 
-Windows'ta `run.bat` aynısını yapıyor. `http://localhost:8000` açılınca setup ekranı geliyor, kullanıcı adı + şifre seç (şifre sadece deterministik bir peer ID üretmek için kullanılıyor, hesap sistemi filan yok).
+Windows'ta `run.bat` aynısını yapıyor. `http://localhost:8000` açılınca giriş ekranı geliyor — hesabın yoksa "Kayıt Ol" sekmesinden bir tane oluştur.
 
 ### Render'a deploy
 
