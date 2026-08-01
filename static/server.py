@@ -33,6 +33,10 @@ app = FastAPI(title="SCORD Signaling Server")
 # ── Global State ──────────────────────────────────────────────────────────────
 
 rooms: Dict[str, "Room"] = {}
+# Kalıcı olarak silinen oda id'leri. Sunucu yeniden başlasa bile bu odalar geri
+# gelmemeli; istemciler sync sırasında bunları görüp yerel kopyayı temizler.
+deleted_room_ids: Set[str] = set()
+DELETED_TOMBSTONE_CAP = 500
 DATABASE_FILE = str(Path(__file__).parent.parent / "rooms.json")
 
 DEFAULT_ROLE_PERMISSIONS = {
@@ -59,7 +63,10 @@ def _role_defaults(role_id: str) -> dict:
 
 def save_db():
     try:
-        data = {rid: r.to_persist_dict() for rid, r in rooms.items()}
+        data: Dict[str, Any] = {rid: r.to_persist_dict() for rid, r in rooms.items()}
+        # Tombstone listesi oda kayıtlarıyla aynı dosyada yaşıyor ("_deleted"
+        # anahtarı oda id formatında olmadığı için çakışmaz).
+        data["_deleted"] = sorted(deleted_room_ids)[-DELETED_TOMBSTONE_CAP:]
         with open(DATABASE_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
         log.info(f"Database saved to {DATABASE_FILE}")
@@ -94,6 +101,7 @@ def load_db():
     try:
         with open(DATABASE_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
+        deleted_room_ids.update(data.pop("_deleted", []))
         for rid, rdata in data.items():
             room = Room(rid, rdata["name"], rdata.get("owner_id", "unknown"))
             room.channels = rdata.get("channels", room.channels)
@@ -618,14 +626,85 @@ def get_room_by_code(invite_code: str):
     return {"error": "Not found"}
 
 @app.delete("/api/rooms/{room_id}")
-def delete_room(room_id: str, owner_id: str):
+async def delete_room(room_id: str, owner_id: str):
     if room_id not in rooms: return {"error": "Not found"}
     room = rooms[room_id]
     if room.owner_id != owner_id:
         return {"error": "Unauthorized"}
     del rooms[room_id]
+    deleted_room_ids.add(room_id)
+    # Zombie client'ları temizle: bağlı herkese silindiğini söyle, sonra soketi kapat.
+    # Aksi halde offline/başka odadaki peer'lar sunucunun silindiğini asla öğrenemez
+    # ve yerel önbellekte "hayalet sunucu" olarak sonsuza dek kalır.
+    await broadcast_to_room(room, {"type": "room_deleted", "room_id": room_id})
+    for ws in list(room.peers.values()):
+        try:
+            await ws.close(code=4004, reason="room_deleted")
+        except Exception:
+            pass
     save_db()
+    log.info(f"Room deleted: {room_id} by {owner_id}")
     return {"success": True}
+
+
+@app.post("/api/rooms/sync")
+def sync_rooms(body: dict):
+    """
+    İstemci açılışta yerel önbellekteki oda id'lerini buraya postalar.
+    Dönen sınıflandırmaya göre istemci: active -> metadata günceller,
+    deleted -> yerel kopyayı siler, unknown -> restore dener (redeploy sonrası
+    disk sıfırlanmışsa) ya da bulunamazsa kullanıcıya sorar.
+    """
+    ids = body.get("room_ids") or []
+    active, deleted, unknown = [], [], []
+    for rid in ids:
+        if rid in rooms:
+            active.append(rooms[rid].to_dict())
+        elif rid in deleted_room_ids:
+            deleted.append(rid)
+        else:
+            unknown.append(rid)
+    return {"active": active, "deleted": deleted, "unknown": unknown}
+
+
+@app.post("/api/rooms/{room_id}/restore")
+def restore_room(room_id: str, body: dict):
+    """
+    Sunucu (örn. Render redeploy sonrası ephemeral disk sıfırlanınca) bir odayı
+    unutmuş ama istemcide hâlâ tam kopyası varsa, istemci bu uçla odayı geri
+    kayıt ettirir. Owner tarafından kalıcı silinmiş (tombstoned) odalar asla
+    geri gelmez.
+    """
+    if room_id in deleted_room_ids:
+        return {"error": "deleted"}
+    if room_id in rooms:
+        return {"success": True, "room": rooms[room_id].to_dict()}
+    name = body.get("name", "Unnamed Server")
+    owner_id = body.get("owner_id", "unknown")
+    room = Room(room_id, name, owner_id)
+    if body.get("channels"):
+        room.channels = body["channels"]
+    if body.get("roles"):
+        room.roles = body["roles"]
+    if body.get("peer_roles"):
+        room.peer_roles = body["peer_roles"]
+    if body.get("channel_permissions"):
+        room.channel_permissions = body["channel_permissions"]
+    if body.get("pinned_messages"):
+        room.pinned_messages = body["pinned_messages"]
+    if body.get("messages"):
+        room.messages = body["messages"]
+    if body.get("channel_backgrounds"):
+        room.channel_backgrounds = body["channel_backgrounds"]
+    if body.get("icon_url"):
+        room.icon_url = body["icon_url"]
+    if body.get("invite_code"):
+        room.invite_code = body["invite_code"]
+    room.normalize_permissions()
+    rooms[room_id] = room
+    save_db()
+    log.info(f"Room restored from client cache: {name!r} ({room_id})")
+    return {"success": True, "room": room.to_dict()}
 
 @app.post("/api/rooms/{room_id}/channels")
 def add_channel(room_id: str, body: dict):
