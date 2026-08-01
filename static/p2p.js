@@ -203,7 +203,9 @@ class P2PMesh {
     /* ── Create a peer connection ─────────────────────────────── */
     /**
      * Opus SDP ayarı: tarayıcı varsayılanı ~32kbps mono ve FEC kapalı gelir.
-     * Burada bitrate/FEC açıkça istenerek konuşma netliği artırılır.
+     * Burada bitrate/FEC/DTX açıkça istenerek kötü internet'te bile net ses
+     * hedeflenir: useinbandfec=1 paket kaybına karşı hata düzeltir, usedtx=1
+     * sessizlikte bant genişliği harcamaz (paket optimizasyonu).
      */
     _tuneOpusSdp(sdp) {
         try {
@@ -211,10 +213,31 @@ class P2PMesh {
             const rtpmapIdx = lines.findIndex(l => /^a=rtpmap:\d+ opus\/48000/i.test(l));
             if (rtpmapIdx === -1) return sdp;
             const pt = lines[rtpmapIdx].match(/^a=rtpmap:(\d+)/)[1];
-            const tuned = "maxaveragebitrate=64000;maxplaybackrate=48000;stereo=0;useinbandfec=1;usedtx=0";
+            // maxaveragebitrate: kullanıcı ayarlarından (varsa) okunur; yoksa 64kbps.
+            let abr = 64000;
+            try {
+                const vs = (typeof window !== "undefined" && window.state && window.state.voiceSettings) || {};
+                abr = parseInt(vs.audioBitrate, 10) || 64000;
+                if (abr < 24000) abr = 24000;
+                if (abr > 128000) abr = 128000;
+            } catch { /* keep default */ }
+            const tuned = `maxaveragebitrate=${abr};maxplaybackrate=48000;stereo=0;useinbandfec=1;usedtx=1;minptime=20;ptime=20`;
             const fmtpIdx = lines.findIndex(l => l.startsWith(`a=fmtp:${pt}`));
             if (fmtpIdx !== -1) {
-                if (!/maxaveragebitrate/.test(lines[fmtpIdx])) lines[fmtpIdx] += `;${tuned}`;
+                // Mevcut fmtp satırına FEC/DTX/bitrate/ptime ekle; çakışan parametreleri üzerine yaz.
+                let line = lines[fmtpIdx];
+                line = line.replace(/maxaveragebitrate=\d+/g, `maxaveragebitrate=${abr}`);
+                line = line.replace(/useinbandfec=\d/g, "useinbandfec=1");
+                line = line.replace(/usedtx=\d/g, "usedtx=1");
+                // Önce minptime, sonra ptime normalize edilir (ptime ifadesi
+                // minptime içindeki eşleşmeyi yanlışlıkla yakalamasın diye).
+                line = line.replace(/minptime=\d+/g, "minptime=20");
+                line = line.replace(/(^|[;\s])ptime=\d+/g, "$1ptime=20");
+                if (!/useinbandfec/.test(line)) line += ";useinbandfec=1";
+                if (!/usedtx/.test(line)) line += ";usedtx=1";
+                if (!/minptime/.test(line)) line += ";minptime=20";
+                if (!/ptime/.test(line)) line += ";ptime=20";
+                lines[fmtpIdx] = line;
             } else {
                 lines.splice(rtpmapIdx + 1, 0, `a=fmtp:${pt} ${tuned}`);
             }
@@ -224,10 +247,38 @@ class P2PMesh {
         }
     }
 
+    /**
+     * Gönderim tarafında bitrate tavanı uygular (RTCRtpSender.setParameters).
+     * CPU ve bant genişliğini dengeler; kötü ağlarda otomatik düşüşe yer açar.
+     */
+    _applySenderBitrate(pc, stream, kind, maxKbps = 0) {
+        if (!pc || !stream) return;
+        const tracks = stream.getTracks().filter(t => (kind ? t.kind === kind : true));
+        if (!tracks.length) return;
+        const senders = pc.getSenders().filter(s => s.track && tracks.includes(s.track));
+        senders.forEach(sender => {
+            try {
+                const params = sender.getParameters();
+                if (!params.encodings || !params.encodings.length) params.encodings = [{}];
+                params.encodings.forEach(enc => {
+                    if (maxKbps > 0) enc.maxBitrate = maxKbps * 1000;
+                    if (kind === "video") {
+                        // Ekran paylaşımında metin okunabilirliği için çözünürlük korunur;
+                        // düşük bant genişliğinde kare hızı düşer ama görüntü net kalır.
+                        enc.degradationPreference = "maintain-resolution";
+                    }
+                });
+                sender.setParameters(params).catch(() => { });
+            } catch { /* unsupported — ignore */ }
+        });
+    }
+
     async _initiatePeer(peerId, info, makeOffer) {
         if (this.peers[peerId]) return; // already connected
 
-        const pc = new RTCPeerConnection({ iceServers: _scordIceServers() });
+        // bundlePolicy=max-bundle + rtcpMuxPolicy=require: tek port/tek multiplexed
+        // akış — paket sayısını ve NAT delik açma yükünü azaltır (kötü ağ dostu).
+        const pc = new RTCPeerConnection({ iceServers: _scordIceServers(), bundlePolicy: "max-bundle", rtcpMuxPolicy: "require" });
         const peerObj = { pc, dc: null, info };
         this.peers[peerId] = peerObj;
         this._pendingIce[peerId] = [];
@@ -492,7 +543,7 @@ class P2PMesh {
     async startVoice(stream = null) {
         try {
             this.localStream = stream || await navigator.mediaDevices.getUserMedia({
-                audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+                audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
                 video: false,
             });
             this.voiceActive = true;
@@ -500,6 +551,8 @@ class P2PMesh {
                 this.localStream.getTracks().forEach(t => {
                     try { peerObj.pc.addTrack(t, this.localStream); } catch { }
                 });
+                // Ses bitrate tavanı: opus fmtp ile birlikte çift güvence.
+                this._applySenderBitrate(peerObj.pc, this.localStream, "audio", 64);
             }
             return true;
         } catch (err) {
@@ -526,13 +579,25 @@ class P2PMesh {
     /* ── Screen Sharing ──────────────────────────────────────── */
     async startScreenShare() {
         try {
+            // Kalite/FPS kullanıcı ayarlarından gelir (app.js openScreenSharePicker).
+            const winState = (typeof window !== "undefined" && window.state) || {};
+            const q = winState.screenShareQuality || "720p";
+            const fps = winState.screenShareFPS || 30;
+            const qMap = {
+                "4k": { width: { ideal: 3840 }, height: { ideal: 2160 }, frameRate: { ideal: Math.min(fps, 30) } },
+                "1080p": { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: Math.min(fps, 60) } },
+                "720p": { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: Math.min(fps, 60) } },
+                "480p": { width: { ideal: 854 }, height: { ideal: 480 }, frameRate: { ideal: Math.min(fps, 30) } },
+                "360p": { width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: Math.min(fps, 30) } },
+            };
+            const bitrateMap = { "4k": 8000, "1080p": 4000, "720p": 2500, "480p": 1200, "360p": 700 };
             this.screenStream = await navigator.mediaDevices.getDisplayMedia({
-                video: { cursor: "always" },
-                audio: true,
+                video: { ...(qMap[q] || qMap["720p"]), cursor: "always" },
+                audio: winState.screenShareAudio === true,
             });
 
             const videoTrack = this.screenStream.getVideoTracks()[0];
-            if (videoTrack) videoTrack.contentHint = "detail";
+            if (videoTrack) videoTrack.contentHint = fps >= 60 ? "motion" : "detail";
             if (videoTrack) videoTrack.onended = () => this.stopScreenShare();
 
             // Her track (video + varsa sistem sesi) için AYRI sender eklenir.
@@ -544,6 +609,10 @@ class P2PMesh {
                         console.warn("[P2P] Failed to add screen track to peer", e);
                     }
                 });
+            }
+            // Video bitrate tavanı — kaliteye göre CPU/ağ dengesi.
+            for (const [, peerObj] of Object.entries(this.peers)) {
+                this._applySenderBitrate(peerObj.pc, this.screenStream, "video", bitrateMap[q] || 2500);
             }
             return true;
         } catch (err) {

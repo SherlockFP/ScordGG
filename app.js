@@ -2672,14 +2672,19 @@ async function startScreenShare() {
 // state.mesh.stopScreenShare() (p2p.js, artık video+audio sender'larının
 // tümünü temizliyor) üzerinden tek noktadan kapatma sağlanır.
 function stopScreenShare() {
+    // Kapatma sesi — tüm global stop yolları (vt.onended dahil) buradan geçer.
+    if (typeof window.playDiscordSFX === "function") {
+        try { window.playDiscordSFX("screen_stop"); } catch (e) { /* noop */ }
+    }
     if (state.mesh && state.mesh.screenStream) {
         state.mesh.stopScreenShare();
-        return;
     }
     if (state.screenStream) {
         state.screenStream.getTracks().forEach(t => t.stop());
         state.screenStream = null;
     }
+    const btn = document.getElementById("voice-screen-btn");
+    if (btn) btn.classList.remove("active");
 }
 window.stopScreenShare = stopScreenShare;
 
@@ -7607,7 +7612,7 @@ function renderDMCallStrip() {
         <button type="button" class="dm-call-strip-btn danger" id="dm-call-strip-end">🔴 Bitir</button>
       </div>`;
     strip.querySelector("#dm-call-strip-mute")?.addEventListener("click", function() { if (typeof toggleMicrophone === "function") toggleMicrophone(); });
-    strip.querySelector("#dm-call-strip-screen")?.addEventListener("click", function() { if (typeof startScreenShare === "function") startScreenShare(); });
+    strip.querySelector("#dm-call-strip-screen")?.addEventListener("click", function() { if (typeof window.openScreenSharePicker === "function") window.openScreenSharePicker(); else if (typeof startScreenShare === "function") startScreenShare(); });
     strip.querySelector("#dm-call-strip-join")?.addEventListener("click", () => openDirectCallView(call));
     strip.querySelector("#dm-call-strip-end")?.addEventListener("click", () => endDirectCall());
 }
@@ -20638,22 +20643,12 @@ console.log("[App] Performance + Mobile optimization loaded");
       };
     }
     
-    // Ekran paylaşımı
-    if (typeof window.startScreenShare === "function") {
-      var _origSSS = window.startScreenShare;
-      window.startScreenShare = function () {
-        var r = _origSSS.apply(this, arguments);
-        setTimeout(function () { window.playDiscordSFX("screen_share"); }, 200);
-        return r;
-      };
-    }
-    if (typeof window.stopScreenShare === "function") {
-      var _origStSS = window.stopScreenShare;
-      window.stopScreenShare = function () {
-        window.playDiscordSFX("screen_stop");
-        return _origStSS.apply(this, arguments);
-      };
-    }
+    // Ekran paylaşımı — sesler V25 (app.js) tarafından çalınıyor:
+    // startScreenShare başarıda "screen_share", global stopScreenShare()
+    // (vt.onended / Chrome paylaşım çubuğu dahil) "screen_stop", ayrıca
+    // #voice-screen-btn capture listener'ı butonla durdurmada "screen_stop".
+    // Çift ses olmaması için burada tekrar sarmalanmaz (eski wrapper V25'ten
+    // SONRA çalıştığından çift SFX üretiyordu).
     
     // DM/chat butonları
     var check = setInterval(function () {
@@ -25747,3 +25742,641 @@ console.log("[App] Member avatars + Profile click + Theme guarantee loaded");
 })();
 
 console.log("[App] Settings V-layout + Profile preview + Animations OFF + Caution theme loaded");
+
+// ══════════════════════════════════════════════════════════
+// V25 — Ekran paylaşımı picker (kalite+FPS+ses), birleşik ayarlar
+// menüsü (profil + PC'den avatar yükleme), sunucu ayarları
+// redesign (Discord benzeri, kanal yönetimi), performans
+// ══════════════════════════════════════════════════════════
+
+function _v25ScreenQualityConstraints(q, fps) {
+    const f = Math.max(15, Math.min(60, fps || 30));
+    const map = {
+        "4k": { width: { ideal: 3840 }, height: { ideal: 2160 }, frameRate: { ideal: Math.min(f, 30) } },
+        "1080p": { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: Math.min(f, 60) } },
+        "720p": { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: Math.min(f, 60) } },
+        "480p": { width: { ideal: 854 }, height: { ideal: 480 }, frameRate: { ideal: Math.min(f, 30) } },
+        "360p": { width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: Math.min(f, 30) } },
+    };
+    return map[q] || map["720p"];
+}
+
+function _v25ScreenBitrateKbps(q) {
+    return { "4k": 8000, "1080p": 4000, "720p": 2500, "480p": 1200, "360p": 700 }[q] || 2500;
+}
+
+function _v25ApplyScreenBitrate(stream, kbps, fps) {
+    if (!state.mesh || !stream) return;
+    const tracks = stream.getTracks();
+    Object.values(state.mesh.peers || {}).forEach(p => {
+        const pc = p && p.pc;
+        if (!pc || pc.connectionState === "closed") return;
+        pc.getSenders().forEach(sender => {
+            if (!sender.track || !tracks.includes(sender.track)) return;
+            try {
+                const params = sender.getParameters();
+                if (!params.encodings || !params.encodings.length) params.encodings = [{}];
+                params.encodings.forEach(e => {
+                    e.maxBitrate = kbps * 1000;
+                    e.maxFramerate = fps;
+                    // Ekran paylaşımında metin okunabilirliği: düşük bant genişliğinde
+                    // çözünürlük korunur, kare hızı düşer (p2p.js ile tutarlı).
+                    e.degradationPreference = "maintain-resolution";
+                });
+                sender.setParameters(params).catch(() => { });
+            } catch (e) { /* unsupported */ }
+        });
+    });
+}
+
+// ── Ekran paylaşımı: kalite (360p–4K) + FPS (15/30/60) + sistem sesi ──
+window.openScreenSharePicker = function () {
+    const q = state.screenShareQuality || "720p";
+    const fps = state.screenShareFPS || 30;
+    const audio = state.screenShareAudio === true;
+    const qualityOptions = ["360p", "480p", "720p", "1080p", "4k"];
+    const fpsOptions = [15, 30, 60];
+    const html = `
+      <div class="v25-share-picker">
+        <p class="v25-share-note">Kaynak seçimi için tarayıcı güvenlik penceresi yine açılır (Chrome bunu zorunlu tutar) — ama kalite, FPS ve sesi buradan sen belirlersin; paylaşım bu ayarlarla başlar.</p>
+        <div class="v25-field">
+          <label>Görüntü Kalitesi</label>
+          <div class="v25-seg" id="v25-share-quality">
+            ${qualityOptions.map(o => `<button type="button" class="${o === q ? "active" : ""}" data-q="${o}">${o === "4k" ? "4K" : o}</button>`).join("")}
+          </div>
+        </div>
+        <div class="v25-field">
+          <label>Kare Hızı (FPS)</label>
+          <div class="v25-seg" id="v25-share-fps">
+            ${fpsOptions.map(f => `<button type="button" class="${f === fps ? "active" : ""}" data-fps="${f}">${f} FPS</button>`).join("")}
+          </div>
+        </div>
+        <label class="v25-check"><input type="checkbox" id="v25-share-audio" ${audio ? "checked" : ""}> Sistem sesini de paylaş</label>
+      </div>`;
+    showModal("📺 Ekran Paylaşımı", html,
+        `<button class="btn-secondary" onclick="hideModal()">İptal</button>
+         <button class="btn-primary" onclick="window._v25StartShare()">Paylaşmayı Başlat</button>`);
+    const qSeg = document.getElementById("v25-share-quality");
+    const fpsSeg = document.getElementById("v25-share-fps");
+    if (qSeg) qSeg.addEventListener("click", e => {
+        const b = e.target.closest("button");
+        if (!b) return;
+        qSeg.querySelectorAll("button").forEach(x => x.classList.remove("active"));
+        b.classList.add("active");
+    });
+    if (fpsSeg) fpsSeg.addEventListener("click", e => {
+        const b = e.target.closest("button");
+        if (!b) return;
+        fpsSeg.querySelectorAll("button").forEach(x => x.classList.remove("active"));
+        b.classList.add("active");
+    });
+};
+
+window._v25StartShare = function () {
+    const qb = document.querySelector("#v25-share-quality button.active");
+    const fb = document.querySelector("#v25-share-fps button.active");
+    const ab = document.getElementById("v25-share-audio");
+    state.screenShareQuality = qb ? qb.dataset.q : "720p";
+    state.screenShareFPS = fb ? parseInt(fb.dataset.fps, 10) : 30;
+    state.screenShareAudio = ab ? ab.checked : false;
+    try {
+        localStorage.setItem("scord_screen_quality", state.screenShareQuality);
+        localStorage.setItem("scord_screen_fps", String(state.screenShareFPS));
+        localStorage.setItem("scord_screen_audio", state.screenShareAudio ? "1" : "0");
+    } catch (e) { /* noop */ }
+    hideModal();
+    setTimeout(() => { if (typeof startScreenShare === "function") startScreenShare(); }, 250);
+};
+
+// Kayıtlı ekran paylaşımı tercihlerini geri yükle; yoksa CPU dostu 30 FPS.
+(function () {
+    try {
+        if (localStorage.getItem("scord_screen_quality")) state.screenShareQuality = localStorage.getItem("scord_screen_quality");
+        if (localStorage.getItem("scord_screen_fps")) state.screenShareFPS = parseInt(localStorage.getItem("scord_screen_fps"), 10);
+        if (!localStorage.getItem("scord_screen_fps")) {
+            state.screenShareFPS = 30;
+            localStorage.setItem("scord_screen_fps", "30");
+        }
+        if (localStorage.getItem("scord_screen_audio")) state.screenShareAudio = localStorage.getItem("scord_screen_audio") === "1";
+    } catch (e) { /* noop */ }
+})();
+
+// startScreenShare: kalite + FPS + sistem sesi + bitrate tavanı uygular.
+window.startScreenShare = async function () {
+    if (!state.mesh || !state.mesh.voiceActive) return toast("Önce sesli kanala katıl.", "error");
+    try {
+        const quality = state.screenShareQuality || "720p";
+        const fps = Math.max(15, Math.min(60, state.screenShareFPS || 30));
+        const withAudio = state.screenShareAudio === true;
+        const stream = await navigator.mediaDevices.getDisplayMedia({
+            video: { ..._v25ScreenQualityConstraints(quality, fps), cursor: "always" },
+            audio: withAudio,
+        });
+        // Kullanıcı seçim penceresi açıkken sesli kanaldan ayrılmış olabilir.
+        if (!state.mesh || !state.mesh.voiceActive) {
+            stream.getTracks().forEach(t => { try { t.stop(); } catch (e) { /* noop */ } });
+            return toast("Sesli kanaldan ayrıldın, paylaşım başlatılamadı.", "error");
+        }
+        state.screenStream = stream;
+        state.mesh.screenStream = stream;
+        const vt = stream.getVideoTracks()[0];
+        if (vt) vt.contentHint = fps >= 60 ? "motion" : "detail";
+        Object.values(state.mesh.peers || {}).forEach(p => {
+            const pc = p && p.pc;
+            if (!pc || pc.connectionState === "closed") return;
+            stream.getTracks().forEach(t => { try { pc.addTrack(t, stream); } catch (e) { console.warn("[Screen] addTrack error", e); } });
+        });
+        _v25ApplyScreenBitrate(stream, _v25ScreenBitrateKbps(quality), fps);
+        if (vt) vt.onended = () => { if (typeof stopScreenShare === "function") stopScreenShare(); };
+        const btn = document.getElementById("voice-screen-btn");
+        if (btn) btn.classList.add("active");
+        if (state.mesh) state.mesh.broadcast({ type: "screen_status", sharing: true, channelId: state.voiceChannelId || state.activeChannelId });
+        toast("Ekran başarıyla paylaşıldı!", "success");
+        const preview = document.getElementById("local-screen-preview");
+        if (preview) preview.onclick = () => { if (typeof openScreenOverlay === "function") openScreenOverlay(state.peerId, state.username); };
+        if (state.activeServerId && state.voiceChannelId && typeof renderVoiceParticipants === "function") {
+            renderVoiceParticipants(state.activeServerId, state.voiceChannelId);
+        }
+        if (typeof window.playDiscordSFX === "function") {
+            setTimeout(() => window.playDiscordSFX("screen_share"), 200);
+        }
+    } catch (err) {
+        if (err.name !== "NotAllowedError") console.error("Screen share error", err);
+        toast("Ekran paylaşımı iptal edildi veya hata oluştu.", "error");
+    }
+};
+
+// ── Birleşik Ayarlar menüsü: Profil + Ses + Ekran + Görünüm + Bildirim ──
+window.showUserSettingsModal = function () {
+    const vs = state.voiceSettings || {};
+    const vols = state.settings || {};
+    const tag = typeof _settingsUniqueTag === "function" ? _settingsUniqueTag() : (state.username || "Kullanıcı") + "#0000";
+    const avatarStyle = state.avatarImage
+        ? `background-image:url('${String(state.avatarImage).replace(/'/g, "%27")}')`
+        : `background-color:${state.avatarColor || "#7c3aed"}`;
+    const html = `
+      <div class="scord-settings-shell v25-settings">
+        <nav class="scord-settings-nav">
+          <button class="active" data-tab="account">👤 Profil</button>
+          <button data-tab="voice">🎙️ Ses ve Görüntü</button>
+          <button data-tab="screen">🖥️ Ekran Paylaşımı</button>
+          <button data-tab="appearance">🎨 Görünüm</button>
+          <button data-tab="notifications">🔔 Bildirimler</button>
+          <button data-tab="advanced">⚙️ Diğer</button>
+          <button class="danger" onclick="logoutAccount()">Çıkış Yap</button>
+        </nav>
+        <section class="scord-settings-content">
+          <div class="scord-settings-page" id="set-account">
+            <h3>Profil</h3>
+            <div class="v25-profile-card">
+              <div class="v25-profile-avatar" id="v25-profile-avatar" style="${avatarStyle}">${state.avatarImage ? "" : escapeHtml((state.username || "?").charAt(0).toUpperCase())}</div>
+              <div class="v25-profile-meta">
+                <strong>${escapeHtml(state.username || "")}</strong>
+                <span>${escapeHtml(tag)}</span>
+                <span class="v25-profile-hint">Avatara tıkla veya alttan PC'den yükle</span>
+              </div>
+            </div>
+            <button class="btn-primary v25-upload-btn" onclick="document.getElementById('v25-avatar-file').click()">📷 PC'den Avatar Yükle</button>
+            <input type="file" id="v25-avatar-file" accept="image/*" style="display:none">
+            <label>Avatar Rengi<input class="modal-input" type="color" id="v25-avatar-color" value="${state.avatarColor || "#7c3aed"}"></label>
+            <label>Avatar URL<input class="modal-input" id="v25-avatar-url" value="${escapeHtml(/^https?:/i.test(state.avatarImage || "") ? state.avatarImage : "")}" placeholder="https://..."></label>
+            <label>Biyografi<textarea class="modal-input" id="v25-bio" rows="3">${escapeHtml(state.bio || "")}</textarea></label>
+            <label>Banner URL<input class="modal-input" id="v25-banner-url" value="${escapeHtml(state.bannerUrl || "")}" placeholder="https://..."></label>
+            <p class="settings-hint">Kullanıcı adı sunucu sahipliklerine bağlı olduğu için değiştirilemez. Avatar, biyografi ve banner hesabına kayıtlı — her cihazda seninle gelir.</p>
+          </div>
+          <div class="scord-settings-page hidden" id="set-voice">
+            <h3>Ses ve Görüntü</h3>
+            <label>Mikrofon Cihazı<select class="modal-input" id="v25-mic-device"><option value="default">Varsayılan</option></select></label>
+            <label>Ses Filtresi<select class="modal-input" id="v25-filter"><option value="none">Normal</option><option value="bass">Bass Boost</option><option value="radio">Lo-Fi Radio</option></select></label>
+            <label>Mikrofon Ses <span class="v25-val" id="val-v25-mic">${Math.round((vs.volume || 1) * 100)}%</span><input type="range" min="0" max="200" step="5" value="${Math.round((vs.volume || 1) * 100)}" oninput="document.getElementById('val-v25-mic').textContent=this.value+'%';state.voiceSettings=state.voiceSettings||{};state.voiceSettings.volume=this.value/100;localStorage.setItem('scord_voice_settings',JSON.stringify(state.voiceSettings))"></label>
+            <label class="scord-check"><input type="checkbox" id="v25-noise" ${vs.noiseSuppression !== false ? "checked" : ""}> Gürültü Engelleme</label>
+            <label class="scord-check"><input type="checkbox" id="v25-echo" ${vs.echoCancellation !== false ? "checked" : ""}> Yankı Engelleme</label>
+            <label class="scord-check"><input type="checkbox" id="v25-agc" ${vs.autoGainControl === true ? "checked" : ""}> Otomatik Seviye Dengeleme</label>
+            <label class="scord-check"><input type="checkbox" id="v25-gate" ${vs.gateEnabled === true ? "checked" : ""}> Ses Kapısı</label>
+            <label>Kapı Eşiği <span class="v25-val" id="val-v25-gate">${vs.gateThreshold || 8}</span><input type="range" min="3" max="30" step="1" value="${vs.gateThreshold || 8}" oninput="document.getElementById('val-v25-gate').textContent=this.value;state.voiceSettings=state.voiceSettings||{};state.voiceSettings.gateThreshold=parseInt(this.value);localStorage.setItem('scord_voice_settings',JSON.stringify(state.voiceSettings))"></label>
+            <label>Giriş Modu<select class="modal-input" id="v25-input-mode"><option value="voice" ${vs.inputMode !== "ptt" ? "selected" : ""}>Ses Aktivitesi</option><option value="ptt" ${vs.inputMode === "ptt" ? "selected" : ""}>Bas-Konuş</option></select></label>
+            <label>PTT Tuşu<input class="modal-input" id="v25-ptt" readonly value="${escapeHtml(vs.pttKey || "Control")}"></label>
+            <label>Ses Bitrate'i (paket boyutu)<select class="modal-input" id="v25-bitrate"><option value="64000" ${(vs.audioBitrate || 64000) === 64000 ? "selected" : ""}>64 kbps (Dengeli)</option><option value="48000" ${vs.audioBitrate === 48000 ? "selected" : ""}>48 kbps (Kötü ağ)</option><option value="96000" ${vs.audioBitrate === 96000 ? "selected" : ""}>96 kbps (Yüksek kalite)</option></select></label>
+          </div>
+          <div class="scord-settings-page hidden" id="set-screen">
+            <h3>Ekran Paylaşımı</h3>
+            <label>Kalite<select class="modal-input" id="v25-screen-quality"><option value="4k">4K</option><option value="1080p">1080p</option><option value="720p">720p (Önerilen)</option><option value="480p">480p</option><option value="360p">360p (Düşük)</option></select></label>
+            <label>Kare Hızı (FPS)<select class="modal-input" id="v25-screen-fps"><option value="15">15 FPS (CPU dostu)</option><option value="30">30 FPS (Dengeli)</option><option value="60">60 FPS (Akıcı)</option></select></label>
+            <label class="scord-check"><input type="checkbox" id="v25-screen-audio" ${state.screenShareAudio === true ? "checked" : ""}> Sistem sesini paylaş</label>
+            <label>Kamera Kalitesi<select class="modal-input" id="v25-camera-quality"><option value="1080p">1080p</option><option value="720p">720p (Önerilen)</option><option value="480p">480p</option><option value="360p">360p</option><option value="4k">4K</option></select></label>
+          </div>
+          <div class="scord-settings-page hidden" id="set-appearance">
+            <h3>Görünüm</h3>
+            <label>Tema<select class="modal-input" onchange="selectTheme(this.value)">
+              ${["sapphire", "dark", "light", "emerald", "ruby", "gold", "ocean", "midnight", "cyberpunk", "sunset", "forest", "iphone", "caution"].map(t => `<option value="${t}" ${state.theme === t ? "selected" : ""}>${t[0].toUpperCase() + t.slice(1)}</option>`).join("")}
+            </select></label>
+            <label>Renk Paleti<select class="modal-input" id="v25-palette" onchange="localStorage.setItem('scord_palette',this.value);if(typeof applyScordAppearance==='function')applyScordAppearance()">
+              ${["glass", "aurora", "ember", "paper", "forest", "midnight"].map(p => `<option value="${p}" ${(localStorage.getItem("scord_palette") || "glass") === p ? "selected" : ""}>${p[0].toUpperCase() + p.slice(1)}</option>`).join("")}
+            </select></label>
+            <label>Sohbet Düzeni<select class="modal-input" id="v25-chat-layout" onchange="localStorage.setItem('scord_chat_layout',this.value);if(typeof applyScordAppearance==='function')applyScordAppearance()">
+              <option value="bubbles" ${(localStorage.getItem("scord_chat_layout") || "bubbles") === "bubbles" ? "selected" : ""}>Balonlar (kendi / diğer renk)</option>
+              <option value="classic" ${(localStorage.getItem("scord_chat_layout") || "bubbles") === "classic" ? "selected" : ""}>Klasik satır</option>
+            </select></label>
+            <label>Mesaj Yoğunluğu<select class="modal-input" onchange="updateMessageDensity(this.value)"><option value="comfortable" ${(state.settings?.messageDensity || "cozy") === "comfortable" ? "selected" : ""}>Konforlu</option><option value="cozy" ${(state.settings?.messageDensity || "cozy") === "cozy" ? "selected" : ""}>Rahat</option><option value="compact" ${(state.settings?.messageDensity || "cozy") === "compact" ? "selected" : ""}>Kompakt</option></select></label>
+            <label>Yazı Boyutu<select class="modal-input" onchange="document.documentElement.style.fontSize=this.value+'px';state.settings.fontSize=this.value;localStorage.setItem('scord_settings',JSON.stringify(state.settings))"><option value="14" ${(state.settings?.fontSize || 14) == 14 ? "selected" : ""}>Küçük (14px)</option><option value="16" ${(state.settings?.fontSize || 14) == 16 ? "selected" : ""}>Normal (16px)</option><option value="18" ${(state.settings?.fontSize || 14) == 18 ? "selected" : ""}>Büyük (18px)</option></select></label>
+            <label class="scord-check"><input type="checkbox" ${state.settings?.animations !== false ? "checked" : ""} onchange="toggleAnimations(this.checked)"> Animasyonlar</label>
+            <label class="scord-check"><input type="checkbox" ${state.settings?.streamerMode ? "checked" : ""} onchange="state.settings.streamerMode=this.checked;localStorage.setItem('scord_settings',JSON.stringify(state.settings))"> Yayıncı Modu</label>
+          </div>
+          <div class="scord-settings-page hidden" id="set-notifications">
+            <h3>Bildirimler</h3>
+            <label>Bildirim Sesi <span class="v25-val" id="val-v25-notif">${vols.notificationVolume || 50}%</span><input type="range" min="0" max="100" value="${vols.notificationVolume || 50}" oninput="updateSetting('notificationVolume',this.value);document.getElementById('val-v25-notif').textContent=this.value+'%'"></label>
+            <label class="scord-check"><input type="checkbox" ${state.settings?.soundEffects !== false ? "checked" : ""} onchange="state.settings.soundEffects=this.checked;localStorage.setItem('scord_settings',JSON.stringify(state.settings))"> Ses Efektleri (join/leave/mesaj)</label>
+            <label class="scord-check"><input type="checkbox" id="v25-notif-dm" ${state.notifSettings?.dm !== false ? "checked" : ""}> DM bildirimi</label>
+            <label class="scord-check"><input type="checkbox" id="v25-notif-join" ${state.notifSettings?.join !== false ? "checked" : ""}> Ses kanalına katılma bildirimi</label>
+            <label>Sohbet Bildirimleri<select class="modal-input" id="v25-notif-level"><option value="all" ${(state.notifSettings?.chatLevel || "all") === "all" ? "selected" : ""}>Tüm mesajlar</option><option value="mentions" ${state.notifSettings?.chatLevel === "mentions" ? "selected" : ""}>Yalnız bahsetme</option><option value="none" ${state.notifSettings?.chatLevel === "none" ? "selected" : ""}>Kapalı</option></select></label>
+          </div>
+          <div class="scord-settings-page hidden" id="set-advanced">
+            <h3>Diğer</h3>
+            <label class="scord-check"><input type="checkbox" id="v25-compact" ${state.compactMode ? "checked" : ""}> Kompakt Mod</label>
+            <div class="settings-unique-id"><div class="settings-unique-id-label">Unique ID'n</div><div class="settings-unique-id-row"><span>${escapeHtml(tag)}</span><button class="btn-secondary" onclick="copyUniqueId()">Kopyala</button></div></div>
+            <button class="btn-secondary" style="width:100%" onclick="showAddFriendModal()">Arkadaş Ekle (ID ile)</button>
+            <button class="btn-secondary danger-soft" style="width:100%" onclick="logoutAccount()">Çıkış Yap</button>
+          </div>
+        </section>
+      </div>`;
+
+    showModal("Kullanıcı Ayarları", html, `<button class="btn-primary" onclick="hideModal()">Tamam</button>`);
+
+    // Tab switching
+    document.querySelectorAll(".scord-settings-nav button[data-tab]").forEach(btn => {
+        btn.onclick = () => {
+            document.querySelectorAll(".scord-settings-nav button").forEach(b => b.classList.remove("active"));
+            document.querySelectorAll(".scord-settings-page").forEach(p => p.classList.add("hidden"));
+            btn.classList.add("active");
+            document.getElementById("set-" + btn.dataset.tab)?.classList.remove("hidden");
+        };
+    });
+
+    // Avatar: PC'den yükle
+    const refreshProfileAvatar = () => {
+        const el = document.getElementById("v25-profile-avatar");
+        if (!el) return;
+        if (state.avatarImage) {
+            el.style.backgroundImage = `url('${String(state.avatarImage).replace(/'/g, "%27")}')`;
+            el.style.backgroundColor = "transparent";
+            el.textContent = "";
+        } else {
+            el.style.backgroundImage = "none";
+            el.style.backgroundColor = state.avatarColor || "#7c3aed";
+            el.textContent = (state.username || "?").charAt(0).toUpperCase();
+        }
+    };
+    const syncAvatarUi = () => {
+        refreshProfileAvatar();
+        const ua = document.getElementById("user-bar-avatar");
+        if (ua) applyAvatarToElement(ua, state.avatarColor, state.avatarImage, state.username);
+    };
+    const avatarPreview = document.getElementById("v25-profile-avatar");
+    if (avatarPreview) avatarPreview.onclick = () => document.getElementById("v25-avatar-file").click();
+    document.getElementById("v25-avatar-file").onchange = e => {
+        const f = e.target.files && e.target.files[0];
+        if (!f) return;
+        fileToBase64(f, b64 => {
+            state.avatarImage = b64;
+            syncProfileField({ avatarImage: b64 });
+            syncAvatarUi();
+            toast("Avatar güncellendi! ✅", "success");
+        });
+    };
+    document.getElementById("v25-avatar-color").onchange = e => {
+        state.avatarColor = e.target.value;
+        syncProfileField({ avatarColor: state.avatarColor });
+        syncAvatarUi();
+    };
+    document.getElementById("v25-avatar-url").onchange = e => {
+        const v = e.target.value.trim();
+        if (/^https?:/i.test(v)) {
+            state.avatarImage = v;
+            syncProfileField({ avatarImage: v });
+            syncAvatarUi();
+        }
+    };
+    document.getElementById("v25-bio").onchange = e => syncProfileField({ bio: e.target.value });
+    document.getElementById("v25-banner-url").onchange = e => syncProfileField({ bannerUrl: e.target.value.trim() });
+
+    // Ses
+    if (navigator.mediaDevices?.enumerateDevices) {
+        navigator.mediaDevices.enumerateDevices().then(devices => {
+            const sel = document.getElementById("v25-mic-device");
+            if (!sel) return;
+            devices.filter(d => d.kind === "audioinput").forEach((d, i) => {
+                const o = document.createElement("option");
+                o.value = d.deviceId;
+                o.textContent = d.label || `Mikrofon ${i + 1}`;
+                sel.appendChild(o);
+            });
+            sel.value = vs.micId || "default";
+        }).catch(() => { });
+    }
+    document.getElementById("v25-mic-device").onchange = e => {
+        state.voiceSettings = state.voiceSettings || {};
+        state.voiceSettings.micId = e.target.value;
+        localStorage.setItem("scord_voice_settings", JSON.stringify(state.voiceSettings));
+        toast("Mikrofon değişikliği bir sonraki ses kanalı katılımında uygulanır.", "info");
+    };
+    document.getElementById("v25-filter").value = vs.filter || "none";
+    document.getElementById("v25-filter").onchange = e => {
+        state.voiceSettings = state.voiceSettings || {};
+        state.voiceSettings.filter = e.target.value;
+        localStorage.setItem("scord_voice_settings", JSON.stringify(state.voiceSettings));
+    };
+    document.getElementById("v25-noise").onchange = e => {
+        state.voiceSettings = state.voiceSettings || {};
+        state.voiceSettings.noiseSuppression = e.target.checked;
+        localStorage.setItem("scord_voice_settings", JSON.stringify(state.voiceSettings));
+    };
+    document.getElementById("v25-echo").onchange = e => {
+        state.voiceSettings = state.voiceSettings || {};
+        state.voiceSettings.echoCancellation = e.target.checked;
+        localStorage.setItem("scord_voice_settings", JSON.stringify(state.voiceSettings));
+    };
+    document.getElementById("v25-agc").onchange = e => {
+        state.voiceSettings = state.voiceSettings || {};
+        state.voiceSettings.autoGainControl = e.target.checked;
+        localStorage.setItem("scord_voice_settings", JSON.stringify(state.voiceSettings));
+    };
+    document.getElementById("v25-gate").onchange = e => {
+        state.voiceSettings = state.voiceSettings || {};
+        state.voiceSettings.gateEnabled = e.target.checked;
+        localStorage.setItem("scord_voice_settings", JSON.stringify(state.voiceSettings));
+    };
+    document.getElementById("v25-input-mode").onchange = e => {
+        state.voiceSettings = state.voiceSettings || {};
+        state.voiceSettings.inputMode = e.target.value;
+        localStorage.setItem("scord_voice_settings", JSON.stringify(state.voiceSettings));
+    };
+    document.getElementById("v25-ptt").onclick = function () {
+        this.value = "...";
+        const handler = ev => {
+            ev.preventDefault();
+            this.value = ev.key;
+            state.voiceSettings = state.voiceSettings || {};
+            state.voiceSettings.pttKey = ev.key;
+            localStorage.setItem("scord_voice_settings", JSON.stringify(state.voiceSettings));
+            window.removeEventListener("keydown", handler);
+        };
+        window.addEventListener("keydown", handler);
+    };
+    document.getElementById("v25-bitrate").onchange = e => {
+        state.voiceSettings = state.voiceSettings || {};
+        state.voiceSettings.audioBitrate = parseInt(e.target.value, 10);
+        localStorage.setItem("scord_voice_settings", JSON.stringify(state.voiceSettings));
+        toast("Ses bitrate'i kaydedildi — kanaldan çıkıp girince uygulanır.", "info");
+    };
+
+    // Ekran paylaşımı
+    document.getElementById("v25-screen-quality").value = state.screenShareQuality || "720p";
+    document.getElementById("v25-screen-quality").onchange = e => {
+        state.screenShareQuality = e.target.value;
+        try { localStorage.setItem("scord_screen_quality", e.target.value); } catch (err) { }
+    };
+    document.getElementById("v25-screen-fps").value = String(state.screenShareFPS || 30);
+    document.getElementById("v25-screen-fps").onchange = e => {
+        state.screenShareFPS = parseInt(e.target.value, 10);
+        try { localStorage.setItem("scord_screen_fps", e.target.value); } catch (err) { }
+    };
+    document.getElementById("v25-screen-audio").onchange = e => {
+        state.screenShareAudio = e.target.checked;
+        try { localStorage.setItem("scord_screen_audio", e.target.checked ? "1" : "0"); } catch (err) { }
+    };
+    document.getElementById("v25-camera-quality").value = state.cameraQuality || "720p";
+    document.getElementById("v25-camera-quality").onchange = e => { state.cameraQuality = e.target.value; };
+
+    // Bildirimler
+    document.getElementById("v25-notif-dm").onchange = e => {
+        state.notifSettings = state.notifSettings || {};
+        state.notifSettings.dm = e.target.checked;
+        localStorage.setItem("scord_notif_settings", JSON.stringify(state.notifSettings));
+    };
+    document.getElementById("v25-notif-join").onchange = e => {
+        state.notifSettings = state.notifSettings || {};
+        state.notifSettings.join = e.target.checked;
+        localStorage.setItem("scord_notif_settings", JSON.stringify(state.notifSettings));
+    };
+    document.getElementById("v25-notif-level").onchange = e => {
+        state.notifSettings = state.notifSettings || {};
+        state.notifSettings.chatLevel = e.target.value;
+        state.notifSettings.chat = e.target.value !== "none";
+        localStorage.setItem("scord_notif_settings", JSON.stringify(state.notifSettings));
+    };
+
+    // Kompakt
+    document.getElementById("v25-compact").onchange = e => {
+        state.compactMode = e.target.checked;
+        try { localStorage.setItem("scord_compact_mode", e.target.checked ? "1" : "0"); } catch (err) { }
+        document.body.classList.toggle("compact-mode", e.target.checked);
+    };
+};
+
+// openSettingsModal (Ctrl+, kısayolu) de aynı birleşik menüyü açar
+window.openSettingsModal = function () { window.showUserSettingsModal(); };
+
+// ── Sunucu Ayarları redesign (Discord benzeri + kanal yönetimi) ──
+window.openServerSettingsPanel = function () {
+    if (!state.activeServerId) return toast("Önce bir sunucu seç.", "info");
+    const server = currentServer();
+    if (!server) return;
+    const isOwner = server.ownerId === state.peerId;
+    const canManage = isOwner || roleAllows(server, "manage_server") || roleAllows(server, "manage_roles");
+    if (!canManage) return toast("Sunucu ayarları için yetkin yok.", "warning");
+
+    let panel = document.getElementById("server-settings-panel");
+    if (!panel) {
+        panel = document.createElement("div");
+        panel.id = "server-settings-panel";
+        (document.querySelector(".app") || document.body).appendChild(panel);
+    }
+    const roles = server.roles || {};
+    const channels = server.channels || [];
+    const textChs = channels.filter(c => c.type !== "voice");
+    const voiceChs = channels.filter(c => c.type === "voice");
+    const chRow = ch => `
+      <div class="v25-ch-row">
+        <span class="v25-ch-name">${ch.type === "voice" ? "🔊" : "#"} ${escapeHtml(ch.name)}</span>
+        <div class="v25-ch-actions">
+          <button class="v25-mini" title="Yeniden adlandır" onclick="renameChannel('${server.id}', '${ch.id}')">✏️</button>
+          <button class="v25-mini danger" title="Sil" onclick="deleteChannel('${server.id}', '${ch.id}')">🗑️</button>
+        </div>
+      </div>`;
+    const permRows = SCORD_V24_PERMISSIONS.map(p =>
+        `<label class="permission-item"><input type="checkbox" id="perm-member-${p}" ${roles.member?.permissions?.[p] !== false ? "checked" : ""}> ${p.replaceAll("_", " ")}</label>`
+    ).join("");
+    const invite = server.inviteCode || server.invite_code || "";
+
+    panel.className = "scord-server-settings v25-server";
+    panel.innerHTML = `
+      <aside class="scord-server-settings-nav">
+        <strong>${escapeHtml(server.name)}</strong>
+        <button class="active" data-page="overview">Genel</button>
+        <button data-page="channels">Kanallar</button>
+        <button data-page="roles">Roller</button>
+        <button data-page="perms">İzinler</button>
+        <button data-page="voice">Ses & Moderasyon</button>
+        <button data-page="background">Arka Plan</button>
+        ${!isOwner ? `<button data-page="leave">Ayrıl</button>` : ""}
+        ${isOwner ? `<button data-page="danger">Sunucuyu Sil</button>` : ""}
+        <button class="danger" onclick="closeServerSettingsPanel()">Kapat</button>
+      </aside>
+      <main class="scord-server-settings-main">
+        <section id="srv-overview" class="srv-page">
+          <h2>Genel</h2>
+          <label>Sunucu Adı<input class="modal-input" id="settings-sv-name" value="${escapeHtml(server.name)}"></label>
+          <label>Sunucu İkonu (URL)<input class="modal-input" id="settings-sv-icon" value="${escapeHtml(server.icon_url || "")}" placeholder="https://..."></label>
+          <button class="btn-secondary" onclick="document.getElementById('v25-server-icon-file').click()">📷 PC'den İkon Yükle</button>
+          <input type="file" id="v25-server-icon-file" accept="image/*" style="display:none">
+          <div class="v25-invite-box">
+            <span class="v25-invite-label">Davet Kodu</span>
+            <div class="v25-invite-row">
+              <code>${escapeHtml(invite)}</code>
+              <button class="v25-mini" data-copy-code="${escapeHtml(invite)}" type="button">📋 Kopyala</button>
+              ${isOwner ? `<button class="v25-mini" data-rotate-invite="${server.id}" type="button">🔄 Yenile</button>` : ""}
+            </div>
+          </div>
+        </section>
+        <section id="srv-channels" class="srv-page hidden">
+          <h2>Kanallar</h2>
+          <div class="v25-ch-group"><h4>Metin</h4>${textChs.map(chRow).join("") || '<p class="modal-info">Kanal yok.</p>'}</div>
+          <div class="v25-ch-group"><h4>Ses</h4>${voiceChs.map(chRow).join("") || '<p class="modal-info">Kanal yok.</p>'}</div>
+          <div class="v25-ch-actions" style="margin-top:10px">
+            <button class="btn-secondary" onclick="promptAddChannel('${server.id}', 'text')">+ Metin Kanalı</button>
+            <button class="btn-secondary" onclick="promptAddChannel('${server.id}', 'voice')">+ Ses Kanalı</button>
+          </div>
+        </section>
+        <section id="srv-roles" class="srv-page hidden">
+          <h2>Roller ve Yetkiler</h2>
+          <button class="btn-secondary" onclick="createNewRole()">+ Yeni Rol</button>
+          ${typeof renderAdvancedRoleEditor === "function" ? renderAdvancedRoleEditor(server) : ""}
+        </section>
+        <section id="srv-perms" class="srv-page hidden">
+          <h2>Varsayılan Üye İzinleri</h2>
+          <div class="permission-grid">${permRows}</div>
+        </section>
+        <section id="srv-voice" class="srv-page hidden">
+          <h2>Ses ve Moderasyon</h2>
+          <button class="btn-secondary" onclick="requestKickMusicBot()">🎵 Müzik botunu çıkar</button>
+          <p class="modal-info">Force disconnect yetkisi olan roller ses kanalındaki kullanıcıları ve botu çıkarabilir.</p>
+        </section>
+        <section id="srv-background" class="srv-page hidden">
+          <h2>Chat Arka Planı</h2>
+          <label>Kanal arka planı URL<input class="modal-input" id="settings-channel-bg-url" value="${escapeHtml((server.channel_backgrounds || {})[state.activeChannelId] || "")}" placeholder="https://..."></label>
+          <button class="btn-secondary" onclick="saveServerChannelBackground()">Uygula</button>
+        </section>
+        ${!isOwner ? `<section id="srv-leave" class="srv-page hidden"><h2>Sunucudan Ayrıl</h2><div class="srv-danger-zone"><p>Bu sunucu sol listenden kaldırılır. Davet koduyla tekrar katılabilirsin.</p><button class="btn-primary" style="background:var(--red);border:none;width:max-content" onclick="leaveCurrentServerSelf()">Ayrıl</button></div></section>` : ""}
+        ${isOwner ? `<section id="srv-danger" class="srv-page hidden"><h2>Tehlikeli Bölge</h2><div class="srv-danger-zone"><h3>Sunucuyu Sil</h3><p>Kalıcı olarak silinir, geri alınamaz. Sadece sahip kapatabilir.</p><button class="btn-primary" style="background:var(--red);border:none;width:max-content" onclick="deleteServer('${server.id}')">Sunucuyu Sil</button></div></section>` : ""}
+        <footer>
+          <button class="btn-secondary" onclick="closeServerSettingsPanel()">Kapat</button>
+          <button class="btn-primary" onclick="saveProfessionalServerSettings()">Kaydet</button>
+        </footer>
+      </main>`;
+
+    panel.querySelectorAll(".scord-server-settings-nav button[data-page]").forEach(btn => {
+        btn.onclick = () => {
+            panel.querySelectorAll(".scord-server-settings-nav button").forEach(b => b.classList.remove("active"));
+            panel.querySelectorAll(".srv-page").forEach(p => p.classList.add("hidden"));
+            btn.classList.add("active");
+            panel.querySelector(`#srv-${btn.dataset.page}`)?.classList.remove("hidden");
+        };
+    });
+
+    // PC'den sunucu ikonu yükle
+    const iconFile = document.getElementById("v25-server-icon-file");
+    if (iconFile) iconFile.onchange = e => {
+        const f = e.target.files && e.target.files[0];
+        if (!f) return;
+        fileToBase64(f, b64 => {
+            document.getElementById("settings-sv-icon").value = b64;
+            if (typeof updateServerIcon === "function") updateServerIcon(server.id, b64);
+            const rail = document.querySelector(`[data-server-id="${server.id}"]`);
+            if (rail) {
+                rail.innerHTML = `<img src="${b64}" class="rail-guild-img" style="width:100%;height:100%;object-fit:cover;">`;
+            }
+        });
+    };
+
+    // Davet kodu kopyala / yenile — inline onclick yerine güvenli bağlama
+    panel.querySelectorAll("[data-copy-code]").forEach(b => {
+        b.onclick = () => {
+            const code = b.getAttribute("data-copy-code") || "";
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(code).then(() => toast("Davet kodu kopyalandı!", "success"));
+            } else {
+                toast("Kopyalama desteklenmiyor.", "error");
+            }
+        };
+    });
+    panel.querySelectorAll("[data-rotate-invite]").forEach(b => {
+        b.onclick = () => {
+            const sid = b.getAttribute("data-rotate-invite");
+            if (typeof window._v25RotateInvite === "function") window._v25RotateInvite(sid);
+        };
+    });
+};
+
+window._v25RotateInvite = async function (serverId) {
+    const server = currentServer();
+    if (!server || server.ownerId !== state.peerId) return toast("Sadece sahip davet kodunu yenileyebilir.", "warning");
+    try {
+        const res = await scordFetch(`${API_BASE}/rooms/${serverId}/invite_rotate`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ owner_id: state.peerId }),
+        });
+        const data = await res.json();
+        if (data.invite_code) {
+            server.inviteCode = data.invite_code;
+            server.invite_code = data.invite_code;
+            toast("Yeni davet kodu: " + data.invite_code, "success");
+            window.openServerSettingsPanel();
+        }
+    } catch (e) {
+        toast("Davet kodu yenilenemedi.", "error");
+    }
+};
+
+// ── Avatar'a tıklayınca birleşik ayarlar (profil sekmesi) açılsın ──
+// startApp'i sarmalayıp avatar bağlamasını tek seferde ele geçiriyoruz;
+// sonsuz poll döngüsü yok, quick-upload binding'i ile yarış yok.
+const _v25OrigStartApp = window.startApp || startApp;
+window.startApp = function () {
+    const r = _v25OrigStartApp.apply(this, arguments);
+    setTimeout(() => {
+        const av = document.getElementById("user-bar-avatar");
+        if (av && !av.dataset.v25Bound) {
+            av.dataset.v25Bound = "1";
+            av.style.cursor = "pointer";
+            av.title = "Profil — tıkla, ayarlardan avatari PC'den yükle";
+            av.onclick = e => {
+                e.stopPropagation();
+                if (typeof window.showUserSettingsModal === "function") window.showUserSettingsModal();
+            };
+        }
+    }, 120);
+    return r;
+};
+
+// Eski MEGA PATCH hookScreenBtn'in atadığı onclick'i nötralize et:
+// yeni picker her zaman kazanır (capture listener maskesi gerekmeden).
+(function () {
+    const bindV25 = () => {
+        const btn = document.getElementById("voice-screen-btn");
+        if (!btn) return;
+        btn.onclick = e => {
+            e.preventDefault();
+            if (window.state && (window.state.screenStream || (window.state.mesh && window.state.mesh.screenStream))) {
+                if (typeof stopScreenShare === "function") stopScreenShare();
+                btn.classList.remove("active");
+                return;
+            }
+            if (typeof window.openScreenSharePicker === "function") window.openScreenSharePicker();
+        };
+    };
+    setTimeout(bindV25, 400);
+    document.addEventListener("DOMContentLoaded", bindV25);
+})();
+
+console.log("[V25] Screen picker + unified settings + server redesign + P2P tuning loaded");
