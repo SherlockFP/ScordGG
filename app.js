@@ -48,7 +48,7 @@ var __rawState = {
     _appliedTheme: null,
     avatarImage: null,
     appBackground: null,
-    voiceSettings: { micId: "default", volume: 1, filter: "none", noiseSuppression: true, echoCancellation: false, autoGainControl: false, gateThreshold: 8, gateAttack: 0.008, gateRelease: 0.05 },
+    voiceSettings: { micId: "default", volume: 1, filter: "none", noiseSuppression: true, echoCancellation: true, autoGainControl: true, gateEnabled: false, gateThreshold: 8, gateAttack: 0.008, gateRelease: 0.05 },
     screenShareQuality: "720p",
     cameraQuality: "720p",
     roomCreatedAt: {}, // roomId -> timestamp
@@ -2542,38 +2542,21 @@ async function startScreenShare() {
         });
         state.screenStream = stream;
         state.mesh.screenStream = stream;
+        const screenVideoTrack = stream.getVideoTracks()[0];
+        if (screenVideoTrack) screenVideoTrack.contentHint = fps >= 60 ? "motion" : "detail";
 
-        // Add tracks to all existing peer connections
+        // Her track için AYRI sender eklenir (asla replaceTrack yok) — aksi halde
+        // mevcut mikrofon/kamera sender'ının track'i sessizce ekran paylaşımınkiyle
+        // değişir ve mikrofon herkes için susar.
         for (const [, peerObj] of Object.entries(state.mesh.peers)) {
             const pc = peerObj.pc;
             if (!pc || pc.connectionState === "closed") continue;
-
             stream.getTracks().forEach(track => {
-                // Check if a sender for this track kind (video) already exists
-                const existingSender = pc.getSenders().find(s => s.track && s.track.kind === track.kind);
-                if (existingSender) {
-                    existingSender.replaceTrack(track).catch(e => console.warn("replaceTrack error", e));
-                } else {
-                    pc.addTrack(track, stream);
-                }
+                try { pc.addTrack(track, stream); } catch (e) { console.warn("[Screen] addTrack error", e); }
             });
         }
 
-        stream.getVideoTracks()[0].onended = () => {
-            stream.getTracks().forEach(t => t.stop());
-            state.screenStream = null;
-            if (state.mesh) { state.mesh.screenStream = null; state.mesh.broadcast({ type: "screen_status", sharing: false, channelId: state.voiceChannelId || state.activeChannelId }); }
-            // Clear member sharing flags  
-            if (state.activeServerId && state.voiceChannelId) {
-                var _srv = state.servers.find(function(s) { return s.id === state.activeServerId; });
-                if (_srv && _srv.voiceMembers && _srv.voiceMembers[state.voiceChannelId]) {
-                    var _lm = _srv.voiceMembers[state.voiceChannelId].find(function(m) { return m.peer_id === state.peerId; });
-                    if (_lm) { _lm.isSharingScreen = false; _lm.isSharingCamera = false; }
-                }
-            }
-            document.getElementById("voice-screen-btn")?.classList.remove("active");
-            if (state.activeServerId && state.voiceChannelId) { renderVoiceParticipants(state.activeServerId, state.voiceChannelId); }
-        };
+        stream.getVideoTracks()[0].onended = () => stopScreenShare();
 
         document.getElementById("voice-screen-btn").classList.add("active");
         if (state.mesh) {
@@ -2595,6 +2578,22 @@ async function startScreenShare() {
         toast("Ekran paylaşımı iptal edildi veya hata oluştu.", "error");
     }
 }
+
+// Global stopScreenShare: `force_stop_screen` (moderasyon) ve diğer çağrı
+// yerleri bu ismi global fonksiyon olarak bekliyordu ama hiç tanımlanmamıştı —
+// state.mesh.stopScreenShare() (p2p.js, artık video+audio sender'larının
+// tümünü temizliyor) üzerinden tek noktadan kapatma sağlanır.
+function stopScreenShare() {
+    if (state.mesh && state.mesh.screenStream) {
+        state.mesh.stopScreenShare();
+        return;
+    }
+    if (state.screenStream) {
+        state.screenStream.getTracks().forEach(t => t.stop());
+        state.screenStream = null;
+    }
+}
+window.stopScreenShare = stopScreenShare;
 
 /* ── Camera Sharing ───────────────────────────────────────── */
 async function startCameraShare() {
@@ -2619,14 +2618,11 @@ async function startCameraShare() {
         for (const [, peerObj] of Object.entries(state.mesh.peers)) {
             const pc = peerObj.pc;
             if (!pc || pc.connectionState === "closed") continue;
-
+            // Asla replaceTrack yok: ekran paylaşımı aktifken kamera açılırsa
+            // "kind===video" eşleşen ilk sender'ı (ekran paylaşımınınkini)
+            // ele geçirmesin — her ikisi de kendi sender'ında kalmalı.
             stream.getTracks().forEach(track => {
-                const existingSender = pc.getSenders().find(s => s.track && s.track.kind === track.kind);
-                if (existingSender) {
-                    existingSender.replaceTrack(track).catch(console.warn);
-                } else {
-                    pc.addTrack(track, stream);
-                }
+                try { pc.addTrack(track, stream); } catch (e) { console.warn("[Camera] addTrack error", e); }
             });
         }
 
@@ -2667,14 +2663,15 @@ async function startCameraShare() {
 
 function stopCameraShare() {
     if (state.cameraStream) {
-        state.cameraStream.getTracks().forEach(t => t.stop());
+        const cameraTracks = state.cameraStream.getTracks();
+        cameraTracks.forEach(t => t.stop());
         state.cameraStream = null;
         if (state.mesh) state.mesh.cameraStream = null;
 
         for (const [, peerObj] of Object.entries(state.mesh?.peers || {})) {
             const pc = peerObj.pc;
             if (!pc) continue;
-            pc.getSenders().filter(s => s.track?.kind === "video").forEach(s => {
+            pc.getSenders().filter(s => s.track && cameraTracks.includes(s.track)).forEach(s => {
                 try { pc.removeTrack(s); } catch (e) { }
             });
         }
@@ -4635,8 +4632,11 @@ function updateConnectionStatus(status) {
     } else if (key === "room_not_found") {
         if (t - (state._roomNFToastAt || 0) > 8000) {
             state._roomNFToastAt = t;
-            toast("Oda bulunamadı (sunucu yeniden başlamış olabilir). Sunucuyu yeniden oluşturup tekrar davet et.", "error");
+            toast("Oda bulunamadı, sunucu listesi kontrol ediliyor...", "warning");
         }
+        // p2p.js artık bu durumda sonsuz reconnect'i kendi kesiyor (terminal flag);
+        // burada tek seferlik reconcile ile silinmiş/kaybolmuş odayı ayırt ediyoruz.
+        handleRoomNotFound(state.mesh?.roomId || state.activeServerId);
     } else if (key === "server_error") {
         if (t - (state._srvErrToastAt || 0) > 8000) {
             state._srvErrToastAt = t;
@@ -4856,7 +4856,10 @@ async function joinVoiceChannel(channelId) {
         const gainNode = state.audioCtx.createGain();
         gainNode.gain.value = state.voiceSettings?.volume || 1;
         const gateNode = state.audioCtx.createGain();
-        gateNode.gain.value = 0;
+        // Varsayılan: gate KAPALI (gateEnabled=false) — mikrofon her zaman açık.
+        // Gate açıkken konuşma başındaki ~100ms'lik hece analyser eşiği aşana
+        // kadar kesiliyordu ("kelime başları kırpılıyor" şikayetinin kaynağı).
+        gateNode.gain.value = state.voiceSettings?.gateEnabled ? 0 : 1;
         state.voiceGateNode = gateNode;
 
         const filterNode = state.audioCtx.createBiquadFilter();
@@ -4915,14 +4918,17 @@ async function joinVoiceChannel(channelId) {
 
             const holdMs = SCORD_T().VOICE_SPEAKING_HOLD_MS ?? 250;
             const isSpeaking = (Date.now() - (state._lastSpeakTime || 0)) < holdMs;
-            const targetGain = isSpeaking || state.voiceSettings?.inputMode === "ptt" ? 1 : 0;
-            try {
-                const nowAudio = state.audioCtx.currentTime;
-                const release = Number(state.voiceSettings?.gateRelease ?? 0.09);
-                const attack = Number(state.voiceSettings?.gateAttack ?? 0.012);
-                gateNode.gain.cancelScheduledValues(nowAudio);
-                gateNode.gain.setTargetAtTime(targetGain, nowAudio, targetGain ? attack : release);
-            } catch { gateNode.gain.value = targetGain; }
+            const gateEnabled = state.voiceSettings?.gateEnabled === true;
+            const targetGain = !gateEnabled || isSpeaking || state.voiceSettings?.inputMode === "ptt" ? 1 : 0;
+            if (gateEnabled) {
+                try {
+                    const nowAudio = state.audioCtx.currentTime;
+                    const release = Number(state.voiceSettings?.gateRelease ?? 0.09);
+                    const attack = Number(state.voiceSettings?.gateAttack ?? 0.012);
+                    gateNode.gain.cancelScheduledValues(nowAudio);
+                    gateNode.gain.setTargetAtTime(targetGain, nowAudio, targetGain ? attack : release);
+                } catch { gateNode.gain.value = targetGain; }
+            }
 
             if (isSpeaking !== state.isSpeaking) {
                 state.isSpeaking = isSpeaking;
@@ -10758,6 +10764,9 @@ function updatePermission(permId, enabled) {
 const _origStartApp_servers = window.startApp;
 window.startApp = function () {
     loadSavedServers();
+    // Hayalet sunucu düzeltmesi: yerel önbellek backend registry ile senkronize
+    // edilir (silinenler temizlenir, redeploy sonrası kaybolanlar restore edilir).
+    reconcileServerRegistry().catch(e => console.warn("[Reconcile] startup sync error:", e));
     if (_origStartApp_servers) _origStartApp_servers();
 };
 
@@ -10818,6 +10827,18 @@ function currentServer() {
 
 function normalizeServerLivePayload(server, room) {
     if (!server || !room) return;
+    // BUG FIX: sonradan katılan (late-joiner) kullanıcılar sadece ses/rol
+    // verisini alıyordu; kanal listesi, mesaj geçmişi, pinler, kanal arka
+    // planları, ikon ve davet kodu hiç uygulanmıyordu. Sunucu bunları
+    // room_state ile zaten gönderiyor (server.py to_dict) — burada eksik olan
+    // istemci tarafı tüketimdi.
+    if (room.name) server.name = room.name;
+    if (room.icon_url !== undefined) server.icon_url = room.icon_url;
+    if (room.invite_code) server.inviteCode = room.invite_code;
+    if (room.channels) server.channels = room.channels;
+    if (room.channel_backgrounds) server.channel_backgrounds = room.channel_backgrounds;
+    if (room.pinned_messages) server.pinned_messages = room.pinned_messages;
+    if (room.messages) mergeMessageHistoryIntoServer(server, room.messages);
     if (room.voice_members) server.voiceMembers = room.voice_members;
     if (room.music_session !== undefined) server.musicSession = room.music_session;
     if (room.roles) server.roles = room.roles;
@@ -10833,6 +10854,144 @@ function normalizeServerLivePayload(server, room) {
         server.peer_count = room.peers.length;
     }
 }
+
+/* ── Sunucu kaydı senkronizasyonu (hayalet sunucu düzeltmesi) ───────────────
+   Backend /api/rooms bu odaların gerçekten var olup olmadığının tek otoritesi.
+   Yerel önbellek (state.servers + localStorage) kayabilir: sunucu biz
+   çevrimdışıyken silinmiş olabilir, ya da Render'ın ephemeral diski redeploy
+   sonrası rooms.json'ı sıfırlamış olabilir. Bu blok her iki yönde de
+   senkronize eder: açılışta (reconcileServerRegistry) ve anlık
+   "room not found" hatasında (handleRoomNotFound). */
+
+function purgeLocalServer(serverId, opts = {}) {
+    const wasActive = state.activeServerId === serverId;
+    if (wasActive && state.mesh) {
+        state.mesh.disconnect();
+        state.mesh = null;
+    }
+    const removedName = state.servers.find(s => s.id === serverId)?.name || serverId;
+    state.servers = (state.servers || []).filter(s => s.id !== serverId);
+    try { localStorage.removeItem(`scord_server_${serverId}`); } catch (e) { }
+    if (typeof removeServerFromStorage === "function") removeServerFromStorage(serverId);
+    ["scord_reactions_", "scord_threads_", "scord_message_history_", "scord_pinned_",
+        "scord_roles_", "scord_channel_categories_", "scord_server_boosts_", "scord_custom_emojis_",
+    ].forEach(prefix => { try { localStorage.removeItem(prefix + serverId); } catch (e) { } });
+    if (wasActive) {
+        state.activeServerId = null;
+        state.activeChannelId = null;
+        state.voiceChannelId = null;
+        if (typeof showHomeView === "function") showHomeView();
+    }
+    if (opts.toast !== false) toast(opts.toastMsg || `"${removedName}" artık mevcut değil, yerel kopya temizlendi.`, "info");
+    if (typeof renderServerRail === "function") renderServerRail();
+}
+window.purgeLocalServer = purgeLocalServer;
+
+function _localServerToRestorePayload(server) {
+    return {
+        name: server.name,
+        owner_id: server.ownerId || server.owner_id,
+        channels: server.channels,
+        roles: server.roles,
+        peer_roles: server.peer_roles,
+        channel_permissions: server.channel_permissions,
+        pinned_messages: server.pinned_messages,
+        messages: server.messages,
+        channel_backgrounds: server.channel_backgrounds,
+        icon_url: server.icon_url,
+        invite_code: server.inviteCode || server.invite_code,
+    };
+}
+
+async function reconcileServerRegistry() {
+    const ids = (state.servers || []).map(s => s.id).filter(Boolean);
+    if (ids.length === 0) return;
+    let result;
+    try {
+        const res = await fetch(`${API_BASE}/rooms/sync`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ room_ids: ids }),
+        });
+        result = await res.json();
+    } catch (e) {
+        console.warn("[Reconcile] sync failed (offline?):", e);
+        return; // Ağ yoksa yerel önbelleğe dokunma; kullanıcı çevrimdışı olabilir.
+    }
+
+    (result.deleted || []).forEach(id => purgeLocalServer(id));
+
+    for (const id of (result.unknown || [])) {
+        const server = state.servers.find(s => s.id === id);
+        if (!server) continue;
+        try {
+            const res = await fetch(`${API_BASE}/rooms/${encodeURIComponent(id)}/restore`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(_localServerToRestorePayload(server)),
+            });
+            const data = await res.json();
+            if (data.error === "deleted") {
+                purgeLocalServer(id);
+            } else if (data.room) {
+                normalizeServerLivePayload(server, data.room);
+                saveServerData(id);
+            }
+        } catch (e) {
+            console.warn("[Reconcile] restore failed for", id, e);
+        }
+    }
+
+    (result.active || []).forEach(room => {
+        const server = state.servers.find(s => s.id === room.room_id);
+        if (!server) return;
+        normalizeServerLivePayload(server, room);
+        saveServerData(server.id);
+    });
+
+    if (typeof renderServerRail === "function") renderServerRail();
+    if (state.activeServerId) updateChannelSidebar(state.activeServerId);
+}
+window.reconcileServerRegistry = reconcileServerRegistry;
+
+async function handleRoomNotFound(roomId) {
+    if (!roomId) return;
+    let result;
+    try {
+        const res = await fetch(`${API_BASE}/rooms/sync`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ room_ids: [roomId] }),
+        });
+        result = await res.json();
+    } catch (e) {
+        return; // Offline: p2p.js zaten reconnect döngüsünü durdurdu (terminal flag).
+    }
+    if ((result.deleted || []).includes(roomId)) {
+        purgeLocalServer(roomId, { toastMsg: "Bu sunucu silinmiş, yerel kopya temizlendi." });
+        return;
+    }
+    const server = state.servers.find(s => s.id === roomId);
+    if (!server) return;
+    if ((result.unknown || []).includes(roomId)) {
+        try {
+            const res = await fetch(`${API_BASE}/rooms/${encodeURIComponent(roomId)}/restore`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(_localServerToRestorePayload(server)),
+            });
+            const data = await res.json();
+            if (data.error === "deleted") { purgeLocalServer(roomId); return; }
+            if (data.room) normalizeServerLivePayload(server, data.room);
+        } catch (e) {
+            console.warn("[Reconcile] restore-on-reconnect failed:", e);
+            return;
+        }
+    }
+    // Oda artık var (restore edildi ya da kısa süreli sunucu kesintisiydi) — yeniden bağlan.
+    if (state.activeServerId === roomId) connectMesh(roomId);
+}
+window.handleRoomNotFound = handleRoomNotFound;
 
 function refreshVoiceUiFor(serverId, channelId) {
     if (!serverId) return;
@@ -10851,8 +11010,20 @@ function handleAuthoritativeServerEvent(msg, roomId) {
     const server = state.servers.find(s => s.id === (msg.room_id || roomId));
     if (msg.type === "room_state" && server) {
         normalizeServerLivePayload(server, msg.room);
+        // Late-joiner fix: kanal listesi/mesaj geçmişi/pinler artık burada da
+        // uygulanıyor (bkz. normalizeServerLivePayload) — sidebar ve mesaj
+        // alanını da tazelemek gerekiyor, önceden sadece ses UI'ı tazeleniyordu.
+        updateChannelSidebar(server.id);
+        if (state.activeServerId === server.id && state.activeChannelId) {
+            renderMessages(server.id, state.activeChannelId);
+        }
         refreshVoiceUiFor(server.id, state.voiceChannelId || state.activeChannelId);
         if (msg.room?.music_session !== undefined) syncMusicSessionFromServer(msg.room.music_session);
+        saveServerData(server.id);
+        return;
+    }
+    if (msg.type === "room_deleted" && server) {
+        purgeLocalServer(server.id, { toastMsg: `"${server.name}" sunucusu silindi.` });
         return;
     }
     if (!server) return;
@@ -13415,7 +13586,10 @@ function initializeKeyboardShortcuts() {
         'Ctrl+Shift+PgDn': startCameraShare,
 
         // Settings shortcuts
-        'Ctrl+,': openSettingsModal,
+        // Ctrl+, artık openSettingsModal (eski, ayrık ".scord-settings-shell"
+        // versiyonu) yerine dişli simgesiyle aynı, tüm patch'leri almış modalı
+        // açıyor — önceden iki farklı ayarlar arayüzü karışık şekilde vardı.
+        'Ctrl+,': showUserSettings,
         'Ctrl+Shift+P': openProfileSettings,
         'Ctrl+Shift+U': showUserSettings,
 
@@ -22549,96 +22723,6 @@ function init() {
 
   function patchScreenShare() {
     // ============================================================
-    // FIX 1: Screen share audio koruma - sadece video track'ini ekle
-    // ============================================================
-    if (typeof window.startScreenShare === "function" && !window._screenShareFixed) {
-      window._screenShareFixed = true;
-      var _origSSS = window.startScreenShare;
-      window.startScreenShare = async function () {
-        try {
-          // 1→N: eğer başka biri zaten ekran paylaşıyorsa engelle
-          if (window.state?.mesh?.screenStream && window.state.mesh.screenStream !== this?.screenStream) {
-            if (typeof window.toast === "function") {
-              window.toast("Bir kullanıcı zaten ekran paylaşıyor. Aynı anda yalnızca bir yayın olabilir.", "warning");
-            }
-            return;
-          }
-          // Orijinal fonksiyonu çağır
-          var result = await _origSSS.apply(this, arguments);
-          
-          // ŞİMDİ: audio track'lerini düzelt - screen share sesi MİKROFONUN yerine geçmesin
-          if (window.state?.mesh && window.state?.screenStream) {
-            var stream = window.state.screenStream;
-            var peers = window.state.mesh.peers || {};
-            
-            Object.values(peers).forEach(function (peerObj) {
-              var pc = peerObj.pc;
-              if (!pc || pc.connectionState === "closed") return;
-              
-              // Audio sender'ı bul - screen share audio'su ile replace edilmiş olabilir
-              var audioSender = pc.getSenders().find(function (s) { return s.track && s.track.kind === "audio"; });
-              
-              // Eğer audio sender varsa ve track'i screen share stream'inden geliyorsa
-              // (yani replace edilmişse), orijinal mic track'ini geri yükle
-              if (audioSender && stream.getAudioTracks().indexOf(audioSender.track) !== -1) {
-                // Screen share'ın audio track'ini sender'dan çıkar
-                // NOT: replaceTrack(null) göndermeyi durdurur
-                // En iyisi: screen share sesini KALDIR, sadece video bırak
-                try {
-                  // replaceTrack(null) ile audio'yu durdur (mic kesintisiz devam eder)
-                  // Çünkü mic track'i ayrı bir stream'de
-                  audioSender.replaceTrack(null).catch(function () {});
-                } catch (e) {}
-              }
-            });
-          }
-          
-          return result;
-        } catch (e) {
-          console.error("[Fixes] startScreenShare error:", e);
-          throw e;
-        }
-      };
-    }
-    
-    // ============================================================
-    // FIX 2: Screen share bittiğinde mic'i kurtar + UI temizle
-    // ============================================================
-    if (typeof window.stopScreenShare === "function" && !window._screenStopFixed) {
-      window._screenStopFixed = true;
-      var _origStopSS = window.stopScreenShare;
-      window.stopScreenShare = function () {
-        try {
-          // ÖNCE: state.screenStream'den audio track'lerini durdurma
-          // (orijinal stopScreenShare stream.getTracks().forEach(t => t.stop()) yapar)
-          // Ama mic track'i replace edilmiş olabilir - onu koru
-          
-          // Screen share kalktı mesajını broadcast et (orijinal fonksiyon öncesi)
-          if (window.state?.mesh) {
-            window.state.mesh.broadcast({
-              type: "screen_status",
-              sharing: false,
-              channelId: window.state.voiceChannelId || window.state.activeChannelId
-            });
-          }
-          
-          _origStopSS.apply(this, arguments);
-          
-          // UI'ı force refresh
-          if (window.state?.activeServerId && window.state?.voiceChannelId) {
-            setTimeout(function () {
-              if (typeof window.renderVoiceParticipants === "function") {
-                window.renderVoiceParticipants(window.state.activeServerId, window.state.voiceChannelId);
-              }
-            }, 200);
-          }
-        } catch (e) {
-          console.error("[Fixes] stopScreenShare error:", e);
-        }
-      };
-    }
-    
-    // ============================================================
     // FIX 3: handleVoiceStream - video elementini DOM'a ekle
     // ============================================================
     if (typeof window.handleVoiceStream === "function") {
@@ -23952,13 +24036,16 @@ function showUserSettingsModal() {
     html += '<div class="scord-settings-panel" data-panel="ses">';
     html += '<div style="margin:16px 0;padding:12px 16px;background:rgba(255,255,255,0.03);border-radius:10px;">';
     html += '<label style="display:flex;justify-content:space-between;align-items:center;font-size:13px;color:#ccc;margin:8px 0;">Bildirim Ses <span id="val-notif-vol" style="color:#fff;font-weight:600;">' + (vols.notificationVolume || 50) + '%</span><input type="range" min="0" max="100" value="' + (vols.notificationVolume || 50) + '" oninput="updateSetting(\'notificationVolume\',this.value);document.getElementById(\'val-notif-vol\').textContent=this.value+\'%\'"></label>';
-    html += '<label style="display:flex;justify-content:space-between;align-items:center;font-size:13px;color:#ccc;margin:8px 0;">Mikrofon Hassasiyeti <span id="val-gate-vol" style="color:#fff;font-weight:600;">' + (vs.gateThreshold || 8) + '</span><input type="range" min="3" max="30" value="' + (vs.gateThreshold || 8) + '" oninput="state.voiceSettings=state.voiceSettings||{};state.voiceSettings.gateThreshold=parseInt(this.value);document.getElementById(\'val-gate-vol\').textContent=this.value;localStorage.setItem(\'scord_voice_settings\',JSON.stringify(state.voiceSettings))">';
+    html += '<label style="display:flex;justify-content:space-between;align-items:center;font-size:13px;color:#ccc;margin:8px 0;">Mikrofon Hassasiyeti <span id="val-gate-vol" style="color:#fff;font-weight:600;">' + (vs.gateThreshold || 8) + '</span><input type="range" min="3" max="30" value="' + (vs.gateThreshold || 8) + '" oninput="state.voiceSettings=state.voiceSettings||{};state.voiceSettings.gateThreshold=parseInt(this.value);document.getElementById(\'val-gate-vol\').textContent=this.value;localStorage.setItem(\'scord_voice_settings\',JSON.stringify(state.voiceSettings))"></label>';
     html += '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#ccc;margin:8px 0;"><input type="checkbox" ' + (state.settings?.soundEffects !== false ? 'checked' : '') + ' onchange="state.settings.soundEffects=this.checked;localStorage.setItem(\'scord_settings\',JSON.stringify(state.settings))"> 🔊 Ses Efektleri (join/leave/message)</label>';
     html += '<label style="display:flex;justify-content:space-between;align-items:center;font-size:13px;color:#ccc;margin:8px 0;">Mikrofon Ses <span id="val-mic-vol" style="color:#fff;font-weight:600;">' + (vols.micVolume || 80) + '%</span><input type="range" min="0" max="100" value="' + (vols.micVolume || 80) + '" oninput="updateSetting(\'micVolume\',this.value);document.getElementById(\'val-mic-vol\').textContent=this.value+\'%\'"></label>';
     html += '<label style="display:flex;justify-content:space-between;align-items:center;font-size:13px;color:#ccc;margin:8px 0;">Kulaklık Ses <span id="val-headphone-vol" style="color:#fff;font-weight:600;">' + (vols.headphoneVolume || 80) + '%</span><input type="range" min="0" max="100" value="' + (vols.headphoneVolume || 80) + '" oninput="updateSetting(\'headphoneVolume\',this.value);document.getElementById(\'val-headphone-vol\').textContent=this.value+\'%\'"></label>';
     html += '<div style="margin-top:12px;border-top:1px solid rgba(255,255,255,0.06);padding-top:12px;">';
     html += '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#ccc;margin:8px 0;"><input type="checkbox" ' + (vs.noiseSuppression !== false ? 'checked' : '') + ' onchange="state.voiceSettings=state.voiceSettings||{};state.voiceSettings.noiseSuppression=this.checked;localStorage.setItem(\'scord_voice_settings\',JSON.stringify(state.voiceSettings));toast(\'Gurultu engelleme \'+(this.checked?\'acildi\':\'kapatildi\'),\'info\')"> 🎙️ Gürültü Engelleme</label>';
     html += '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#ccc;margin:8px 0;"><input type="checkbox" ' + (vs.echoCancellation !== false ? 'checked' : '') + ' onchange="state.voiceSettings=state.voiceSettings||{};state.voiceSettings.echoCancellation=this.checked;localStorage.setItem(\'scord_voice_settings\',JSON.stringify(state.voiceSettings));toast(\'Yanki engelleme \'+(this.checked?\'acildi\':\'kapatildi\'),\'info\')"> 🔄 Yankı Engelleme</label>';
+    html += '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#ccc;margin:8px 0;"><input type="checkbox" ' + (vs.autoGainControl === true ? 'checked' : '') + ' onchange="state.voiceSettings=state.voiceSettings||{};state.voiceSettings.autoGainControl=this.checked;localStorage.setItem(\'scord_voice_settings\',JSON.stringify(state.voiceSettings));toast(\'Otomatik seviye \'+(this.checked?\'acildi\':\'kapatildi\'),\'info\')"> 📶 Otomatik Seviye Dengeleme</label>';
+    html += '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#ccc;margin:8px 0;"><input type="checkbox" ' + (vs.gateEnabled === true ? 'checked' : '') + ' onchange="state.voiceSettings=state.voiceSettings||{};state.voiceSettings.gateEnabled=this.checked;localStorage.setItem(\'scord_voice_settings\',JSON.stringify(state.voiceSettings));toast(\'Ses kapisi \'+(this.checked?\'acildi (kelime baslarini kirpabilir)\':\'kapatildi\'),\'info\')"> 🚪 Ses Kapısı (Voice Gate)</label>';
+    html += '<div class="form-group" style="margin-top:12px;"><label class="modal-label" style="font-size:13px;color:#ccc;display:block;margin-bottom:6px;">Mikrofon Cihazı</label><select class="modal-input" id="settings-mic-device" style="width:100%;padding:8px;background:#2a2a3e;border:1px solid #444;border-radius:8px;color:#fff;"><option value="default">Varsayılan</option></select></div>';
     html += '</div></div></div>';
     // Görüntü tab
     html += '<div class="scord-settings-panel" data-panel="goruntu" style="display:none">';
@@ -23996,6 +24083,25 @@ function showUserSettingsModal() {
     html += '</div></div></div>';
     html += '</div>';
     showModal("⚙️ Kullanıcı Ayarları", html, '<button class="btn-secondary" onclick="hideModal()">Kapat</button>');
+    (function hydrateMicDeviceSelect() {
+        var sel = document.getElementById("settings-mic-device");
+        if (!sel || !navigator.mediaDevices?.enumerateDevices) return;
+        navigator.mediaDevices.enumerateDevices().then(function (devices) {
+            devices.filter(function (d) { return d.kind === "audioinput"; }).forEach(function (d, i) {
+                var opt = document.createElement("option");
+                opt.value = d.deviceId;
+                opt.textContent = d.label || ("Mikrofon " + (i + 1));
+                sel.appendChild(opt);
+            });
+            sel.value = (state.voiceSettings && state.voiceSettings.micId) || "default";
+        }).catch(function () { });
+        sel.onchange = function () {
+            state.voiceSettings = state.voiceSettings || {};
+            state.voiceSettings.micId = sel.value;
+            localStorage.setItem("scord_voice_settings", JSON.stringify(state.voiceSettings));
+            toast("Mikrofon değişikliği bir sonraki ses kanalı katılımında uygulanır.", "info");
+        };
+    })();
 }
 
 function switchSettingsTab(btn, panel) {
@@ -24243,8 +24349,6 @@ setTimeout(function() {
     }
 })();
 
-// Noise suppression: always ON by default, toggle in settings
-setTimeout(function() { state.voiceSettings = state.voiceSettings || {}; state.voiceSettings.noiseSuppression = true; localStorage.setItem('scord_voice_settings', JSON.stringify(state.voiceSettings)); }, 5000);
 
 // ══════════════════════════════════════════════════════════
 // MEGA PATCH 2: FPS + Screen Picker + Performance Ultra
@@ -24943,14 +25047,12 @@ console.log("[App] Final Phase: Bug fixes, Search, Role colors, CSP");
 
 // Screen share FPS hook handled by unified hook above
 
-// Auto-enable voice settings + load FPS
+// FPS ayarını localStorage'dan geri yükle (ses ayarlarını ZORLAMAZ — kullanıcının
+// Ayarlar panelinden seçtiği noiseSuppression/echoCancellation değerleri artık
+// burada sessizce ezilmiyor).
 setTimeout(function() {
     if (typeof state !== 'undefined') {
         state.screenShareFPS = parseInt(localStorage.getItem('scord_screen_fps') || 60);
-        state.voiceSettings = state.voiceSettings || {};
-        state.voiceSettings.noiseSuppression = true;
-        state.voiceSettings.echoCancellation = true;
-        localStorage.setItem('scord_voice_settings', JSON.stringify(state.voiceSettings));
     }
 }, 2000);
 
@@ -25190,19 +25292,6 @@ setInterval(function() {
     }
 }, 3000);
 
-// Fix 3: Auto-fix voice settings on join
-(function() {
-    var _origJoin = window.joinVoiceChannel;
-    if (_origJoin) {
-        window.joinVoiceChannel = function(cid) {
-            if (!state.voiceSettings) state.voiceSettings = {};
-            state.voiceSettings.noiseSuppression = true;
-            state.voiceSettings.echoCancellation = true;
-            state.voiceSettings.autoGainControl = false;
-            return _origJoin.apply(this, arguments);
-        };
-    }
-})();
 
 console.log("[App] Critical audio/screen pipeline fix loaded");
 
@@ -25418,15 +25507,7 @@ setTimeout(function() {
         var _origP2P = window.handleIncomingP2P;
         window.handleIncomingP2P = function(fromPeerId, data, roomId) {
             if (data && data.type === "server_deleted") {
-                var sid = data.serverId;
-                state.servers = (state.servers || []).filter(function(s) { return s.id !== sid; });
-                // Remove from saved
-                var saved = JSON.parse(localStorage.getItem("scord_saved_servers") || "[]");
-                saved = saved.filter(function(s) { return s.id !== sid; });
-                localStorage.setItem("scord_saved_servers", JSON.stringify(saved));
-                if (state.activeServerId === sid) { state.activeServerId = null; state.activeChannelId = null; }
-                toast("Sunucu sahibi tarafindan silindi", "info");
-                if (typeof renderServerRail === "function") renderServerRail();
+                purgeLocalServer(data.serverId, { toastMsg: "Sunucu sahibi tarafından silindi" });
                 return;
             }
             return _origP2P.apply(this, arguments);
@@ -25555,20 +25636,6 @@ setTimeout(function() {
     }
 }, 2000);
 
-// 6. Profile photo + avatar sync everywhere
-setInterval(function() {
-    if (typeof state === "undefined" || !state.mesh) return;
-    // Broadcast my profile to all peers
-    state.mesh.broadcast({
-        type: "profile_sync",
-        peerId: state.peerId,
-        username: state.username,
-        avatarImage: state.avatarImage || "",
-        avatarColor: state.avatarColor || "#5865f2",
-        bannerUrl: state.bannerUrl || "",
-        bio: state.bio || "",
-    });
-}, 30000);
 
 // Update member list avatars when profile changes
 document.addEventListener("DOMContentLoaded", function() {
