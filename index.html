@@ -84,70 +84,8 @@
         <p class="setup-hint" id="auth-hint">Giriş yaptıktan sonra ayarlardan profilini özelleştirebilirsin.</p>
 
         <button id="enter-btn" class="btn-primary" disabled>Giriş Yap</button>
-        <button type="button" class="landing-scroll-hint" onclick="document.querySelector('.landing-sections')?.scrollIntoView({behavior:'smooth'})">Scord'u keşfet ↓</button>
       </div>
     </div>
-
-    <!-- ── Landing: scroll ile açılan tanıtım bölümleri ── -->
-    <div class="landing-sections" aria-hidden="true">
-      <section class="landing-sec">
-        <h2 class="landing-big landing-reveal">Aracı yok.<br /><em>Sadece siz.</em></h2>
-        <p class="landing-lead landing-reveal">Sesin ve mesajların merkezi bir sunucuya uğramadan, WebRTC ile doğrudan arkadaşlarının cihazına akar. Kimse dinlemez, kimse kaydetmez.</p>
-      </section>
-      <section class="landing-sec landing-sec--cards">
-        <div class="landing-card landing-reveal">
-          <span class="landing-card-ico">🎙️</span>
-          <h3>Kristal ses</h3>
-          <p>Opus codec, gürültü engelleme ve paket kaybı düzeltmesiyle kötü internette bile net ses.</p>
-        </div>
-        <div class="landing-card landing-reveal">
-          <span class="landing-card-ico">🖥️</span>
-          <h3>4K ekran paylaşımı</h3>
-          <p>300 FPS'e kadar kare hızı, kalite kontrolü sende. Oyun, film, kod — hepsi akıcı.</p>
-        </div>
-        <div class="landing-card landing-reveal">
-          <span class="landing-card-ico">🎵</span>
-          <h3>Müzik botu</h3>
-          <p>YouTube'dan senkron dinleme. Herkes aynı anda, aynı saniyede duyar.</p>
-        </div>
-        <div class="landing-card landing-reveal">
-          <span class="landing-card-ico">🔒</span>
-          <h3>Gizli odalar</h3>
-          <p>Rol bazlı izinler, kişiye özel roller ve sadece seçtiklerinin görebildiği kanallar.</p>
-        </div>
-      </section>
-      <section class="landing-sec">
-        <h2 class="landing-big landing-reveal">Kur, davet et,<br /><em>konuş.</em></h2>
-        <p class="landing-lead landing-reveal">Sunucunu saniyeler içinde kur, 6 haneli davet koduyla arkadaşlarını çağır. Hesabın her cihazda seninle.</p>
-        <button type="button" class="btn-primary landing-cta landing-reveal" onclick="window.scrollTo({top:0,behavior:'smooth'});setTimeout(function(){document.getElementById('username-input')?.focus()},600)">Hemen Başla ↑</button>
-      </section>
-      <footer class="landing-foot landing-reveal">SCORD — by Sherlock · Uçtan uca P2P sesli sohbet</footer>
-    </div>
-
-    <script>
-    // Reveal-on-scroll + aurora parallax (landing)
-    (function () {
-      var ov = document.getElementById("setup-overlay");
-      if (!ov) return;
-      var io = new IntersectionObserver(function (entries) {
-        entries.forEach(function (e) { if (e.isIntersecting) e.target.classList.add("in-view"); });
-      }, { root: ov, threshold: 0.18 });
-      ov.querySelectorAll(".landing-reveal").forEach(function (el) { io.observe(el); });
-      var blobs = ov.querySelectorAll(".aurora-blob");
-      var ticking = false;
-      ov.addEventListener("scroll", function () {
-        if (ticking) return;
-        ticking = true;
-        requestAnimationFrame(function () {
-          var y = ov.scrollTop;
-          blobs.forEach(function (b, i) {
-            b.style.setProperty("--landing-shift", (y * (0.08 + i * 0.05)) + "px");
-          });
-          ticking = false;
-        });
-      }, { passive: true });
-    })();
-    </script>
   </div>
 
   <!-- ── Main App ────────────────────────────────────────────────────────────── -->
@@ -499,35 +437,6 @@
 
   <!-- Mobile Navigation Mask -->
   <div id="mobile-nav-mask" class="mobile-mask hidden"></div>
-
-  <!-- Mobile Bottom Navigation -->
-  <nav class="mobile-bottom-nav hidden" id="mobile-bottom-nav">
-    <button class="mobile-nav-btn active" data-tab="chat" title="Sohbet">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z"/>
-      </svg>
-      <span>Sohbet</span>
-    </button>
-    <button class="mobile-nav-btn" data-tab="channels" title="Kanallar">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/>
-      </svg>
-      <span>Kanallar</span>
-    </button>
-    <button class="mobile-nav-btn" data-tab="members" title="Üyeler">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5z"/>
-      </svg>
-      <span>Üyeler</span>
-    </button>
-    <button class="mobile-nav-btn" data-tab="voice" title="Ses">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
-        <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
-      </svg>
-      <span>Ses</span>
-    </button>
-  </nav>
 
   <script src="static/timing.js?v=3"></script>
   <script src="static/p2p.js?v=3"></script>

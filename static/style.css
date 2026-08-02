@@ -171,7 +171,7 @@ button, .rail-icon, .channel-item {
 }
 
 .status-option.selected {
-  background: var(--bg-selected);
+  background: var(--bg-selected, #283560);
   border: 1px solid var(--accent);
 }
 
@@ -6077,12 +6077,9 @@ html[data-scord-chat="classic"] .msg-row-inner {
 /* Voice channel chat drawer (Discord-like compact surface) */
 .voice-ephemeral-chat {
   margin: 0 14px 12px;
-  border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  border: 1px solid var(--border);
   border-radius: 10px;
-  /* Hafif şeffaf: konuşma sırasında arkadaki katılımcı ızgarası seçilebilsin */
-  background: color-mix(in srgb, var(--bg-elevated) 55%, transparent);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: color-mix(in srgb, var(--bg-elevated) 92%, #000);
   overflow: hidden;
 }
 
@@ -8212,90 +8209,6 @@ html[data-theme='gold'] {
 }
 
 /* ══════════════════════════════════════════════════════════════
-   MOBILE BOTTOM NAVIGATION BAR
-══════════════════════════════════════════════════════════════ */
-.mobile-bottom-nav {
-  display: none;
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: var(--mobile-nav-height);
-  background: var(--bg-void);
-  border-top: 1px solid var(--border-strong);
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: space-around;
-  padding: 0 8px;
-  backdrop-filter: blur(20px);
-}
-
-.mobile-bottom-nav {
-  display: none;
-}
-
-@media (max-width: 768px) {
-  .mobile-bottom-nav {
-    display: flex;
-  }
-
-  /* Adjust main content to not be hidden behind nav */
-  .app {
-    padding-bottom: var(--mobile-nav-height);
-  }
-
-  .mobile-nav-btn {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 4px;
-    padding: 8px 12px;
-    background: none;
-    border: none;
-    color: var(--text-muted);
-    cursor: pointer;
-    border-radius: var(--r-md);
-    transition: color var(--t-fast), background var(--t-fast);
-    font-size: 10px;
-    font-weight: 500;
-    min-width: 56px;
-  }
-
-  .mobile-nav-btn:hover {
-    background: var(--bg-highlight);
-  }
-
-  .mobile-nav-btn.active {
-    color: var(--accent-light);
-    background: rgba(99, 102, 241, 0.1);
-  }
-
-  .mobile-nav-btn svg {
-    width: 22px;
-    height: 22px;
-  }
-
-  .mobile-nav-badge {
-    position: absolute;
-    top: 4px;
-    right: 4px;
-    min-width: 16px;
-    height: 16px;
-    background: var(--red);
-    color: white;
-    border-radius: 8px;
-    font-size: 10px;
-    font-weight: 700;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0 4px;
-  }
-}
-
-/* ══════════════════════════════════════════════════════════════
    IMPROVED MOBILE CHANNEL LIST
 ══════════════════════════════════════════════════════════════ */
 @media (max-width: 768px) {
@@ -10328,13 +10241,9 @@ input, textarea, select, button {
   position: fixed;
   inset: 0;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  justify-content: flex-start;
-  /* Landing: giriş üstte, aşağı kaydırınca tanıtım bölümleri */
-  overflow-y: auto;
-  overflow-x: hidden;
-  scroll-behavior: smooth;
+  justify-content: center;
+  overflow: hidden;
   background:
     radial-gradient(1200px 800px at 15% 0%, #17102b 0%, transparent 60%),
     radial-gradient(1000px 700px at 100% 100%, #062a33 0%, transparent 55%),
@@ -10345,7 +10254,7 @@ input, textarea, select, button {
 /* Tanecik dokusu — düz degrade yüzeylerin "ucuz" görünmesini engeller */
 #setup-overlay::after {
   content: "";
-  position: fixed;
+  position: absolute;
   inset: 0;
   pointer-events: none;
   opacity: 0.05;
@@ -10353,7 +10262,7 @@ input, textarea, select, button {
 }
 
 .aurora-bg {
-  position: fixed;
+  position: absolute;
   inset: 0;
   pointer-events: none;
   filter: blur(90px) saturate(1.3);
@@ -10364,8 +10273,6 @@ input, textarea, select, button {
   border-radius: 50%;
   opacity: 0.5;
   will-change: transform;
-  /* Landing scroll parallax'ı JS'ten --landing-shift ile gelir */
-  translate: 0 var(--landing-shift, 0px);
 }
 
 .aurora-blob--1 {
@@ -10401,102 +10308,8 @@ input, textarea, select, button {
   grid-template-columns: minmax(0, 1.1fr) minmax(340px, 420px);
   gap: clamp(32px, 6vw, 96px);
   align-items: center;
-  align-content: center;
   width: min(1080px, 92vw);
-  min-height: 100vh;
-  min-height: 100dvh;
-  flex-shrink: 0;
   animation: sc-fade-up 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-
-/* ── Landing bölümleri (awwwards tarzı scroll deneyimi) ── */
-.landing-scroll-hint {
-  margin-top: 14px;
-  width: 100%;
-  background: none;
-  border: 0;
-  color: var(--text-muted, #8b90a5);
-  font-size: 13px;
-  cursor: pointer;
-  padding: 8px 0 0;
-  transition: color 0.2s ease;
-  animation: landing-bob 2.4s ease-in-out infinite;
-}
-.landing-scroll-hint:hover { color: #fff; }
-@keyframes landing-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(4px); } }
-
-.landing-sections {
-  position: relative;
-  z-index: 1;
-  width: min(1080px, 92vw);
-  display: grid;
-  gap: clamp(60px, 12vh, 140px);
-  padding: clamp(60px, 12vh, 140px) 0 60px;
-}
-.landing-sec { display: grid; gap: 18px; justify-items: start; }
-.landing-big {
-  font-family: var(--sc-display, "Space Grotesk", sans-serif);
-  font-size: clamp(44px, 8vw, 96px);
-  line-height: 1.02;
-  letter-spacing: -0.03em;
-  color: #f8fafc;
-  margin: 0;
-}
-.landing-big em {
-  font-style: normal;
-  background: linear-gradient(90deg, #a78bfa, #22d3ee);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-}
-.landing-lead {
-  max-width: 560px;
-  font-size: clamp(15px, 1.6vw, 19px);
-  line-height: 1.6;
-  color: rgba(203, 213, 225, 0.85);
-  margin: 0;
-}
-.landing-sec--cards {
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 18px;
-}
-.landing-card {
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  border-radius: 18px;
-  padding: 26px 22px;
-  background: rgba(255, 255, 255, 0.035);
-  backdrop-filter: blur(10px);
-  display: grid;
-  gap: 10px;
-  transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.35s ease, background 0.35s ease;
-}
-.landing-card:hover {
-  transform: translateY(-6px);
-  border-color: rgba(167, 139, 250, 0.45);
-  background: rgba(255, 255, 255, 0.06);
-}
-.landing-card-ico { font-size: 30px; }
-.landing-card h3 { margin: 0; font-size: 17px; color: #f1f5f9; }
-.landing-card p { margin: 0; font-size: 13.5px; line-height: 1.55; color: rgba(148, 163, 184, 0.95); }
-.landing-cta { width: max-content; padding: 14px 28px; font-size: 15px; }
-.landing-foot {
-  text-align: center;
-  font-size: 12.5px;
-  color: rgba(148, 163, 184, 0.6);
-  padding-bottom: 20px;
-}
-.landing-reveal {
-  opacity: 0;
-  transform: translateY(34px);
-  transition: opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1), transform 0.7s cubic-bezier(0.16, 1, 0.3, 1);
-}
-.landing-reveal.in-view { opacity: 1; transform: none; }
-.landing-sec--cards .landing-card:nth-child(2) { transition-delay: 0.08s; }
-.landing-sec--cards .landing-card:nth-child(3) { transition-delay: 0.16s; }
-.landing-sec--cards .landing-card:nth-child(4) { transition-delay: 0.24s; }
-@media (prefers-reduced-motion: reduce) {
-  .landing-reveal { transition: none; opacity: 1; transform: none; }
-  .landing-scroll-hint { animation: none; }
 }
 
 @keyframes sc-fade-up {
