@@ -6225,7 +6225,7 @@ function openSettingsModal() {
                 const pal = document.getElementById("settings-palette");
                 if (pal) pal.value = localStorage.getItem("scord_palette") || "glass";
                 const cl = document.getElementById("settings-chat-layout");
-                if (cl) cl.value = localStorage.getItem("scord_chat_layout") || "bubbles";
+                if (cl) cl.value = localStorage.getItem("scord_chat_layout") || "classic";
             }
         };
     });
@@ -19709,7 +19709,7 @@ startMusicBot = window.startMusicBot = function (videoId, startAt) {
 };
 
 function applyChatCustomization() {
-    document.documentElement.setAttribute("data-scord-chat", localStorage.getItem("scord_chat_layout") || "bubbles");
+    document.documentElement.setAttribute("data-scord-chat", localStorage.getItem("scord_chat_layout") || "classic");
     document.documentElement.setAttribute("data-scord-chat-style", localStorage.getItem("scord_chat_style") || "soft");
     document.documentElement.setAttribute("data-scord-palette", localStorage.getItem("scord_palette") || "glass");
     document.documentElement.className = localStorage.getItem("scord_theme") || "";
