@@ -85,9 +85,13 @@ def init_accounts_db():
                 avatar_color TEXT NOT NULL DEFAULT '#7c3aed',
                 bio TEXT NOT NULL DEFAULT '',
                 banner_url TEXT NOT NULL DEFAULT '',
+                banner_color TEXT NOT NULL DEFAULT '#5865f2',
                 created_at REAL NOT NULL
             )
         """)
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(accounts)").fetchall()]
+        if "banner_color" not in cols:
+            conn.execute("ALTER TABLE accounts ADD COLUMN banner_color TEXT NOT NULL DEFAULT '#5865f2'")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS sessions (
                 token TEXT PRIMARY KEY,
@@ -144,6 +148,7 @@ def _account_public(row: sqlite3.Row) -> dict:
         "avatar_color": row["avatar_color"],
         "bio": row["bio"],
         "banner_url": row["banner_url"],
+        "banner_color": row["banner_color"],
     }
 
 
@@ -602,7 +607,7 @@ def update_account(body: dict):
     if not row:
         return {"error": "unauthorized"}
     fields = {}
-    for key in ("avatar_image", "avatar_color", "bio", "banner_url"):
+    for key in ("avatar_image", "avatar_color", "bio", "banner_url", "banner_color"):
         if key in body:
             fields[key] = str(body[key])[:8000]
     if not fields:
