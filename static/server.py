@@ -40,8 +40,13 @@ rooms: Dict[str, "Room"] = {}
 # gelmemeli; istemciler sync sırasında bunları görüp yerel kopyayı temizler.
 deleted_room_ids: Set[str] = set()
 DELETED_TOMBSTONE_CAP = 500
-DATABASE_FILE = str(Path(__file__).parent.parent / "rooms.json")
-ACCOUNTS_DB_FILE = str(Path(__file__).parent.parent / "scord_accounts.db")
+# Kalıcı disk desteği: Render'da SCORD_DATA_DIR ile persistent disk yolunu ver
+# (örn. /var/data). Verilmezse repo kökü kullanılır — free tier'da her
+# restart'ta sıfırlanır; istemci tarafındaki auto-reregister bunu telafi eder.
+_DATA_DIR = Path(os.environ.get("SCORD_DATA_DIR") or Path(__file__).parent.parent)
+_DATA_DIR.mkdir(parents=True, exist_ok=True)
+DATABASE_FILE = str(_DATA_DIR / "rooms.json")
+ACCOUNTS_DB_FILE = str(_DATA_DIR / "scord_accounts.db")
 
 DEFAULT_ROLE_PERMISSIONS = {
     "owner": {
@@ -140,26 +145,6 @@ def _hash_password(password: str, salt: str) -> str:
     return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 100_000).hex()
 
 
-# ── Site admin'leri ──────────────────────────────────────────────────────────
-# SCORD_ADMINS env'i (virgüllü kullanıcı adı listesi) veya varsayılan
-# 'sherlock'. Admin hesap her sunucuda owner gibi davranır.
-ADMIN_USERNAMES = {u.strip().lower() for u in os.environ.get("SCORD_ADMINS", "sherlock").split(",") if u.strip()}
-_admin_peer_cache: Dict[str, bool] = {}
-
-
-def is_site_admin(peer_id: str) -> bool:
-    if not peer_id:
-        return False
-    cached = _admin_peer_cache.get(peer_id)
-    if cached is not None:
-        return cached
-    with _db() as conn:
-        row = conn.execute("SELECT username FROM accounts WHERE peer_id = ?", (peer_id,)).fetchone()
-    ok = bool(row and row["username"].lower() in ADMIN_USERNAMES)
-    _admin_peer_cache[peer_id] = ok
-    return ok
-
-
 def _account_public(row: sqlite3.Row) -> dict:
     return {
         "peer_id": row["peer_id"],
@@ -169,7 +154,6 @@ def _account_public(row: sqlite3.Row) -> dict:
         "bio": row["bio"],
         "banner_url": row["banner_url"],
         "banner_color": row["banner_color"],
-        "is_admin": row["username"].lower() in ADMIN_USERNAMES,
     }
 
 
@@ -236,6 +220,7 @@ def load_db():
             room.messages = rdata.get("messages", {})
             room.channel_backgrounds = rdata.get("channel_backgrounds", {})
             room.icon_url = rdata.get("icon_url", None)
+            room.description = rdata.get("description", "")
             room.invite_code = rdata.get("invite_code", str(uuid.uuid4())[:6].upper())
             room.normalize_permissions()
             rooms[rid] = room
@@ -376,6 +361,7 @@ class Room:
         self.messages = {}  # channel_id -> list[dict]
         self.channel_backgrounds = {}  # channel_id -> image url
         self.icon_url = None
+        self.description = ""
         self.invite_code = str(uuid.uuid4())[:6].upper()
 
     def to_persist_dict(self):
@@ -393,6 +379,7 @@ class Room:
             "messages": self.messages,
             "channel_backgrounds": self.channel_backgrounds,
             "icon_url": self.icon_url,
+            "description": self.description,
             "invite_code": self.invite_code,
         }
 
@@ -411,6 +398,7 @@ class Room:
             "pinned_messages": self.pinned_messages,
             "channel_backgrounds": self.channel_backgrounds,
             "icon_url": self.icon_url,
+            "description": self.description,
             "invite_code": self.invite_code,
             "messages": self.messages, # Sent for history sync
             "peers": [
@@ -442,12 +430,12 @@ class Room:
             }
 
     def role_for(self, peer_id: str) -> str:
-        if peer_id == self.owner_id or is_site_admin(peer_id):
+        if peer_id == self.owner_id:
             return "owner"
         return self.peer_roles.get(peer_id, "member")
 
     def has_permission(self, peer_id: str, permission: str, channel_id: str | None = None) -> bool:
-        if peer_id == self.owner_id or is_site_admin(peer_id):
+        if peer_id == self.owner_id:
             return True
         self.normalize_permissions()
         role_id = self.role_for(peer_id)
@@ -551,6 +539,17 @@ def _can_control_music(room: Room, peer_id: str) -> bool:
 def list_rooms():
     return [r.to_dict() for r in rooms.values()]
 
+
+@app.get("/api/rooms/{room_id}")
+def get_room(room_id: str):
+    """Tek oda için taze otoriter durum — istemci periyodik resync için kullanır."""
+    if room_id in deleted_room_ids:
+        return {"error": "deleted"}
+    room = rooms.get(room_id)
+    if not room:
+        return {"error": "Not found"}
+    return room.to_dict()
+
 @app.post("/api/auth/register")
 def register_account(body: dict):
     username = (body.get("username") or "").strip()
@@ -581,7 +580,6 @@ def register_account(body: dict):
             (token, peer_id, time.time()),
         )
         row = conn.execute("SELECT * FROM accounts WHERE peer_id = ?", (peer_id,)).fetchone()
-    _admin_peer_cache.pop(peer_id, None)
     log.info(f"Account registered: {username!r} ({peer_id})")
     return {"success": True, "token": token, **_account_public(row)}
 
@@ -629,9 +627,12 @@ def update_account(body: dict):
     if not row:
         return {"error": "unauthorized"}
     fields = {}
+    # avatar_image / banner_url base64 data-URL olabilir (PC'den yükleme) —
+    # 128px JPEG ~10-20KB; 300K sınırı bozulmadan saklamaya yeter.
+    limits = {"avatar_image": 300_000, "banner_url": 300_000}
     for key in ("avatar_image", "avatar_color", "bio", "banner_url", "banner_color"):
         if key in body:
-            fields[key] = str(body[key])[:8000]
+            fields[key] = str(body[key])[:limits.get(key, 8000)]
     if not fields:
         return {"success": True, **_account_public(row)}
     with _db() as conn:
@@ -781,6 +782,8 @@ async def update_room_settings(room_id: str, body: dict):
         room.name = body["name"]
     if "icon_url" in body:
         room.icon_url = body["icon_url"]
+    if "description" in body:
+        room.description = str(body["description"])[:500]
     if body.get("roles"):
         room.roles = body["roles"]
     if "peer_roles" in body:
@@ -810,7 +813,7 @@ def rotate_invite(room_id: str, body: dict):
     if room_id not in rooms:
         return {"error": "Not found"}
     room = rooms[room_id]
-    if body.get("owner_id") != room.owner_id and not is_site_admin(body.get("owner_id") or ""):
+    if body.get("owner_id") != room.owner_id:
         return {"error": "Unauthorized"}
     room.invite_code = str(uuid.uuid4())[:6].upper()
     schedule_save_db(0.4)
@@ -828,7 +831,7 @@ def get_room_by_code(invite_code: str):
 async def delete_room(room_id: str, owner_id: str):
     if room_id not in rooms: return {"error": "Not found"}
     room = rooms[room_id]
-    if room.owner_id != owner_id and not is_site_admin(owner_id):
+    if room.owner_id != owner_id:
         return {"error": "Unauthorized"}
     del rooms[room_id]
     deleted_room_ids.add(room_id)
@@ -1007,6 +1010,37 @@ def assign_role(room_id: str, body: dict):
         schedule_save_db()
         return {"success": True}
     return {"error": "Invalid data"}
+
+@app.get("/api/discord/invite/{code}")
+def discord_invite_preview(code: str):
+    """
+    Discord davet kodu önizlemesi — Discord'un HERKESE AÇIK davet API'si
+    (auth gerektirmez). Sadece sunucu adı/ikon/üye sayısı döner; katılım
+    kullanıcının kendi Discord hesabıyla discord.gg linki üzerinden yapılır.
+    """
+    code = re.sub(r"[^A-Za-z0-9-]", "", code)[:32]
+    if not code:
+        return {"error": "invalid_code"}
+    try:
+        url = f"https://discord.com/api/v10/invites/{code}?with_counts=true"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        data = json.loads(urllib.request.urlopen(req, timeout=5).read().decode())
+        guild = data.get("guild") or {}
+        icon = None
+        if guild.get("id") and guild.get("icon"):
+            icon = f"https://cdn.discordapp.com/icons/{guild['id']}/{guild['icon']}.png?size=128"
+        return {
+            "code": code,
+            "name": guild.get("name") or data.get("channel", {}).get("name") or "Discord Sunucusu",
+            "description": guild.get("description") or "",
+            "icon": icon,
+            "member_count": data.get("approximate_member_count"),
+            "online_count": data.get("approximate_presence_count"),
+        }
+    except Exception as e:
+        log.warning(f"Discord invite preview error: {e}")
+        return {"error": "not_found"}
+
 
 @app.get("/api/ytsearch")
 def yt_search(q: str):

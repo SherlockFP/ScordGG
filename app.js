@@ -266,6 +266,50 @@ function startMeshHealthPoll() {
             if (state.mesh) refreshConnectionBadge();
         });
     }, 2000);
+    startAuthoritativeResync();
+}
+
+/* ── Sunucu-otoriter periyodik resync ─────────────────────────
+   P2P mesajları kaçabilir (DC henüz açık değil, sekme uykuda, glare...):
+   üye listesi / kanal listesi / mesaj geçmişi / ses üyeleri bayatlıyordu.
+   Tek doğruluk kaynağı backend; 10 sn'de bir taze durumu çekip yereli
+   düzeltiyoruz. Ses kanalındayken ayrıca varlık heartbeat'i yollanır ki
+   sunucudaki voice_members kaydımız düşmüşse kendini onarsın. */
+function startAuthoritativeResync() {
+    if (state._authResyncTimer) clearInterval(state._authResyncTimer);
+    state._authResyncTimer = setInterval(async () => {
+        const sid = state.activeServerId;
+        if (!sid || document.hidden) return;
+        // ponytail: 10sn sabit poll; oda başına websocket push'a geçilebilir
+        try {
+            const res = await fetch(`${API_BASE}/rooms/${encodeURIComponent(sid)}`);
+            const room = await res.json();
+            if (room && room.error === "deleted") { purgeLocalServer(sid); return; }
+            if (!room || room.error || room.room_id !== sid) return;
+            const server = state.servers.find(s => s.id === sid);
+            if (!server) return;
+            normalizeServerLivePayload(server, room);
+            updateMembersPanel(sid);
+            updatePeerCountBadge(sid);
+            updateChannelSidebar(sid);
+            if (state.voiceChannelId) {
+                renderVoiceParticipants(sid, state.voiceChannelId);
+                updateMuteStates();
+            }
+        } catch (e) { /* offline — sessiz geç */ }
+        // Ses varlık heartbeat'i
+        if (state.voiceChannelId && state.mesh) {
+            sendServerEvent({
+                type: "voice_join",
+                channelId: state.voiceChannelId,
+                username: state.username,
+                avatarColor: state.avatarColor,
+                avatarImage: state.avatarImage,
+                isSharingScreen: !!getLocalShareStream(),
+                isSharingCamera: !!state.cameraStream,
+            });
+        }
+    }, 10000);
 }
 
 function resetConnectionState() {
@@ -540,6 +584,7 @@ function toast(message, type = "info") {
 }
 
 function playSound(frequency = 440, duration = 200, type = "sine") {
+    if (state.settings?.soundEffects === false) return; // ayar gerçekten sussun
     try {
         const audioContext = new (window.AudioContext || window.webkitAudioContext)();
         const oscillator = audioContext.createOscillator();
@@ -551,7 +596,9 @@ function playSound(frequency = 440, duration = 200, type = "sine") {
         oscillator.frequency.value = frequency;
         oscillator.type = type;
 
-        gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+        const notifVol = Math.max(0, Math.min(100, state.settings?.notificationVolume ?? 50)) / 100;
+        if (notifVol === 0) return;
+        gainNode.gain.setValueAtTime(0.2 * notifVol, audioContext.currentTime);
         gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration / 1000);
 
         oscillator.start(audioContext.currentTime);
@@ -596,13 +643,42 @@ function mergeRoomPayloadIntoServer(server, payload) {
 /** Modüler UI: `data-scord-palette` renk seti, `data-scord-chat` balon / klasik */
 function applyScordAppearance() {
     const pal = localStorage.getItem("scord_palette") || "glass";
-    const chat = localStorage.getItem("scord_chat_layout") || "classic";
+    // 8259fc1 tasarımı: varsayılan sohbet görünümü balon (bubbles).
+    const chat = localStorage.getItem("scord_chat_layout") || "bubbles";
     const density = localStorage.getItem("scord_msg_density") || "cozy";
     document.documentElement.setAttribute("data-scord-palette", pal);
     document.documentElement.setAttribute("data-scord-chat", chat);
     document.documentElement.setAttribute("data-msg-density", density);
     document.documentElement.setAttribute("data-scord-chat-style", density);
+    // Kayıtlı kullanıcı ayarlarını geri yükle ve GERÇEKTEN uygula.
+    // (Önceden scord_settings sadece yazılıyordu, açılışta hiç okunmuyordu —
+    // yazı boyutu / kompakt mod / animasyon / ses efektleri kalıcı değildi.)
+    try { state.settings = { ...(state.settings || {}), ...(JSON.parse(localStorage.getItem("scord_settings") || "{}")) }; } catch (e) { }
+    applyUserSettingEffects();
 }
+
+function applyUserSettingEffects() {
+    const s = state.settings || {};
+    if (s.fontSize) document.documentElement.style.fontSize = s.fontSize + "px";
+    document.documentElement.setAttribute("data-compact", s.compactMode ? "true" : "false");
+    document.body?.classList.toggle("streamer-mode", !!s.streamerMode);
+    document.documentElement.setAttribute("data-animations", s.animations === false ? "off" : "on");
+    document.body?.classList.toggle("no-animations", s.animations === false);
+    if (s.emojiSize) {
+        document.body.className = document.body.className.replace(/emoji-size-\w+/g, "").trim();
+        document.body.classList.add("emoji-size-" + s.emojiSize);
+    }
+}
+window.applyUserSettingEffects = applyUserSettingEffects;
+
+/** Ayar değiştir + kaydet + anında uygula (modal onchange'leri bunu kullanır). */
+function setUserSetting(key, value) {
+    if (!state.settings) state.settings = {};
+    state.settings[key] = value;
+    try { localStorage.setItem("scord_settings", JSON.stringify(state.settings)); } catch (e) { }
+    applyUserSettingEffects();
+}
+window.setUserSetting = setUserSetting;
 
 function applyChannelBackground(serverId, channelId) {
     const server = state.servers.find(s => s.id === serverId);
@@ -628,7 +704,7 @@ function applyChannelBackground(serverId, channelId) {
 function getMyEffectiveRole(server) {
     if (!server) return "member";
     if (isSuperAdmin()) return "owner";
-    if ((server.ownerId === state.peerId || state.isAdmin)) return "owner";
+    if (server.ownerId === state.peerId) return "owner";
     return server.peer_roles?.[state.peerId] || "member";
 }
 
@@ -1990,7 +2066,7 @@ function showServerContextMenu(ev, server) {
     ev.stopPropagation();
     if (!server) return;
 
-    const isOwner = (server.ownerId === state.peerId || state.isAdmin) || (server.owner_id === state.peerId || state.isAdmin);
+    const isOwner = server.ownerId === state.peerId || server.owner_id === state.peerId;
     const menu = document.createElement("div");
     menu.className = "ctx-menu ctx-menu--chat";
     menu.id = "ctx-menu";
@@ -2070,8 +2146,6 @@ async function persistChannelBackground(roomId, channelId, url) {
 
 function hideModal() {
     document.getElementById("modal-backdrop").classList.add("hidden");
-    // Ayarlar kapaninca mikrofon testi acik kalmasin.
-    if (typeof window.stopMicTest === "function") window.stopMicTest();
 }
 
 /* ── Setup overlay — gerçek üyelik sistemi ───────────────────
@@ -2116,8 +2190,6 @@ function applyAccountToState(acc) {
     state.bio = acc.bio || "";
     state.bannerUrl = acc.banner_url || "";
     state.bannerColor = acc.banner_color || "";
-    state.isAdmin = !!acc.is_admin;
-    localStorage.setItem("scord_is_admin", acc.is_admin ? "1" : "0");
     localStorage.setItem("scord_username", acc.username);
     localStorage.setItem("scord_peer_id", acc.peer_id);
     localStorage.setItem("scord_color", state.avatarColor);
@@ -2178,7 +2250,6 @@ async function initSetup() {
         state.bio = localStorage.getItem("scord_bio") || "";
         state.bannerUrl = localStorage.getItem("scord_banner_url") || "";
         state.bannerColor = localStorage.getItem("scord_banner_color") || "";
-        state.isAdmin = localStorage.getItem("scord_is_admin") === "1";
         var savedTheme = localStorage.getItem("scord_theme");
         if (savedTheme) { state.theme = savedTheme; document.documentElement.setAttribute("data-theme", savedTheme); if (typeof applyTheme === "function") applyTheme(savedTheme); }
         if (typeof startApp === "function") {
@@ -2241,6 +2312,22 @@ async function initSetup() {
                 body: JSON.stringify({ username: nick, password: pass }),
             });
             var data = await res.json();
+            // Sunucu diski sıfırlanmışsa (Render restart) kayıtlı hesap "yok"
+            // görünür. peer_id kullanıcıadı+şifreden deterministik türediği
+            // için aynı bilgilerle yeniden kayıt AYNI kimliği geri getirir —
+            // sunucu sahiplikleri dahil hiçbir şey kaybolmaz.
+            if (_authMode === "login" && data && data.error === "not_found" && localStorage.getItem("scord_username") === nick) {
+                var rr = await fetch(`${API_BASE}/auth/register`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ username: nick, password: pass }),
+                });
+                var rrData = await rr.json();
+                if (rrData && rrData.success) {
+                    data = rrData;
+                    toast("Hesabın sunucuda tazelendi, kimliğin aynen geri geldi.", "info");
+                }
+            }
             if (!data || !data.success) {
                 var messages = {
                     username_taken: "Bu kullanıcı adı zaten alınmış. Giriş yapmayı dene.",
@@ -2409,6 +2496,34 @@ function initMobileNav() {
     const menuBtn = document.getElementById("mobile-menu-btn");
     const mask = document.getElementById("mobile-nav-mask");
     const membersBtn = document.getElementById("members-toggle-btn");
+
+    // Discord tarzı mobil alt sekme çubuğu (CSS sadece <=768px'te gösterir)
+    if (!document.getElementById("mobile-tabbar")) {
+        const bar = document.createElement("nav");
+        bar.id = "mobile-tabbar";
+        bar.className = "mobile-tabbar";
+        bar.innerHTML = `
+          <button type="button" data-mt="servers"><span>☰</span>Sunucular</button>
+          <button type="button" data-mt="home"><span>🏠</span>Ana Sayfa</button>
+          <button type="button" data-mt="dms"><span>💬</span>DM'ler</button>
+          <button type="button" data-mt="settings"><span>⚙️</span>Ayarlar</button>`;
+        document.getElementById("app")?.appendChild(bar);
+        bar.addEventListener("click", e => {
+            const b = e.target.closest("button[data-mt]");
+            if (!b) return;
+            const act = b.dataset.mt;
+            if (act === "servers") {
+                document.body.classList.toggle("nav-open");
+                const m = document.getElementById("mobile-nav-mask");
+                if (m) {
+                    m.classList.toggle("hidden", !document.body.classList.contains("nav-open"));
+                    m.classList.toggle("active", document.body.classList.contains("nav-open"));
+                }
+            } else if (act === "home") { closeMobileNav(); showHomeView(); }
+            else if (act === "dms") { closeMobileNav(); showHomeView(); document.getElementById("room-list-home")?.scrollIntoView(); }
+            else if (act === "settings") { closeMobileNav(); if (typeof showUserSettingsModal === "function") showUserSettingsModal(); }
+        });
+    }
 
     if (menuBtn) {
         menuBtn.onclick = () => {
@@ -2700,15 +2815,16 @@ async function startCameraShare() {
 
     try {
         const quality = state.cameraQuality || "720p";
+        const camFps = Math.max(15, Math.min(60, state.cameraFPS || 30));
         const qualityConstraints = {
-            "4k": { width: { ideal: 3840 }, height: { ideal: 2160 }, frameRate: { ideal: 30 } },
-            "1080p": { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
-            "720p": { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
-            "480p": { width: { ideal: 854 }, height: { ideal: 480 }, frameRate: { ideal: 24 } },
-            "360p": { width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: 24 } },
+            "4k": { width: { ideal: 3840 }, height: { ideal: 2160 } },
+            "1080p": { width: { ideal: 1920 }, height: { ideal: 1080 } },
+            "720p": { width: { ideal: 1280 }, height: { ideal: 720 } },
+            "480p": { width: { ideal: 854 }, height: { ideal: 480 } },
+            "360p": { width: { ideal: 640 }, height: { ideal: 360 } },
         };
         const stream = await navigator.mediaDevices.getUserMedia({
-            video: { ...qualityConstraints[quality] },
+            video: { ...(qualityConstraints[quality] || qualityConstraints["720p"]), frameRate: { ideal: camFps } },
             audio: false
         });
         state.cameraStream = stream;
@@ -2820,6 +2936,14 @@ function _updateChannelSidebarImpl(serverId) {
         return;
     }
 
+    // Sol panel başlığı her zaman aktif sunucunun adını göstersin — tüm
+    // görünüm geçişleri (chat/voice/home) buradan geçtiği için tek nokta.
+    const _hdr = document.getElementById("sidebar-server-name");
+    if (_hdr) {
+        const _srv = serverId ? state.servers.find(s => s.id === serverId) : null;
+        _hdr.textContent = _srv ? _srv.name : "SCORD";
+    }
+
     list.innerHTML = "";
     if (!serverId) {
         console.log("[Sidebar] No serverId, rendering Home");
@@ -2840,8 +2964,11 @@ function _updateChannelSidebarImpl(serverId) {
         return;
     }
 
-    const textChannels = server.channels.filter(c => c.type === "text");
-    const voiceChannels = server.channels.filter(c => c.type === "voice");
+    // Gizli odalar: görme izni olmayan kullanıcının listesinde hiç görünmez
+    const visibleChannels = server.channels.filter(c =>
+        typeof canViewChannel !== "function" || canViewChannel(server, state.peerId, c.id));
+    const textChannels = visibleChannels.filter(c => c.type === "text");
+    const voiceChannels = visibleChannels.filter(c => c.type === "voice");
 
     if (textChannels.length) {
         const cat = document.createElement("div");
@@ -2851,7 +2978,7 @@ function _updateChannelSidebarImpl(serverId) {
         cat.style.alignItems = "center";
         cat.innerHTML = `<span><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg> METİN KANALLARI</span>`;
 
-        const isAdmin = (server.ownerId === state.peerId || state.isAdmin) || server.peer_roles?.[state.peerId] === "admin";
+        const isAdmin = server.ownerId === state.peerId || server.peer_roles?.[state.peerId] === "admin";
         if (isAdmin) {
             const addBtn = document.createElement("span");
             addBtn.className = "add-ch-btn";
@@ -2877,7 +3004,7 @@ function _updateChannelSidebarImpl(serverId) {
         cat.style.alignItems = "center";
         cat.innerHTML = `<span><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg> SESLİ KANALLAR</span>`;
 
-        const isAdmin = (server.ownerId === state.peerId || state.isAdmin) || server.peer_roles?.[state.peerId] === "admin";
+        const isAdmin = server.ownerId === state.peerId || server.peer_roles?.[state.peerId] === "admin";
         if (isAdmin) {
             const addBtn = document.createElement("span");
             addBtn.className = "add-ch-btn";
@@ -3024,7 +3151,7 @@ function createChannelItem(channel, serverId) {
     };
 
     if (channel.type === "voice") {
-        const isAdmin = server && ((server.ownerId === state.peerId || state.isAdmin) || server.peer_roles?.[state.peerId] === "admin");
+        const isAdmin = server && (server.ownerId === state.peerId || server.peer_roles?.[state.peerId] === "admin");
 
         if (isAdmin) {
             item.ondragover = (e) => e.preventDefault();
@@ -3130,7 +3257,7 @@ function _updateMembersPanelImpl(serverId) {
                 item.className = "member-item";
                 item.setAttribute("data-peer-id", m.peer_id);
 
-                const isAdmin = (server.ownerId === state.peerId || state.isAdmin) || server.peer_roles?.[state.peerId] === "admin";
+                const isAdmin = server.ownerId === state.peerId || server.peer_roles?.[state.peerId] === "admin";
                 if (isAdmin && m.peer_id !== state.peerId) {
                     item.draggable = true;
                     item.ondragstart = (e) => {
@@ -4691,11 +4818,6 @@ function handleVoiceStream(peerId, stream) {
         video.playsInline = true;
         video.muted = peerId === state.peerId;
         video.className = "voice-video";
-        // Secili cikis cihazi (hoparlor) varsa yeni elemente uygula.
-        const spk = state.voiceSettings?.speakerId;
-        if (spk && spk !== "default" && typeof video.setSinkId === "function") {
-            video.setSinkId(spk).catch(() => { });
-        }
 
         // Ensure UI updates when video actually starts
         const refreshVoiceUI = () => {
@@ -4959,8 +5081,6 @@ async function joinVoiceChannel(channelId) {
         const source = state.audioCtx.createMediaStreamSource(stream);
         const gainNode = state.audioCtx.createGain();
         gainNode.gain.value = state.voiceSettings?.volume || 1;
-        state.voiceGainNode = gainNode;      // canli ses ayari icin (applyVoiceSettingsLive)
-        state.voiceRawStream = stream;       // applyConstraints icin ham mikrofon stream'i
         const gateNode = state.audioCtx.createGain();
         // Varsayılan: gate KAPALI (gateEnabled=false) — mikrofon her zaman açık.
         // Gate açıkken konuşma başındaki ~100ms'lik hece analyser eşiği aşana
@@ -5001,7 +5121,7 @@ async function joinVoiceChannel(channelId) {
             stream.getAudioTracks()[0].enabled = !!state._pttActive;
         }
 
-        const currentRole = (server.ownerId === state.peerId || state.isAdmin) ? "owner"
+        const currentRole = server.ownerId === state.peerId ? "owner"
             : server.peer_roles?.[state.peerId] === "admin" ? "admin"
                 : server.peer_roles?.[state.peerId] === "mod" ? "mod" : "member";
         const isVoiceRestricted = server.voicePermissionMode === "mods_only" && !["owner", "admin", "mod"].includes(currentRole);
@@ -5713,7 +5833,7 @@ function renderVoiceParticipants(serverId, channelId) {
         }
 
         // Drag and Drop Admin
-        const isAdmin = server && ((server.ownerId === state.peerId || state.isAdmin) || server.peer_roles?.[state.peerId] === "admin");
+        const isAdmin = server && (server.ownerId === state.peerId || server.peer_roles?.[state.peerId] === "admin");
         if (isAdmin && m.peer_id !== state.peerId) {
             card.draggable = true;
             card.ondragstart = (e) => { e.dataTransfer.setData("peerId", m.peer_id); };
@@ -6237,7 +6357,7 @@ function openSettingsModal() {
                 const pal = document.getElementById("settings-palette");
                 if (pal) pal.value = localStorage.getItem("scord_palette") || "glass";
                 const cl = document.getElementById("settings-chat-layout");
-                if (cl) cl.value = localStorage.getItem("scord_chat_layout") || "classic";
+                if (cl) cl.value = localStorage.getItem("scord_chat_layout") || "bubbles";
             }
         };
     });
@@ -6275,7 +6395,7 @@ function showContextMenu(peerId, username, x, y) {
     const server = state.servers.find(s => s.id === state.activeServerId);
     if (!server) return;
 
-    const myRole = (server.ownerId === state.peerId || state.isAdmin) ? "owner"
+    const myRole = server.ownerId === state.peerId ? "owner"
         : server.peer_roles?.[state.peerId] === "admin" ? "admin"
             : server.peer_roles?.[state.peerId] === "mod" ? "mod" : "member";
 
@@ -6967,7 +7087,7 @@ function openServerSettingsModal() {
 
     if (!server.bannedUsers) server.bannedUsers = [];
 
-    const isOwner = (server.ownerId === state.peerId || state.isAdmin);
+    const isOwner = server.ownerId === state.peerId;
     const isAdmin = isOwner || server.peer_roles?.[state.peerId] === "admin";
     const isMember = isOwner || server.members?.some(m => m.peer_id === state.peerId);
     const canEdit = isAdmin;
@@ -7200,7 +7320,7 @@ function openServerSettingsModal() {
 
     window._rotateInviteCode = async () => {
         const srv = state.servers.find(s => s.id === state.activeServerId);
-        if (!srv || (srv.ownerId !== state.peerId && !state.isAdmin)) return;
+        if (!srv || srv.ownerId !== state.peerId) return;
         try {
         const res = await fetch(`${API_BASE}/rooms/${srv.id}/invite_rotate`, {
                 method: "POST",
@@ -7232,7 +7352,7 @@ function saveServerSettings() {
     const server = state.servers.find(s => s.id === state.activeServerId);
     if (!server) return;
 
-    const isOwner = (server.ownerId === state.peerId || state.isAdmin);
+    const isOwner = server.ownerId === state.peerId;
     const isAdmin = isOwner || server.peer_roles?.[state.peerId] === "admin";
     if (!isAdmin) {
         toast("Bu işlem için yönetici yetkisi gerekli.", "error");
@@ -7785,8 +7905,10 @@ function sendDM() {
         const dcOpen = !!(peer?.dc && peer.dc.readyState === "open");
         if (dcOpen) {
             state.mesh.sendTo(state.activeDM, { type: "dm", payload: msg });
-        } else if (state.mesh.ws && state.mesh.ws.readyState === WebSocket.OPEN && typeof state.mesh.broadcastSignal === "function") {
-            state.mesh.broadcastSignal({ type: "dm_relay", target: state.activeDM, payload: msg });
+        } else if (state.mesh.ws && state.mesh.ws.readyState === WebSocket.OPEN && typeof state.mesh.sendSignal === "function") {
+            // GİZLİLİK FIX: broadcastSignal DM'i tüm odaya yayıyordu; sendSignal
+            // sunucudaki dm_relay handler'ına gider, SADECE hedefe iletilir.
+            state.mesh.sendSignal({ type: "dm_relay", target: state.activeDM, payload: msg });
         } else {
             toast("DM şu an gönderilemedi: bağlantı hazır değil.", "warning");
         }
@@ -8414,6 +8536,8 @@ document.addEventListener("DOMContentLoaded", () => {
             if (!state.mesh) return;
             if (state.cameraStream) {
                 stopCameraShare();
+            } else if (typeof window.openCameraPicker === "function") {
+                window.openCameraPicker();
             } else {
                 startCameraShare();
             }
@@ -9308,6 +9432,9 @@ async function joinByInviteCode(code) {
     console.log("[Invite] Joining by code:", code);
 
     if (!code || code.trim().length < 4) return toast("Geçersiz davet kodu.", "error");
+    // Discord davet linki mi? (discord.gg/x, discord.com/invite/x)
+    const dcMatch = String(code).trim().match(/(?:discord\.gg|discord(?:app)?\.com\/invite)\/([A-Za-z0-9-]+)/i);
+    if (dcMatch) return showDiscordInvitePreview(dcMatch[1]);
     code = code.trim().toUpperCase();
 
     try {
@@ -9406,6 +9533,41 @@ function showInviteModal(serverId) {
 }
 
 /*  Server discovery: refresh  */
+/** Discord davet önizlemesi: resmi public invite API'sinden bilgi çeker,
+ *  katılım kullanıcının kendi Discord hesabıyla discord.gg linkinde yapılır. */
+async function showDiscordInvitePreview(code) {
+    showModal("Discord Sunucusu", '<p class="modal-info">Discord sunucu bilgisi yükleniyor...</p>', "");
+    try {
+        const res = await fetch(`${API_BASE}/discord/invite/${encodeURIComponent(code)}`);
+        const d = await res.json();
+        if (d.error) {
+            showModal("Discord Sunucusu", '<p class="modal-info">Davet bulunamadı veya süresi dolmuş.</p>',
+                '<button class="btn-secondary" onclick="hideModal()">Kapat</button>');
+            return;
+        }
+        const icon = d.icon
+            ? `<img src="${escapeHtml(d.icon)}" style="width:64px;height:64px;border-radius:16px;object-fit:cover;">`
+            : `<div style="width:64px;height:64px;border-radius:16px;background:#5865f2;display:grid;place-items:center;font-size:26px;font-weight:700;color:#fff;">${escapeHtml((d.name || "?")[0])}</div>`;
+        const body = `
+          <div style="display:flex;gap:14px;align-items:center;padding:6px 2px;">
+            ${icon}
+            <div style="display:grid;gap:4px;">
+              <strong style="font-size:16px;">${escapeHtml(d.name || "")}</strong>
+              ${d.description ? `<span style="font-size:12.5px;color:var(--text-secondary);">${escapeHtml(d.description).slice(0, 140)}</span>` : ""}
+              <span style="font-size:12px;color:var(--text-muted);">${d.member_count ?? "?"} üye${d.online_count ? ` · ${d.online_count} çevrimiçi` : ""}</span>
+            </div>
+          </div>
+          <p class="modal-info" style="margin-top:10px;">Bu bir Discord sunucusu — katılım Discord hesabınla discord.gg üzerinden yapılır.</p>`;
+        showModal("Discord Sunucusu", body,
+            `<button class="btn-secondary" onclick="hideModal()">Kapat</button>
+             <button class="btn-primary" onclick="window.open('https://discord.gg/${encodeURIComponent(code)}','_blank');hideModal()">Discord'da Katıl ↗</button>`);
+    } catch (e) {
+        showModal("Discord Sunucusu", '<p class="modal-info">Discord\'a ulaşılamadı.</p>',
+            '<button class="btn-secondary" onclick="hideModal()">Kapat</button>');
+    }
+}
+window.showDiscordInvitePreview = showDiscordInvitePreview;
+
 async function refreshDiscovery() {
     const grid = document.getElementById("room-list-home");
     if (!grid) return;
@@ -9434,6 +9596,7 @@ async function refreshDiscovery() {
                     <div style="font-size:12px;color:var(--text-muted);">${room.peer_count || 0} üye</div>
                   </div>
                 </div>
+                ${room.description ? `<p style="font-size:12.5px;color:var(--text-secondary);margin:0 0 10px;line-height:1.4;">${escapeHtml(room.description).slice(0, 160)}</p>` : ""}
                 <div style="display:flex;gap:8px;align-items:center;">
                   <span style="font-size:12px;color:var(--text-muted);flex:1;">Kod: <b style="letter-spacing:2px;color:var(--accent);">${room.invite_code || ""}</b></span>
                   <button class="btn-primary" style="padding:6px 14px;font-size:13px;" onclick="joinDiscoveryRoom('${room.room_id}', '${room.invite_code}')">Katıl</button>
@@ -10050,7 +10213,7 @@ function openServerSettingsPanel() {
     const server = state.servers.find(s => s.id === state.activeServerId);
     if (!server) return;
 
-    const isOwner = (server.ownerId === state.peerId || state.isAdmin);
+    const isOwner = server.ownerId === state.peerId;
     const isAdmin = isOwner || server.peer_roles?.[state.peerId] === "admin";
     if (!isAdmin) return toast("Bu işlem için yönetici yetkisi gerekli.", "error");
 
@@ -10321,7 +10484,7 @@ function renderRolesSettings(server) {
                 <input type="text" class="role-name-input" value="${escapeHtml(roleData.name)}" 
                        onchange="updateRoleName('${roleId}', this.value)" />
                 <span style="font-size:11px;color:var(--text-muted);">${memberCount} üye</span>
-                ${(server.ownerId !== state.peerId && !state.isAdmin) ? '' : `
+                ${server.ownerId !== state.peerId ? '' : `
                     <button style="background:none;border:none;color:var(--red);cursor:pointer;font-size:16px;" 
                             onclick="deleteRole('${roleId}')">🗑️</button>
                 `}
@@ -10353,7 +10516,7 @@ function renderMembersSettings(server) {
                     ${initials(member.username)}
                 </div>
                 <span style="flex:1;font-size:14px;color:var(--text-primary);">${escapeHtml(member.username)}</span>
-                ${(server.ownerId === state.peerId || state.isAdmin) ? `
+                ${server.ownerId === state.peerId ? `
                     <select class="member-role-select" onchange="updateMemberRole('${member.peer_id}', this.value)">
                         <option value="member">Üye</option>
                         ${roleOptions}
@@ -10888,6 +11051,8 @@ function updateMemberRole(peerId, roleId) {
             payload: { id: server.id, peer_roles: server.peer_roles }
         });
     }
+    // Sunucu tarafına da kalıcı yaz (izin kontrolü + restart sonrası korunur)
+    sendServerEvent({ type: 'role_update', roles: server.roles || {}, peer_roles: server.peer_roles });
 
     updateMembersPanel(server.id);
     toast('Üye rolü güncellendi!', 'success');
@@ -10981,6 +11146,7 @@ function normalizeServerLivePayload(server, room) {
     // istemci tarafı tüketimdi.
     if (room.name) server.name = room.name;
     if (room.icon_url !== undefined) server.icon_url = room.icon_url;
+    if (room.description !== undefined) server.description = room.description;
     if (room.invite_code) server.inviteCode = room.invite_code;
     if (room.channels) server.channels = room.channels;
     if (room.channel_backgrounds) server.channel_backgrounds = room.channel_backgrounds;
@@ -11224,7 +11390,7 @@ function isSuperAdmin() {
 function myRoleId(server) {
     if (!server) return "member";
     if (isSuperAdmin()) return "owner";
-    if ((server.ownerId === state.peerId || state.isAdmin) || (server.owner_id === state.peerId || state.isAdmin)) return "owner";
+    if (server.ownerId === state.peerId || server.owner_id === state.peerId) return "owner";
     return server.peer_roles?.[state.peerId] || "member";
 }
 
@@ -11623,7 +11789,7 @@ openServerSettingsPanel = window.openServerSettingsPanel = function () {
     if (!state.activeServerId) return toast("Once bir sunucu sec.", "info");
     const server = currentServer();
     if (!server) return;
-    const isOwner = (server.ownerId === state.peerId || state.isAdmin);
+    const isOwner = server.ownerId === state.peerId;
     const canManage = isOwner || roleAllows(server, "manage_server") || roleAllows(server, "manage_roles");
     if (!canManage) return toast("Sunucu ayarlari icin yetkin yok.", "warning");
     let panel = document.getElementById("server-settings-panel");
@@ -11679,8 +11845,16 @@ saveProfessionalServerSettings = window.saveProfessionalServerSettings = functio
     if (!server) return;
     const name = document.getElementById("settings-sv-name")?.value?.trim();
     const icon = document.getElementById("settings-sv-icon")?.value?.trim();
+    const desc = document.getElementById("settings-sv-desc")?.value?.trim();
     if (name) server.name = name;
     server.icon_url = icon || null;
+    if (desc !== undefined) server.description = desc;
+    // Sunucuya kalıcı yaz (isim/ikon/açıklama)
+    fetch(`${API_BASE}/rooms/${server.id}/settings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: server.name, icon_url: server.icon_url, description: server.description || "" }),
+    }).catch(() => { });
     if (!server.roles) server.roles = {};
     if (!server.roles.member) server.roles.member = { name: "Uye", color: "#94a3b8", permissions: {} };
     if (!server.roles.member.permissions) server.roles.member.permissions = {};
@@ -13096,8 +13270,11 @@ function updateThemeColor(property, value) {
 function updateMessageDensity(density) {
     if (!state.settings) state.settings = {};
     state.settings.messageDensity = density;
-    localStorage.setItem('scord_message_density', density);
-    document.documentElement.setAttribute("data-scord-chat-style", density);
+    // BUG FIX: yanlış anahtara (scord_message_density) ve CSS'in hiç
+    // kullanmadığı bir attribute'a yazıyordu — ayar görünürde hiç işlemiyordu.
+    localStorage.setItem('scord_msg_density', density);
+    localStorage.setItem('scord_settings', JSON.stringify(state.settings));
+    document.documentElement.setAttribute("data-msg-density", density);
     toast("Mesaj yogunlugu: " + density, "success");
 }
 
@@ -18798,7 +18975,7 @@ function renderCategoryHeader(list, label, serverId, type) {
     cat.className = "channel-category channel-category--grouped";
     cat.innerHTML = `<span><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg> ${escapeHtml(label)}</span>`;
     const server = state.servers.find(s => s.id === serverId);
-    const canAdd = server && ((server.ownerId === state.peerId || state.isAdmin) || server.peer_roles?.[state.peerId] === "admin");
+    const canAdd = server && (server.ownerId === state.peerId || server.peer_roles?.[state.peerId] === "admin");
     if (canAdd) {
         const addBtn = document.createElement("span");
         addBtn.className = "add-ch-btn";
@@ -18906,7 +19083,7 @@ function showRichUserMenu(peerId, username, x, y) {
     const server = currentServer();
     const isSelf = peerId === state.peerId;
     const role = profileRoleLine(server, peerId);
-    const canKick = !isSelf && server && ((server.ownerId === state.peerId || state.isAdmin) || roleAllows(server, "force_disconnect", state.voiceChannelId || state.activeChannelId));
+    const canKick = !isSelf && server && (server.ownerId === state.peerId || roleAllows(server, "force_disconnect", state.voiceChannelId || state.activeChannelId));
     const menu = document.createElement("div");
     menu.className = "rich-user-menu";
     menu.style.left = `${Math.min(x, window.innerWidth - 280)}px`;
@@ -18954,7 +19131,7 @@ openUserProfile = window.openUserProfile = function (peerId, username, avatarIma
     const note = getUserNote(peerId);
     const isFriend = state.friends?.some(f => f.peerId === peerId);
     const serverName = server?.name || "Shercord";
-    const canModerate = !isSelf && server && ((server.ownerId === state.peerId || state.isAdmin) || roleAllows(server, "force_disconnect", state.voiceChannelId || state.activeChannelId));
+    const canModerate = !isSelf && server && (server.ownerId === state.peerId || roleAllows(server, "force_disconnect", state.voiceChannelId || state.activeChannelId));
     const body = `
       <div class="profile-pro-card">
         <div class="profile-pro-banner" style="background:linear-gradient(135deg, ${avatarColor || "#5865f2"}, #111827);"></div>
@@ -19438,7 +19615,7 @@ handleAuthoritativeServerEvent = window.handleAuthoritativeServerEvent = functio
 function leaveCurrentServerSelf() {
     const server = currentServer();
     if (!server) return;
-    if ((server.ownerId === state.peerId || state.isAdmin) || (server.owner_id === state.peerId || state.isAdmin)) {
+    if (server.ownerId === state.peerId || server.owner_id === state.peerId) {
         toast("Sunucu sahibisin; ayrilmak yerine sunucuyu kapatabilirsin.", "warning");
         return;
     }
@@ -19721,7 +19898,7 @@ startMusicBot = window.startMusicBot = function (videoId, startAt) {
 };
 
 function applyChatCustomization() {
-    document.documentElement.setAttribute("data-scord-chat", localStorage.getItem("scord_chat_layout") || "classic");
+    document.documentElement.setAttribute("data-scord-chat", localStorage.getItem("scord_chat_layout") || "bubbles");
     document.documentElement.setAttribute("data-scord-chat-style", localStorage.getItem("scord_chat_style") || "soft");
     document.documentElement.setAttribute("data-scord-palette", localStorage.getItem("scord_palette") || "glass");
     document.documentElement.className = localStorage.getItem("scord_theme") || "";
@@ -19761,20 +19938,107 @@ saveSettings = window.saveSettings = function () {
     return result;
 };
 
+const SCORD_PERM_LABELS = {
+    manage_server: "Sunucuyu Yönet", manage_roles: "Rolleri Yönet", manage_channels: "Kanalları Yönet",
+    kick_members: "Üye At", move_members: "Üye Taşı", force_disconnect: "Sesten At",
+    join_voice: "Sese Katıl", speak: "Konuş", screen_share: "Ekran Paylaş",
+    camera: "Kamera Aç", music_control: "Müzik Kontrolü", send_messages: "Mesaj Gönder",
+};
+
 function renderAdvancedRoleEditor(server) {
     const roles = server.roles || {};
-    return Object.entries(roles).map(([roleId, role]) => `
+    const members = server.members || [];
+    const peerRoles = server.peer_roles || {};
+
+    // ── Rol kartları ──
+    let html = '<div class="role-editor-list">';
+    html += Object.entries(roles).map(([roleId, role]) => {
+        const count = Object.values(peerRoles).filter(r => r === roleId).length;
+        return `
       <div class="role-editor-card" data-role="${escapeHtml(roleId)}">
         <div class="role-editor-head">
+          <span class="role-dot" style="background:${role.color || "#94a3b8"}"></span>
           <input class="modal-input role-name-edit" value="${escapeHtml(role.name || roleId)}" data-role-name="${escapeHtml(roleId)}">
-          <input type="color" value="${role.color || "#94a3b8"}" data-role-color="${escapeHtml(roleId)}">
+          <input type="color" value="${role.color || "#94a3b8"}" data-role-color="${escapeHtml(roleId)}" title="Rol rengi">
+          <label class="role-hoist-check" title="Üye listesinde ayrı grup olarak göster"><input type="checkbox" data-role-hoist="${escapeHtml(roleId)}" ${role.hoist ? "checked" : ""}> Ayrı göster</label>
+          <span class="role-member-count">${count} üye</span>
           ${roleId !== "member" ? `<button class="btn-secondary danger-soft" onclick="deleteRole('${roleId}')">Sil</button>` : ""}
         </div>
         <div class="permission-grid">
-          ${SCORD_V24_PERMISSIONS.map(p => `<label class="permission-item"><input type="checkbox" data-role-perm="${escapeHtml(roleId)}:${p}" ${role.permissions?.[p] ? "checked" : ""}> ${p.replaceAll("_", " ")}</label>`).join("")}
+          ${SCORD_V24_PERMISSIONS.map(p => `<label class="permission-item"><input type="checkbox" data-role-perm="${escapeHtml(roleId)}:${p}" ${role.permissions?.[p] ? "checked" : ""}> ${SCORD_PERM_LABELS[p] || p.replaceAll("_", " ")}</label>`).join("")}
         </div>
-      </div>`).join("");
+      </div>`;
+    }).join("");
+    html += '</div>';
+
+    // ── Kişiye özel rol atama ──
+    html += '<h3 class="role-section-title">Üye Rolleri</h3>';
+    html += '<p class="modal-info">Her üyeye ayrı rol verebilirsin. Değişiklik anında kaydedilir.</p>';
+    html += '<div class="role-member-list">';
+    if (!members.length) html += '<p class="modal-info">Şu an çevrimiçi üye yok. Üyeler bağlandığında burada görünür.</p>';
+    members.forEach(m => {
+        const cur = peerRoles[m.peer_id] || "member";
+        const opts = Object.entries(roles).map(([rid, r]) =>
+            `<option value="${escapeHtml(rid)}" ${cur === rid ? "selected" : ""}>${escapeHtml(r.name || rid)}</option>`).join("");
+        const isOwnerRow = m.peer_id === (server.ownerId || server.owner_id);
+        html += `
+      <div class="role-member-row">
+        <span class="role-member-avatar" style="background:${m.avatar_color || "#7c3aed"};${m.avatar_image ? `background-image:url('${escapeHtml(m.avatar_image)}')` : ""}">${m.avatar_image ? "" : escapeHtml((m.username || "?")[0].toUpperCase())}</span>
+        <span class="role-member-name">${escapeHtml(m.username || m.peer_id)}${isOwnerRow ? ' <em class="role-owner-tag">👑 Sahip</em>' : ""}</span>
+        ${isOwnerRow ? "" : `<select class="member-role-select" onchange="updateMemberRole('${escapeHtml(m.peer_id)}', this.value)">${opts}</select>`}
+      </div>`;
+    });
+    html += '</div>';
+
+    // ── Gizli odalar (kanal görünürlüğü) ──
+    const channels = server.channels || [];
+    const perms = server.channel_permissions || {};
+    html += '<h3 class="role-section-title">Gizli Odalar</h3>';
+    html += '<p class="modal-info">Gizli kanalı yalnızca seçtiğin roller görebilir ve girebilir; diğerlerinin listesinde hiç görünmez.</p>';
+    html += '<div class="hidden-ch-list">';
+    channels.forEach(ch => {
+        const ov = perms[ch.id] || {};
+        const memberDeny = !!(ov.member && (ov.member.deny || []).includes("view_channel"));
+        const roleChecks = Object.entries(roles).filter(([rid]) => rid !== "member").map(([rid, r]) => {
+            const allowed = !!(ov[rid] && (ov[rid].allow || []).includes("view_channel"));
+            return `<label class="permission-item"><input type="checkbox" data-hidden-allow="${escapeHtml(ch.id)}:${escapeHtml(rid)}" ${allowed ? "checked" : ""} ${memberDeny ? "" : "disabled"}> ${escapeHtml(r.name || rid)}</label>`;
+        }).join("");
+        html += `
+      <div class="hidden-ch-row" data-hidden-ch="${escapeHtml(ch.id)}">
+        <div class="hidden-ch-head">
+          <span class="v25-ch-name">${ch.type === "voice" ? "🔊" : "#"} ${escapeHtml(ch.name)}</span>
+          <label class="role-hoist-check"><input type="checkbox" data-hidden-toggle="${escapeHtml(ch.id)}" ${memberDeny ? "checked" : ""} onchange="toggleHiddenChannelUI(this)"> 🔒 Gizli</label>
+        </div>
+        <div class="hidden-ch-roles ${memberDeny ? "" : "hidden-ch-roles--off"}">${roleChecks || '<span class="modal-info">Önce özel bir rol oluştur.</span>'}</div>
+      </div>`;
+    });
+    html += '</div>';
+    return html;
 }
+
+// Gizli toggle açılınca rol checkboxlarını etkinleştir (kaydetmeden önce görsel)
+window.toggleHiddenChannelUI = function (input) {
+    const row = input.closest(".hidden-ch-row");
+    if (!row) return;
+    const on = input.checked;
+    row.querySelector(".hidden-ch-roles")?.classList.toggle("hidden-ch-roles--off", !on);
+    row.querySelectorAll("[data-hidden-allow]").forEach(cb => { cb.disabled = !on; });
+};
+
+/** Kanalı bu kullanıcı görebilir mi? (gizli oda mantığı — sadece override'lara bakar) */
+function canViewChannel(server, peerId, channelId) {
+    if (!server || !channelId) return true;
+    if (peerId === (server.ownerId || server.owner_id)) return true;
+    const ov = server.channel_permissions?.[channelId];
+    if (!ov) return true;
+    const roleId = server.peer_roles?.[peerId] || "member";
+    const mine = ov[roleId];
+    if (mine?.allow?.includes("view_channel")) return true;
+    if (mine?.deny?.includes("view_channel")) return false;
+    if (ov.member?.deny?.includes("view_channel")) return false;
+    return true;
+}
+window.canViewChannel = canViewChannel;
 
 const _v24OpenServerSettingsPanel = window.openServerSettingsPanel || openServerSettingsPanel;
 openServerSettingsPanel = window.openServerSettingsPanel = function () {
@@ -19786,7 +20050,7 @@ openServerSettingsPanel = window.openServerSettingsPanel = function () {
     const main = panel.querySelector(".scord-server-settings-main");
     if (nav && !nav.querySelector('[data-page="background"]')) {
         nav.querySelector('[data-page="roles"]')?.insertAdjacentHTML("afterend", `<button data-page="background">Arka Plan</button>`);
-        if ((server.ownerId !== state.peerId && !state.isAdmin) && !nav.querySelector('[data-page="leave"]')) {
+        if (server.ownerId !== state.peerId && !nav.querySelector('[data-page="leave"]')) {
             nav.querySelector(".danger")?.insertAdjacentHTML("beforebegin", `<button data-page="leave">Ayril</button>`);
         }
     }
@@ -19849,6 +20113,41 @@ saveProfessionalServerSettings = window.saveProfessionalServerSettings = functio
             if (!server.roles[id].permissions) server.roles[id].permissions = {};
             server.roles[id].permissions[perm] = input.checked;
         });
+        document.querySelectorAll("[data-role-hoist]").forEach(input => {
+            const id = input.dataset.roleHoist;
+            if (server.roles[id]) server.roles[id].hoist = input.checked;
+        });
+    }
+    // ── Gizli oda ayarlarını topla → channel_permissions ──
+    if (server) {
+        if (!server.channel_permissions) server.channel_permissions = {};
+        document.querySelectorAll("[data-hidden-toggle]").forEach(input => {
+            const chId = input.dataset.hiddenToggle;
+            if (!server.channel_permissions[chId]) server.channel_permissions[chId] = {};
+            const ov = server.channel_permissions[chId];
+            if (input.checked) {
+                ov.member = ov.member || {};
+                ov.member.deny = Array.from(new Set([...(ov.member.deny || []), "view_channel", "join_voice", "send_messages"]));
+            } else if (ov.member) {
+                ov.member.deny = (ov.member.deny || []).filter(p => !["view_channel", "join_voice", "send_messages"].includes(p));
+                if (!ov.member.deny.length && !(ov.member.allow || []).length) delete ov.member;
+            }
+            // Rol bazlı görme izinleri
+            document.querySelectorAll(`[data-hidden-allow^="${CSS.escape(chId)}:"]`).forEach(cb => {
+                const rid = cb.dataset.hiddenAllow.split(":")[1];
+                if (!ov[rid]) ov[rid] = {};
+                const grant = ["view_channel", "join_voice", "send_messages"];
+                if (cb.checked && input.checked) {
+                    ov[rid].allow = Array.from(new Set([...(ov[rid].allow || []), ...grant]));
+                } else {
+                    ov[rid].allow = (ov[rid].allow || []).filter(p => !grant.includes(p));
+                    if (!(ov[rid].allow || []).length && !(ov[rid].deny || []).length) delete ov[rid];
+                }
+            });
+            if (!Object.keys(ov).length) delete server.channel_permissions[chId];
+        });
+        sendServerEvent({ type: "permission_update", channel_permissions: server.channel_permissions, roles: server.roles || {} });
+        updateChannelSidebar(server.id);
     }
     return _v24SaveProfessionalServerSettings.apply(this, arguments);
 };
@@ -23067,7 +23366,7 @@ function showServerStatsModal() {
                 <div style="font-size:13px;color:var(--text-secondary);">
                     <div>Kuruluş: ${createdDate}</div>
                     <div>Sunucu ID: ${server.id}</div>
-                    <div>Sahip: ${(server.ownerId === state.peerId || state.isAdmin) ? 'Sen' : 'Bilgi yok'}</div>
+                    <div>Sahip: ${server.ownerId === state.peerId ? 'Sen' : 'Bilgi yok'}</div>
                 </div>
             </div>
         </div>
@@ -23997,7 +24296,6 @@ function showUserSettingsModal() {
     var html = '<div class="scord-settings-shell">';
     html += '  <nav class="scord-settings-nav">';
     html += '    <button class="active" data-tab="account">Hesabım</button>';
-    html += '    <button data-tab="profile">Profil</button>';
     html += '    <button data-tab="voice">Ses ve Görüntü</button>';
     html += '    <button data-tab="appearance">Görünüm</button>';
     html += '    <button data-tab="notifications">Bildirimler</button>';
@@ -24006,21 +24304,17 @@ function showUserSettingsModal() {
     html += '  </nav>';
     html += '  <section class="scord-settings-content">';
 
-    // ── Hesabım ──────────────────────────────────────────
+    // ── Hesabım (profil ile birleşik) ────────────────────
     html += '    <div class="scord-settings-page" id="set-account">';
     html += '      <h3>Hesabım</h3>';
     html += '      <div class="settings-account-card">';
-    html += '        <div class="settings-account-avatar" style="background-color:' + (state.avatarColor || '#7c3aed') + ';' + (state.avatarImage ? "background-image:url('" + escapeHtml(state.avatarImage) + "')" : '') + '">' + (state.avatarImage ? '' : escapeHtml((state.username || '?').charAt(0).toUpperCase())) + '</div>';
+    html += '        <div class="settings-account-avatar settings-avatar-clickable" id="settings-avatar-btn" title="Avatarı değiştirmek için tıkla" style="background-color:' + (state.avatarColor || '#7c3aed') + ';' + (state.avatarImage ? "background-image:url('" + escapeHtml(state.avatarImage) + "')" : '') + '">' + (state.avatarImage ? '' : escapeHtml((state.username || '?').charAt(0).toUpperCase())) + '<span class="settings-avatar-overlay">📷</span></div>';
     html += '        <div class="settings-account-info"><strong>' + escapeHtml(state.username || '') + '</strong><span>' + escapeHtml(tag) + '</span></div>';
     html += '      </div>';
-    html += '      <p class="settings-hint">Kullanıcı adı hesap oluştururken belirlenir ve değiştirilemez (sunucu sahiplikleri buna bağlı). Avatarını, biyografini ve bannerını Profil sekmesinden değiştirebilirsin — bunlar artık hesabına kayıtlı, tarayıcı değiştirsen de seninle gelir.</p>';
-    html += '    </div>';
-
-    // ── Profil ───────────────────────────────────────────
-    html += '    <div class="scord-settings-page hidden" id="set-profile">';
-    html += '      <h3>Profil</h3>';
+    html += '      <input type="file" id="settings-avatar-file" accept="image/*" class="hidden" style="display:none">';
+    html += '      <p class="settings-hint">Avatarına tıklayıp bilgisayarından resim yükleyebilirsin. Profil bilgileri hesabına kayıtlı — tarayıcı değiştirsen de seninle gelir. Kullanıcı adı değiştirilemez (sunucu sahiplikleri buna bağlı).</p>';
     html += '      <label>Biyografi<textarea class="modal-input" id="settings-bio" rows="3" onchange="syncProfileField({bio:this.value})">' + escapeHtml(state.bio || '') + '</textarea></label>';
-    html += '      <label>Avatar URL<input class="modal-input" id="settings-avatar-url" value="' + escapeHtml(state.avatarImage || '') + '" placeholder="https://..." onchange="syncProfileField({avatarImage:this.value});applyAvatarToElement(document.getElementById(\'user-bar-avatar\'),state.avatarColor,state.avatarImage,state.username)"></label>';
+    html += '      <label>Avatar URL<input class="modal-input" id="settings-avatar-url" value="' + escapeHtml((state.avatarImage || '').startsWith('data:') ? '' : (state.avatarImage || '')) + '" placeholder="https://... (veya yukarıdan dosya yükle)" onchange="syncProfileField({avatarImage:this.value});applyAvatarToElement(document.getElementById(\'user-bar-avatar\'),state.avatarColor,state.avatarImage,state.username)"></label>';
     html += '      <label>Avatar Rengi<input class="modal-input" type="color" id="settings-avatar-color" value="' + (state.avatarColor || '#7c3aed') + '" onchange="syncProfileField({avatarColor:this.value});applyAvatarToElement(document.getElementById(\'user-bar-avatar\'),state.avatarColor,state.avatarImage,state.username)" style="height:40px;padding:2px;"></label>';
     html += '      <label>Banner URL<input class="modal-input" id="settings-banner-url" value="' + escapeHtml(state.bannerUrl || '') + '" placeholder="https://..." onchange="syncProfileField({bannerUrl:this.value})"></label>';
     html += '      <label>Banner Rengi<input class="modal-input" type="color" id="settings-banner-color" value="' + (state.bannerColor || '#5865f2') + '" onchange="syncProfileField({bannerColor:this.value})" style="height:40px;padding:2px;"></label>';
@@ -24031,15 +24325,10 @@ function showUserSettingsModal() {
     html += '    <div class="scord-settings-page hidden" id="set-voice">';
     html += '      <h3>Ses ve Görüntü</h3>';
     html += '      <label>Mikrofon Cihazı<select class="modal-input" id="settings-mic-device"><option value="default">Varsayılan</option></select></label>';
-    html += '      <label>Çıkış Cihazı (Hoparlör)<select class="modal-input" id="settings-speaker-device"><option value="default">Varsayılan</option></select></label>';
     html += '      <label>Kamera Cihazı<select class="modal-input" id="settings-camera-device"><option value="default">Varsayılan</option></select></label>';
-    html += '      <div style="display:flex;align-items:center;gap:10px;margin:6px 0 10px;">';
-    html += '        <button type="button" class="btn-secondary" id="settings-mic-test-btn" onclick="window.toggleMicTest()">Mikrofonu Test Et</button>';
-    html += '        <div style="flex:1;height:8px;border-radius:4px;background:rgba(255,255,255,0.08);overflow:hidden;"><div id="settings-mic-meter" style="width:0%;height:100%;border-radius:4px;background:var(--accent);transition:width 0.06s linear;"></div></div>';
-    html += '      </div>';
-    html += '      <label class="scord-check"><input type="checkbox" ' + (vs.noiseSuppression !== false ? 'checked' : '') + ' onchange="state.voiceSettings=state.voiceSettings||{};state.voiceSettings.noiseSuppression=this.checked;localStorage.setItem(\'scord_voice_settings\',JSON.stringify(state.voiceSettings));window.applyVoiceSettingsLive&&applyVoiceSettingsLive()"> Gürültü Engelleme (önerilen)</label>';
-    html += '      <label class="scord-check"><input type="checkbox" ' + (vs.echoCancellation !== false ? 'checked' : '') + ' onchange="state.voiceSettings=state.voiceSettings||{};state.voiceSettings.echoCancellation=this.checked;localStorage.setItem(\'scord_voice_settings\',JSON.stringify(state.voiceSettings));window.applyVoiceSettingsLive&&applyVoiceSettingsLive()"> Yankı Engelleme</label>';
-    html += '      <label class="scord-check"><input type="checkbox" ' + (vs.autoGainControl === true ? 'checked' : '') + ' onchange="state.voiceSettings=state.voiceSettings||{};state.voiceSettings.autoGainControl=this.checked;localStorage.setItem(\'scord_voice_settings\',JSON.stringify(state.voiceSettings));window.applyVoiceSettingsLive&&applyVoiceSettingsLive()"> Otomatik Seviye Dengeleme</label>';
+    html += '      <label class="scord-check"><input type="checkbox" ' + (vs.noiseSuppression !== false ? 'checked' : '') + ' onchange="state.voiceSettings=state.voiceSettings||{};state.voiceSettings.noiseSuppression=this.checked;localStorage.setItem(\'scord_voice_settings\',JSON.stringify(state.voiceSettings))"> Gürültü Engelleme</label>';
+    html += '      <label class="scord-check"><input type="checkbox" ' + (vs.echoCancellation !== false ? 'checked' : '') + ' onchange="state.voiceSettings=state.voiceSettings||{};state.voiceSettings.echoCancellation=this.checked;localStorage.setItem(\'scord_voice_settings\',JSON.stringify(state.voiceSettings))"> Yankı Engelleme</label>';
+    html += '      <label class="scord-check"><input type="checkbox" ' + (vs.autoGainControl === true ? 'checked' : '') + ' onchange="state.voiceSettings=state.voiceSettings||{};state.voiceSettings.autoGainControl=this.checked;localStorage.setItem(\'scord_voice_settings\',JSON.stringify(state.voiceSettings))"> Otomatik Seviye Dengeleme</label>';
     html += '      <label class="scord-check"><input type="checkbox" ' + (vs.gateEnabled === true ? 'checked' : '') + ' onchange="state.voiceSettings=state.voiceSettings||{};state.voiceSettings.gateEnabled=this.checked;localStorage.setItem(\'scord_voice_settings\',JSON.stringify(state.voiceSettings))"> Ses Kapısı (sessizken mikrofonu kapat — kelime başlarını kırpabilir)</label>';
     html += '      <label>Mikrofon Hassasiyeti <span id="val-gate-vol">' + (vs.gateThreshold || 8) + '</span><input type="range" min="3" max="30" value="' + (vs.gateThreshold || 8) + '" oninput="state.voiceSettings=state.voiceSettings||{};state.voiceSettings.gateThreshold=parseInt(this.value);document.getElementById(\'val-gate-vol\').textContent=this.value;localStorage.setItem(\'scord_voice_settings\',JSON.stringify(state.voiceSettings))"></label>';
     html += '      <label>Mikrofon Ses <span id="val-mic-vol">' + (vols.micVolume || 80) + '%</span><input type="range" min="0" max="100" value="' + (vols.micVolume || 80) + '" oninput="updateSetting(\'micVolume\',this.value);document.getElementById(\'val-mic-vol\').textContent=this.value+\'%\'"></label>';
@@ -24069,26 +24358,42 @@ function showUserSettingsModal() {
     html += '        <option value="cozy"' + ((state.settings?.messageDensity || 'cozy') === 'cozy' ? ' selected' : '') + '>Rahat</option>';
     html += '        <option value="compact"' + ((state.settings?.messageDensity || 'cozy') === 'compact' ? ' selected' : '') + '>Kompakt</option>';
     html += '      </select></label>';
-    html += '      <label>Yazı Boyutu<select class="modal-input" onchange="document.documentElement.style.fontSize=this.value+\'px\';state.settings.fontSize=this.value;localStorage.setItem(\'scord_settings\',JSON.stringify(state.settings))">';
+    var _chatLayout = localStorage.getItem('scord_chat_layout') || 'bubbles';
+    var _palette = localStorage.getItem('scord_palette') || 'glass';
+    html += '      <label>Sohbet Görünümü<select class="modal-input" onchange="localStorage.setItem(\'scord_chat_layout\',this.value);applyScordAppearance()">';
+    html += '        <option value="bubbles"' + (_chatLayout === 'bubbles' ? ' selected' : '') + '>Balonlu (modern)</option>';
+    html += '        <option value="classic"' + (_chatLayout === 'classic' ? ' selected' : '') + '>Klasik (Discord tarzı)</option>';
+    html += '      </select></label>';
+    html += '      <label>Renk Paleti<select class="modal-input" onchange="localStorage.setItem(\'scord_palette\',this.value);applyScordAppearance()">';
+    ['glass', 'aurora', 'midnight', 'ember', 'forest', 'paper'].forEach(function (p) {
+        html += '<option value="' + p + '"' + (_palette === p ? ' selected' : '') + '>' + p.charAt(0).toUpperCase() + p.slice(1) + '</option>';
+    });
+    html += '      </select></label>';
+    html += '      <label>Yazı Boyutu<select class="modal-input" onchange="setUserSetting(\'fontSize\',parseInt(this.value))">';
     html += '        <option value="14"' + ((state.settings?.fontSize || 14) == 14 ? ' selected' : '') + '>Küçük (14px)</option>';
     html += '        <option value="16"' + ((state.settings?.fontSize || 14) == 16 ? ' selected' : '') + '>Normal (16px)</option>';
     html += '        <option value="18"' + ((state.settings?.fontSize || 14) == 18 ? ' selected' : '') + '>Büyük (18px)</option>';
     html += '      </select></label>';
-    html += '      <label class="scord-check"><input type="checkbox" ' + (state.settings?.animations !== false ? 'checked' : '') + ' onchange="toggleAnimations(this.checked)"> Animasyonlar</label>';
-    html += '      <label class="scord-check"><input type="checkbox" ' + (state.settings?.streamerMode ? 'checked' : '') + ' onchange="state.settings.streamerMode=this.checked;localStorage.setItem(\'scord_settings\',JSON.stringify(state.settings))"> Yayıncı Modu (kişisel bilgileri gizle)</label>';
+    html += '      <label>Emoji Boyutu<select class="modal-input" onchange="setUserSetting(\'emojiSize\',this.value)">';
+    html += '        <option value="small"' + ((state.settings?.emojiSize || 'medium') === 'small' ? ' selected' : '') + '>Küçük</option>';
+    html += '        <option value="medium"' + ((state.settings?.emojiSize || 'medium') === 'medium' ? ' selected' : '') + '>Normal</option>';
+    html += '        <option value="large"' + ((state.settings?.emojiSize || 'medium') === 'large' ? ' selected' : '') + '>Büyük</option>';
+    html += '      </select></label>';
+    html += '      <label class="scord-check"><input type="checkbox" ' + (state.settings?.animations !== false ? 'checked' : '') + ' onchange="setUserSetting(\'animations\',this.checked)"> Animasyonlar</label>';
+    html += '      <label class="scord-check"><input type="checkbox" ' + (state.settings?.streamerMode ? 'checked' : '') + ' onchange="setUserSetting(\'streamerMode\',this.checked)"> Yayıncı Modu (Unique ID ve davet kodlarını bulanıklaştır)</label>';
     html += '    </div>';
 
     // ── Bildirimler ──────────────────────────────────────
     html += '    <div class="scord-settings-page hidden" id="set-notifications">';
     html += '      <h3>Bildirimler</h3>';
     html += '      <label>Bildirim Sesi <span id="val-notif-vol">' + (vols.notificationVolume || 50) + '%</span><input type="range" min="0" max="100" value="' + (vols.notificationVolume || 50) + '" oninput="updateSetting(\'notificationVolume\',this.value);document.getElementById(\'val-notif-vol\').textContent=this.value+\'%\'"></label>';
-    html += '      <label class="scord-check"><input type="checkbox" ' + (state.settings?.soundEffects !== false ? 'checked' : '') + ' onchange="state.settings.soundEffects=this.checked;localStorage.setItem(\'scord_settings\',JSON.stringify(state.settings))"> Ses Efektleri (join/leave/mesaj)</label>';
+    html += '      <label class="scord-check"><input type="checkbox" ' + (state.settings?.soundEffects !== false ? 'checked' : '') + ' onchange="setUserSetting(\'soundEffects\',this.checked)"> Ses Efektleri (join/leave/mesaj)</label>';
     html += '    </div>';
 
     // ── Diğer ────────────────────────────────────────────
     html += '    <div class="scord-settings-page hidden" id="set-advanced">';
     html += '      <h3>Diğer</h3>';
-    html += '      <label class="scord-check"><input type="checkbox" ' + (state.settings?.compactMode ? 'checked' : '') + ' onchange="state.settings.compactMode=this.checked;localStorage.setItem(\'scord_settings\',JSON.stringify(state.settings))"> Kompakt Mod</label>';
+    html += '      <label class="scord-check"><input type="checkbox" ' + (state.settings?.compactMode ? 'checked' : '') + ' onchange="setUserSetting(\'compactMode\',this.checked)"> Kompakt Mod</label>';
     html += '      <div class="settings-unique-id">';
     html += '        <div class="settings-unique-id-label">Unique ID\'n</div>';
     html += '        <div class="settings-unique-id-row"><span>' + escapeHtml(tag) + '</span><button class="btn-secondary" onclick="copyUniqueId()">Kopyala</button></div>';
@@ -24100,6 +24405,44 @@ function showUserSettingsModal() {
     html += '</div>';
 
     showModal("Kullanıcı Ayarları", html, "");
+
+    // Avatar tıkla → PC'den resim yükle (128px'e küçültülüp hesaba kaydedilir)
+    var avatarBtn = document.getElementById("settings-avatar-btn");
+    var avatarFile = document.getElementById("settings-avatar-file");
+    if (avatarBtn && avatarFile) {
+        avatarBtn.onclick = function () { avatarFile.click(); };
+        avatarFile.onchange = function () {
+            var f = avatarFile.files && avatarFile.files[0];
+            if (!f) return;
+            var reader = new FileReader();
+            reader.onload = function () {
+                var img = new Image();
+                img.onload = function () {
+                    var size = 128;
+                    var canvas = document.createElement("canvas");
+                    canvas.width = size; canvas.height = size;
+                    var ctx = canvas.getContext("2d");
+                    // Kare kırp (cover)
+                    var s = Math.min(img.width, img.height);
+                    ctx.drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, size, size);
+                    var dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+                    syncProfileField({ avatarImage: dataUrl });
+                    avatarBtn.style.backgroundImage = "url('" + dataUrl + "')";
+                    avatarBtn.textContent = "";
+                    var overlay = document.createElement("span");
+                    overlay.className = "settings-avatar-overlay";
+                    overlay.textContent = "📷";
+                    avatarBtn.appendChild(overlay);
+                    if (typeof applyAvatarToElement === "function") {
+                        applyAvatarToElement(document.getElementById("user-bar-avatar"), state.avatarColor, dataUrl, state.username);
+                    }
+                    toast("Avatar güncellendi!", "success");
+                };
+                img.src = reader.result;
+            };
+            reader.readAsDataURL(f);
+        };
+    }
 
     document.querySelectorAll(".scord-settings-nav button[data-tab]").forEach(function (btn) {
         btn.onclick = function () {
@@ -24125,32 +24468,7 @@ function showUserSettingsModal() {
             state.voiceSettings = state.voiceSettings || {};
             state.voiceSettings.micId = micSel.value;
             localStorage.setItem("scord_voice_settings", JSON.stringify(state.voiceSettings));
-            // Sesli kanaldaysa mikrofonu CANLI degistir (Discord gibi).
-            if (state.mesh && state.mesh.voiceActive) {
-                switchMicLive(micSel.value);
-            }
-        };
-    }
-    var spkSel = document.getElementById("settings-speaker-device");
-    if (spkSel && navigator.mediaDevices?.enumerateDevices) {
-        navigator.mediaDevices.enumerateDevices().then(function (devices) {
-            devices.filter(function (d) { return d.kind === "audiooutput"; }).forEach(function (d, i) {
-                var opt = document.createElement("option");
-                opt.value = d.deviceId;
-                opt.textContent = d.label || ("Hoparlör " + (i + 1));
-                spkSel.appendChild(opt);
-            });
-            spkSel.value = (state.voiceSettings && state.voiceSettings.speakerId) || "default";
-        }).catch(function () { });
-        spkSel.onchange = function () {
-            state.voiceSettings = state.voiceSettings || {};
-            state.voiceSettings.speakerId = spkSel.value;
-            localStorage.setItem("scord_voice_settings", JSON.stringify(state.voiceSettings));
-            // Mevcut uzak ses/video elementlerine hemen uygula.
-            Object.values(state.remoteMedia || {}).forEach(function (el) {
-                if (el && typeof el.setSinkId === "function") el.setSinkId(spkSel.value === "default" ? "" : spkSel.value).catch(function () { });
-            });
-            toast("Çıkış cihazı değiştirildi.", "success");
+            toast("Mikrofon değişikliği bir sonraki ses kanalı katılımında uygulanır.", "info");
         };
     }
     var camSel = document.getElementById("settings-camera-device");
@@ -24172,110 +24490,6 @@ function showUserSettingsModal() {
         };
     }
 }
-
-/* ── Ses ayarlari: sesli kanaldayken CANLI uygulama ─────────── */
-function applyVoiceSettingsLive() {
-    var vs = state.voiceSettings || {};
-    var track = state.voiceRawStream && state.voiceRawStream.getAudioTracks()[0];
-    if (track && typeof track.applyConstraints === "function") {
-        track.applyConstraints({
-            noiseSuppression: vs.noiseSuppression !== false,
-            echoCancellation: vs.echoCancellation !== false,
-            autoGainControl: vs.autoGainControl === true,
-        }).catch(function (e) { console.warn("[Voice] applyConstraints:", e); });
-    }
-    if (state.voiceGainNode) {
-        try { state.voiceGainNode.gain.value = vs.volume || 1; } catch (e) { /* noop */ }
-    }
-}
-window.applyVoiceSettingsLive = applyVoiceSettingsLive;
-
-/* Sesli kanaldayken mikrofon cihazini canli degistir: yeni cihazdan stream
-   al, tum peer'lardaki audio sender'da replaceTrack yap. */
-async function switchMicLive(deviceId) {
-    try {
-        var vs = state.voiceSettings || {};
-        var constraints = {
-            noiseSuppression: vs.noiseSuppression !== false,
-            echoCancellation: vs.echoCancellation !== false,
-            autoGainControl: vs.autoGainControl === true,
-            channelCount: 1,
-        };
-        if (deviceId && deviceId !== "default") constraints.deviceId = { exact: deviceId };
-        var newStream = await navigator.mediaDevices.getUserMedia({ audio: constraints });
-        var newTrack = newStream.getAudioTracks()[0];
-        if (!newTrack) return;
-        var oldTrack = state.voiceRawStream && state.voiceRawStream.getAudioTracks()[0];
-        var replaced = false;
-        Object.values((state.mesh && state.mesh.peers) || {}).forEach(function (p) {
-            var pc = p && p.pc;
-            if (!pc || pc.connectionState === "closed") return;
-            pc.getSenders().forEach(function (sender) {
-                if (sender.track && sender.track.kind === "audio") {
-                    // Ekran paylasim sesi karismasin: yalnizca mikrofon track'i degistir.
-                    var isScreenAudio = state.screenStream && state.screenStream.getAudioTracks().includes(sender.track);
-                    if (isScreenAudio) return;
-                    sender.replaceTrack(newTrack).then(function () { replaced = true; }).catch(function () { });
-                }
-            });
-        });
-        if (oldTrack) { try { oldTrack.stop(); } catch (e) { /* noop */ } }
-        state.voiceRawStream = newStream;
-        if (state.mesh) state.mesh.localStream = state.mesh.localStream || newStream;
-        toast("Mikrofon canlı olarak değiştirildi.", "success");
-    } catch (e) {
-        console.warn("[Voice] switchMicLive:", e);
-        toast("Mikrofon değiştirilemedi — bir sonraki katılımda uygulanır.", "warning");
-    }
-}
-window.switchMicLive = switchMicLive;
-
-/* ── Mikrofon testi: canli seviye cubugu ────────────────────── */
-var _micTest = null;
-async function toggleMicTest() {
-    var btn = document.getElementById("settings-mic-test-btn");
-    var meter = document.getElementById("settings-mic-meter");
-    if (_micTest) {
-        stopMicTest();
-        return;
-    }
-    try {
-        var vs = state.voiceSettings || {};
-        var constraints = { noiseSuppression: vs.noiseSuppression !== false, echoCancellation: vs.echoCancellation !== false };
-        if (vs.micId && vs.micId !== "default") constraints.deviceId = { exact: vs.micId };
-        var stream = await navigator.mediaDevices.getUserMedia({ audio: constraints });
-        var ctx = new (window.AudioContext || window.webkitAudioContext)();
-        var src = ctx.createMediaStreamSource(stream);
-        var analyser = ctx.createAnalyser();
-        analyser.fftSize = 256;
-        src.connect(analyser);
-        var data = new Uint8Array(analyser.frequencyBinCount);
-        var timer = setInterval(function () {
-            analyser.getByteFrequencyData(data);
-            var sum = 0;
-            for (var i = 0; i < data.length; i++) sum += data[i];
-            var pct = Math.min(100, Math.round((sum / data.length) * 1.8));
-            if (meter) meter.style.width = pct + "%";
-        }, 60);
-        _micTest = { stream: stream, ctx: ctx, timer: timer };
-        if (btn) btn.textContent = "Testi Durdur";
-    } catch (e) {
-        toast("Mikrofona erişilemedi.", "error");
-    }
-}
-function stopMicTest() {
-    if (!_micTest) return;
-    clearInterval(_micTest.timer);
-    try { _micTest.stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) { /* noop */ }
-    try { _micTest.ctx.close(); } catch (e) { /* noop */ }
-    _micTest = null;
-    var btn = document.getElementById("settings-mic-test-btn");
-    var meter = document.getElementById("settings-mic-meter");
-    if (btn) btn.textContent = "Mikrofonu Test Et";
-    if (meter) meter.style.width = "0%";
-}
-window.toggleMicTest = toggleMicTest;
-window.stopMicTest = stopMicTest;
 
 function updateSetting(key, val) {
     if (!state.settings) state.settings = {};
@@ -25736,23 +25950,24 @@ console.log("[App] Settings V-layout + Profile preview + Animations OFF + Cautio
 // ══════════════════════════════════════════════════════════
 
 function _v25ScreenQualityConstraints(q, fps) {
-    // 120/144/240 Hz monitörler için yüksek kare hızı: 720p/1080p'de sınır yok,
-    // 4K'da 60, düşük çözünürlüklerde 30 tavan (bant genişliği dengesi).
-    const f = Math.max(15, Math.min(240, fps || 30));
+    // 300'e kadar serbest: tarayıcı/ekran desteklemiyorsa "ideal" olduğu için
+    // otomatik olarak mümkün olan en yüksek kare hızına düşer.
+    const f = Math.max(15, Math.min(300, fps || 30));
     const map = {
-        "4k": { width: { ideal: 3840 }, height: { ideal: 2160 }, frameRate: { ideal: Math.min(f, 60), max: 60 } },
-        "1080p": { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: f, max: f } },
-        "720p": { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: f, max: f } },
-        "480p": { width: { ideal: 854 }, height: { ideal: 480 }, frameRate: { ideal: Math.min(f, 30), max: 30 } },
-        "360p": { width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: Math.min(f, 30), max: 30 } },
+        "4k": { width: { ideal: 3840 }, height: { ideal: 2160 }, frameRate: { ideal: f } },
+        "1080p": { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: f } },
+        "720p": { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: f } },
+        "480p": { width: { ideal: 854 }, height: { ideal: 480 }, frameRate: { ideal: f } },
+        "360p": { width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: f } },
     };
     return map[q] || map["720p"];
 }
 
 function _v25ScreenBitrateKbps(q, fps) {
     const base = { "4k": 8000, "1080p": 4000, "720p": 2500, "480p": 1200, "360p": 700 }[q] || 2500;
-    // Yüksek FPS daha çok bit ister: >60 → x1.5, >=144 → x2.
-    const mult = (fps || 30) >= 144 ? 2 : (fps || 30) > 60 ? 1.5 : 1;
+    // Yüksek FPS daha çok bit ister; yoksa codec kareleri bulanıklaştırır.
+    const f = fps || 30;
+    const mult = f >= 240 ? 2.2 : f >= 120 ? 1.6 : f > 60 ? 1.25 : 1;
     return Math.round(base * mult);
 }
 
@@ -25786,7 +26001,7 @@ window.openScreenSharePicker = function () {
     const fps = state.screenShareFPS || 30;
     const audio = state.screenShareAudio === true;
     const qualityOptions = ["360p", "480p", "720p", "1080p", "4k"];
-    const fpsOptions = [15, 30, 60, 90, 120, 144, 240];
+    const fpsOptions = [15, 30, 60, 120, 240, 300];
     const html = `
       <div class="v25-share-picker">
         <p class="v25-share-note">Kaynak seçimi için tarayıcı güvenlik penceresi yine açılır (Chrome bunu zorunlu tutar) — ama kalite, FPS ve sesi buradan sen belirlersin; paylaşım bu ayarlarla başlar.</p>
@@ -25839,6 +26054,62 @@ window._v25StartShare = function () {
     setTimeout(() => { if (typeof startScreenShare === "function") startScreenShare(); }, 250);
 };
 
+// ── Kamera: kalite (360p–4K) + FPS (15/30/60) seçici ──
+window.openCameraPicker = function () {
+    const q = state.cameraQuality || "720p";
+    const fps = state.cameraFPS || 30;
+    const qualityOptions = ["360p", "480p", "720p", "1080p", "4k"];
+    const fpsOptions = [15, 30, 60];
+    const html = `
+      <div class="v25-share-picker">
+        <p class="v25-share-note">Kameran bu kalite ve kare hızıyla açılır. Kameran seçtiğin değeri desteklemiyorsa en yakın desteklenen ayara otomatik iner.</p>
+        <div class="v25-field">
+          <label>Görüntü Kalitesi</label>
+          <div class="v25-seg" id="v25-cam-quality">
+            ${qualityOptions.map(o => `<button type="button" class="${o === q ? "active" : ""}" data-q="${o}">${o === "4k" ? "4K" : o}</button>`).join("")}
+          </div>
+        </div>
+        <div class="v25-field">
+          <label>Kare Hızı (FPS)</label>
+          <div class="v25-seg" id="v25-cam-fps">
+            ${fpsOptions.map(f => `<button type="button" class="${f === fps ? "active" : ""}" data-fps="${f}">${f} FPS</button>`).join("")}
+          </div>
+        </div>
+      </div>`;
+    showModal("📷 Kamera", html,
+        `<button class="btn-secondary" onclick="hideModal()">İptal</button>
+         <button class="btn-primary" onclick="window._v25StartCamera()">Kamerayı Aç</button>`);
+    ["v25-cam-quality", "v25-cam-fps"].forEach(id => {
+        const seg = document.getElementById(id);
+        if (seg) seg.addEventListener("click", e => {
+            const b = e.target.closest("button");
+            if (!b) return;
+            seg.querySelectorAll("button").forEach(x => x.classList.remove("active"));
+            b.classList.add("active");
+        });
+    });
+};
+
+window._v25StartCamera = function () {
+    const qb = document.querySelector("#v25-cam-quality button.active");
+    const fb = document.querySelector("#v25-cam-fps button.active");
+    state.cameraQuality = qb ? qb.dataset.q : "720p";
+    state.cameraFPS = fb ? parseInt(fb.dataset.fps, 10) : 30;
+    try {
+        localStorage.setItem("scord_camera_quality", state.cameraQuality);
+        localStorage.setItem("scord_camera_fps", String(state.cameraFPS));
+    } catch (e) { /* noop */ }
+    hideModal();
+    setTimeout(() => { if (typeof startCameraShare === "function") startCameraShare(); }, 200);
+};
+
+(function () {
+    try {
+        if (localStorage.getItem("scord_camera_quality")) state.cameraQuality = localStorage.getItem("scord_camera_quality");
+        if (localStorage.getItem("scord_camera_fps")) state.cameraFPS = parseInt(localStorage.getItem("scord_camera_fps"), 10);
+    } catch (e) { /* noop */ }
+})();
+
 // Kayıtlı ekran paylaşımı tercihlerini geri yükle; yoksa CPU dostu 30 FPS.
 (function () {
     try {
@@ -25857,7 +26128,7 @@ window.startScreenShare = async function () {
     if (!state.mesh || !state.mesh.voiceActive) return toast("Önce sesli kanala katıl.", "error");
     try {
         const quality = state.screenShareQuality || "720p";
-        const fps = Math.max(15, Math.min(240, state.screenShareFPS || 30));
+        const fps = Math.max(15, Math.min(300, state.screenShareFPS || 30));
         const withAudio = state.screenShareAudio === true;
         const stream = await navigator.mediaDevices.getDisplayMedia({
             video: { ..._v25ScreenQualityConstraints(quality, fps), cursor: "always" },
@@ -25906,7 +26177,7 @@ window.openServerSettingsPanel = function () {
     if (!state.activeServerId) return toast("Önce bir sunucu seç.", "info");
     const server = currentServer();
     if (!server) return;
-    const isOwner = (server.ownerId === state.peerId || state.isAdmin);
+    const isOwner = server.ownerId === state.peerId;
     const canManage = isOwner || roleAllows(server, "manage_server") || roleAllows(server, "manage_roles");
     if (!canManage) return toast("Sunucu ayarları için yetkin yok.", "warning");
 
@@ -25951,6 +26222,7 @@ window.openServerSettingsPanel = function () {
         <section id="srv-overview" class="srv-page">
           <h2>Genel</h2>
           <label>Sunucu Adı<input class="modal-input" id="settings-sv-name" value="${escapeHtml(server.name)}"></label>
+          <label>Sunucu Açıklaması<textarea class="modal-input" id="settings-sv-desc" rows="2" maxlength="500" placeholder="Sunucunu keşfet listesinde tanıtan kısa açıklama">${escapeHtml(server.description || "")}</textarea></label>
           <label>Sunucu İkonu (URL)<input class="modal-input" id="settings-sv-icon" value="${escapeHtml(server.icon_url || "")}" placeholder="https://..."></label>
           <button class="btn-secondary" onclick="document.getElementById('v25-server-icon-file').click()">📷 PC'den İkon Yükle</button>
           <input type="file" id="v25-server-icon-file" accept="image/*" style="display:none">
@@ -26044,7 +26316,7 @@ window.openServerSettingsPanel = function () {
 
 window._v25RotateInvite = async function (serverId) {
     const server = currentServer();
-    if (!server || (server.ownerId !== state.peerId && !state.isAdmin)) return toast("Sadece sahip davet kodunu yenileyebilir.", "warning");
+    if (!server || server.ownerId !== state.peerId) return toast("Sadece sahip davet kodunu yenileyebilir.", "warning");
     try {
         const res = await scordFetch(`${API_BASE}/rooms/${serverId}/invite_rotate`, {
             method: "POST",

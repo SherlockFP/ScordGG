@@ -84,8 +84,70 @@
         <p class="setup-hint" id="auth-hint">Giriş yaptıktan sonra ayarlardan profilini özelleştirebilirsin.</p>
 
         <button id="enter-btn" class="btn-primary" disabled>Giriş Yap</button>
+        <button type="button" class="landing-scroll-hint" onclick="document.querySelector('.landing-sections')?.scrollIntoView({behavior:'smooth'})">Scord'u keşfet ↓</button>
       </div>
     </div>
+
+    <!-- ── Landing: scroll ile açılan tanıtım bölümleri ── -->
+    <div class="landing-sections" aria-hidden="true">
+      <section class="landing-sec">
+        <h2 class="landing-big landing-reveal">Aracı yok.<br /><em>Sadece siz.</em></h2>
+        <p class="landing-lead landing-reveal">Sesin ve mesajların merkezi bir sunucuya uğramadan, WebRTC ile doğrudan arkadaşlarının cihazına akar. Kimse dinlemez, kimse kaydetmez.</p>
+      </section>
+      <section class="landing-sec landing-sec--cards">
+        <div class="landing-card landing-reveal">
+          <span class="landing-card-ico">🎙️</span>
+          <h3>Kristal ses</h3>
+          <p>Opus codec, gürültü engelleme ve paket kaybı düzeltmesiyle kötü internette bile net ses.</p>
+        </div>
+        <div class="landing-card landing-reveal">
+          <span class="landing-card-ico">🖥️</span>
+          <h3>4K ekran paylaşımı</h3>
+          <p>300 FPS'e kadar kare hızı, kalite kontrolü sende. Oyun, film, kod — hepsi akıcı.</p>
+        </div>
+        <div class="landing-card landing-reveal">
+          <span class="landing-card-ico">🎵</span>
+          <h3>Müzik botu</h3>
+          <p>YouTube'dan senkron dinleme. Herkes aynı anda, aynı saniyede duyar.</p>
+        </div>
+        <div class="landing-card landing-reveal">
+          <span class="landing-card-ico">🔒</span>
+          <h3>Gizli odalar</h3>
+          <p>Rol bazlı izinler, kişiye özel roller ve sadece seçtiklerinin görebildiği kanallar.</p>
+        </div>
+      </section>
+      <section class="landing-sec">
+        <h2 class="landing-big landing-reveal">Kur, davet et,<br /><em>konuş.</em></h2>
+        <p class="landing-lead landing-reveal">Sunucunu saniyeler içinde kur, 6 haneli davet koduyla arkadaşlarını çağır. Hesabın her cihazda seninle.</p>
+        <button type="button" class="btn-primary landing-cta landing-reveal" onclick="window.scrollTo({top:0,behavior:'smooth'});setTimeout(function(){document.getElementById('username-input')?.focus()},600)">Hemen Başla ↑</button>
+      </section>
+      <footer class="landing-foot landing-reveal">SCORD — by Sherlock · Uçtan uca P2P sesli sohbet</footer>
+    </div>
+
+    <script>
+    // Reveal-on-scroll + aurora parallax (landing)
+    (function () {
+      var ov = document.getElementById("setup-overlay");
+      if (!ov) return;
+      var io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (e) { if (e.isIntersecting) e.target.classList.add("in-view"); });
+      }, { root: ov, threshold: 0.18 });
+      ov.querySelectorAll(".landing-reveal").forEach(function (el) { io.observe(el); });
+      var blobs = ov.querySelectorAll(".aurora-blob");
+      var ticking = false;
+      ov.addEventListener("scroll", function () {
+        if (ticking) return;
+        ticking = true;
+        requestAnimationFrame(function () {
+          var y = ov.scrollTop;
+          blobs.forEach(function (b, i) {
+            b.style.setProperty("--landing-shift", (y * (0.08 + i * 0.05)) + "px");
+          });
+          ticking = false;
+        });
+      }, { passive: true });
+    })();
+    </script>
   </div>
 
   <!-- ── Main App ────────────────────────────────────────────────────────────── -->
