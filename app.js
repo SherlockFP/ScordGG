@@ -95,7 +95,7 @@ var __rawState = {
     targetLang: "tr",
     theme: "sapphire",
     recentVoiceToasts: new Set(),
-    userVolumes: JSON.parse(localStorage.getItem("scord_user_volumes") || "{}"),
+    userVolumes: (() => { try { return JSON.parse(localStorage.getItem("scord_user_volumes") || "{}"); } catch (e) { return {}; } })(),
     /** @type {{ messageId: string, author: string, authorId: string, text: string } | null} */
     replyTo: null,
     _p2pOutbox: [],
@@ -1637,15 +1637,17 @@ function createThreadMessageDOM(msg, serverId) {
     const el = document.createElement("div");
     el.className = "thread-message msg-row" + (isSelf ? " msg-row--self" : " msg-row--other");
 
+    // innerHTML kullanıldığı için tırnaklar dahil tam escape
+    const esc = (s) => escapeHtml(s).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
     el.innerHTML = `
         <div class="msg-avatar" style="background: ${msg.avatarColor || '#7c3aed'}; color: white;">
-            ${(msg.avatarImage ? `<img src="${msg.avatarImage}" alt="${msg.author}" />` : (msg.author || "?")[0].toUpperCase())}
+            ${(msg.avatarImage ? `<img src="${esc(msg.avatarImage)}" alt="${esc(msg.author)}" />` : (msg.author || "?")[0].toUpperCase())}
         </div>
         <div class="msg-stack">
             <div class="msg-bubble${isSelf ? " msg-bubble--self" : " msg-bubble--other"}">
                 <div class="msg-header">
-                    <span class="msg-author${isSelf ? " is-you" : ""}">${msg.author}</span>
-                    <span class="msg-time">${msg.time}</span>
+                    <span class="msg-author${isSelf ? " is-you" : ""}">${esc(msg.author)}</span>
+                    <span class="msg-time">${esc(msg.time)}</span>
                 </div>
                 <div class="msg-text">${parseMessageText(msg.text, serverId)}</div>
             </div>
@@ -3713,9 +3715,10 @@ function parseMessageText(text, serverId) {
     const urlRegex = /(https?:\/\/[^\s]+)/g;
     return String(text).split(urlRegex).map(part => {
         if (part.match(urlRegex)) {
+            const safeUrl = part.replace(/["'<>]/g, c => ({ '"': '&quot;', "'": '&#39;', '<': '&lt;', '>': '&gt;' }[c]));
             // Check for images
             if (part.match(/\.(jpeg|jpg|gif|png|webp)($|\?)/i)) {
-                return `<a href="${part}" target="_blank" class="rich-link"><img src="${part}" class="chat-embed-img" alt="" loading="lazy" decoding="async" /></a>`;
+                return `<a href="${safeUrl}" target="_blank" class="rich-link"><img src="${safeUrl}" class="chat-embed-img" alt="" loading="lazy" decoding="async" /></a>`;
             }
             // Check for YouTube
             const ytMatch = part.match(/(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:watch\?(?:[^#]*&)?v=|embed\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
@@ -3723,7 +3726,7 @@ function parseMessageText(text, serverId) {
                 return `<div class="chat-embed-video"><iframe src="https://www.youtube.com/embed/${ytMatch[1]}" frameborder="0" allowfullscreen></iframe></div>`;
             }
             // Generic link
-            return `<a href="${part}" target="_blank" class="chat-link">${part}</a>`;
+            return `<a href="${safeUrl}" target="_blank" class="chat-link">${safeUrl}</a>`;
         }
         return renderPlainChatSegment(part, sid);
     }).join("");
@@ -7006,7 +7009,7 @@ function saveSettings() {
 
     // Refresh user bar UI
     const avatar = document.getElementById("user-bar-avatar");
-    applyAvatarToElement(avatar, state.avatarColor, state.avatarImage, state.username);
+    if (avatar) applyAvatarToElement(avatar, state.avatarColor, state.avatarImage, state.username);
     document.getElementById("user-bar-name").textContent = state.username;
 
     // Save voice settings
@@ -8939,10 +8942,10 @@ function openUserProfile(peerId, username, avatarImage, avatarColor) {
     const body = `
         <div class="profile-banner-rich" style="height:80px; background:${avatarColor || '#7c3aed'}; border-radius: 8px 8px 0 0; position: relative;">
             <div style="position:absolute; right:12px; top:12px;">
-                ${!isSelf ? `<button class="mbot-btn ${isBlocked ? '' : 'mbot-btn--danger'}" onclick="toggleBlockStatus('${peerId}', '${escapeHtml(username)}')" title="${isBlocked ? 'Engeli Kaldır' : 'Engelle'}" style="width:32px;height:32px;font-size:12px;">${isBlocked ? '🔓' : '🚫'}</button>` : ''}
+                ${!isSelf ? `<button class="mbot-btn ${isBlocked ? '' : 'mbot-btn--danger'}" onclick="toggleBlockStatus('${peerId}', '${escapeHtml(username).replace(/'/g, "\\u0027").replace(/"/g, "\\u0022")}')" title="${isBlocked ? 'Engeli Kaldır' : 'Engelle'}" style="width:32px;height:32px;font-size:12px;">${isBlocked ? '🔓' : '🚫'}</button>` : ''}
             </div>
         </div>
-        <div class="profile-avatar" style="width:90px; height:90px; border-radius:50%; margin-top:-45px; margin-left:16px; border:6px solid var(--bg-elevated); background-color:${avatarColor || '#7c3aed'}; background-image:url(${avatarImage || ''}); background-size:cover; background-position:center; display:flex; align-items:center; justify-content:center; font-size:36px; color:#fff; position: relative; z-index: 2;">
+        <div class="profile-avatar" style="width:90px; height:90px; border-radius:50%; margin-top:-45px; margin-left:16px; border:6px solid var(--bg-elevated); background-color:${avatarColor || '#7c3aed'}; background-image:url(${(avatarImage || '').replace(/["'()\\]/g, '')}); background-size:cover; background-position:center; display:flex; align-items:center; justify-content:center; font-size:36px; color:#fff; position: relative; z-index: 2;">
             ${!avatarImage ? initials(username) : ""}
         </div>
         <div style="padding:16px 16px 8px 16px;">
@@ -10480,13 +10483,13 @@ function renderRolesSettings(server) {
         html += `
             <div class="role-item">
                 <input type="color" class="role-color-picker" value="${roleData.color || '#7c3aed'}" 
-                       onchange="updateRoleColor('${roleId}', this.value)" />
+                       onchange="updateRoleColor('${roleId.replace(/'/g, "\\u0027").replace(/"/g, "\\u0022")}', this.value)" />
                 <input type="text" class="role-name-input" value="${escapeHtml(roleData.name)}" 
-                       onchange="updateRoleName('${roleId}', this.value)" />
+                       onchange="updateRoleName('${roleId.replace(/'/g, "\\u0027").replace(/"/g, "\\u0022")}', this.value)" />
                 <span style="font-size:11px;color:var(--text-muted);">${memberCount} üye</span>
                 ${server.ownerId !== state.peerId ? '' : `
                     <button style="background:none;border:none;color:var(--red);cursor:pointer;font-size:16px;" 
-                            onclick="deleteRole('${roleId}')">🗑️</button>
+                            onclick="deleteRole('${roleId.replace(/'/g, "\\u0027").replace(/"/g, "\\u0022")}')">🗑️</button>
                 `}
             </div>
         `;
@@ -10631,8 +10634,8 @@ function loadRolesContent() {
                             <div class="role-color" style="background: ${roleData.color || '#6b7280'}"></div>
                         </div>
                         <div class="role-actions">
-                            <button class="role-action-btn" onclick="editRole('${roleId}')">✏️</button>
-                            <button class="role-action-btn" onclick="deleteRole('${roleId}')">🗑️</button>
+                            <button class="role-action-btn" onclick="editRole('${roleId.replace(/'/g, "\\u0027").replace(/"/g, "\\u0022")}')">✏️</button>
+                            <button class="role-action-btn" onclick="deleteRole('${roleId.replace(/'/g, "\\u0027").replace(/"/g, "\\u0022")}')">🗑️</button>
                         </div>
                     </div>
                 </div>
@@ -11026,6 +11029,10 @@ function deleteRole(roleId) {
     if (rolesTab) {
         rolesTab.innerHTML = renderRolesSettings(server);
     }
+
+    // Gelişmiş rol editöründe (srv-roles) kalan kartı DOM'dan kaldır
+    const card = document.querySelector('#srv-roles .role-editor-card[data-role="' + roleId + '"]');
+    if (card) card.remove();
 
     updateMembersPanel(server.id);
     toast('Rol silindi.', 'info');
@@ -19962,7 +19969,7 @@ function renderAdvancedRoleEditor(server) {
           <input type="color" value="${role.color || "#94a3b8"}" data-role-color="${escapeHtml(roleId)}" title="Rol rengi">
           <label class="role-hoist-check" title="Üye listesinde ayrı grup olarak göster"><input type="checkbox" data-role-hoist="${escapeHtml(roleId)}" ${role.hoist ? "checked" : ""}> Ayrı göster</label>
           <span class="role-member-count">${count} üye</span>
-          ${roleId !== "member" ? `<button class="btn-secondary danger-soft" onclick="deleteRole('${roleId}')">Sil</button>` : ""}
+          ${roleId !== "member" ? `<button class="btn-secondary danger-soft" onclick="deleteRole('${roleId.replace(/'/g, "\\u0027").replace(/"/g, "\\u0022")}')">Sil</button>` : ""}
         </div>
         <div class="permission-grid">
           ${SCORD_V24_PERMISSIONS.map(p => `<label class="permission-item"><input type="checkbox" data-role-perm="${escapeHtml(roleId)}:${p}" ${role.permissions?.[p] ? "checked" : ""}> ${SCORD_PERM_LABELS[p] || p.replaceAll("_", " ")}</label>`).join("")}
@@ -23562,10 +23569,10 @@ function showRoleManagerModal() {
         html += `
             <div style="background:rgba(255,255,255,0.05);padding:12px;border-radius:8px;margin-bottom:8px;">
                 <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
-                    <input type="color" value="${roleData.color || '#5865f2'}" onchange="updateRoleColor('${roleId}', this.value)" style="width:30px;height:30px;border:none;cursor:pointer;border-radius:4px;">
-                    <input type="text" value="${roleData.name || roleId}" onchange="updateRoleName('${roleId}', this.value)" style="background:transparent;border:1px solid var(--border);color:#fff;padding:6px 10px;border-radius:4px;flex:1;">
+                    <input type="color" value="${roleData.color || '#5865f2'}" onchange="updateRoleColor('${roleId.replace(/'/g, "\\u0027").replace(/"/g, "\\u0022")}', this.value)" style="width:30px;height:30px;border:none;cursor:pointer;border-radius:4px;">
+                    <input type="text" value="${roleData.name || roleId}" onchange="updateRoleName('${roleId.replace(/'/g, "\\u0027").replace(/"/g, "\\u0022")}', this.value)" style="background:transparent;border:1px solid var(--border);color:#fff;padding:6px 10px;border-radius:4px;flex:1;">
                     <span style="font-size:12px;color:var(--text-muted);">${memberCount} üye</span>
-                    <button onclick="deleteRole('${roleId}')" style="background:#ed4245;color:#fff;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;">Sil</button>
+                    <button onclick="deleteRole('${roleId.replace(/'/g, "\\u0027").replace(/"/g, "\\u0022")}')" style="background:#ed4245;color:#fff;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;">Sil</button>
                 </div>
                 <div style="display:flex;flex-wrap:wrap;gap:6px;">
                     ${permissions.map(p => `
@@ -24606,7 +24613,7 @@ console.log("[App] All features restored: Settings, UI, Animations");
     if (window._avatarClickLoaded) return;
     window._avatarClickLoaded = true;
     document.addEventListener("click", function(e) {
-        var avatar = e.target.closest("[data-peer-id].vpc-avatar, [data-peer-id].msg-avatar, .member-avatar[data-peer-id]");
+        var avatar = e.target.closest("[data-peer-id].vpc-avatar, [data-peer-id] .vpc-avatar, [data-peer-id].msg-avatar, .member-avatar[data-peer-id]");
         if (avatar) { var pid = avatar.dataset.peerId; if (pid && typeof openUserProfile === "function") { var user = state.peers ? state.peers[pid] : null; openUserProfile(pid, user ? user.username : pid, user ? user.avatarImage : null, user ? user.avatarColor : null); } }
     });
 })();
@@ -24647,20 +24654,6 @@ setTimeout(function() {
         return false;
     }, true);
 })();
-
-// FIX 4: Avatar click → profile + profile banner
-document.addEventListener("click", function(e) {
-    var av = e.target.closest("[data-peer-id] .vpc-avatar, [data-peer-id].vpc-avatar, .msg-avatar[data-peer-id], .member-avatar[data-peer-id]");
-    if (!av) { av = e.target.closest("[data-peer-id]"); if (av && !av.classList.contains("vpc-avatar") && !av.classList.contains("msg-avatar")) av = null; }
-    if (av) {
-        var pid = av.dataset.peerId || (av.parentElement ? av.parentElement.dataset.peerId : null);
-        if (pid && typeof openUserProfile === "function") {
-            var user = state.peers ? state.peers[pid] : null;
-            openUserProfile(pid, user ? user.username : pid, user ? user.avatarImage : null, user ? user.avatarColor : null);
-        }
-    }
-});
-
 
 // FIX 6: Hide music "yayin aktif" compact bar (slider removed at source)
 setTimeout(function() {
@@ -25081,15 +25074,6 @@ setTimeout(function() {
 }, 1000);
 
 // Screen share picker handled by unified hook above
-
-// FPS saver + 60fps default
-setTimeout(function() {
-    if (typeof state !== 'undefined') {
-        var saved = localStorage.getItem('scord_screen_fps');
-        state.screenShareFPS = saved ? parseInt(saved) : 60;
-        if (state.screenShareFPS >= 60) state.screenShareQuality = "1080p";
-    }
-}, 300);
 
 // Music dock: show/hide based on music state
 setInterval(function() {
@@ -26360,6 +26344,8 @@ window.startApp = function () {
 // yeni picker her zaman kazanır (capture listener maskesi gerekmeden).
 (function () {
     const bindV25 = () => {
+        if (window.__v25Bound) return;
+        window.__v25Bound = true;
         const btn = document.getElementById("voice-screen-btn");
         if (!btn) return;
         btn.onclick = e => {

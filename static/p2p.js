@@ -106,6 +106,15 @@ class P2PMesh {
         this.peers = {};
         this._pendingIce = {};
 
+        // Stop local capture streams — otherwise mic/screen/camera keep running
+        // after disconnect. Existing helpers stop tracks + null the refs.
+        this.stopVoice();
+        this.stopScreenShare();
+        if (this.cameraStream) {
+            this.cameraStream.getTracks().forEach(t => t.stop());
+            this.cameraStream = null;
+        }
+
         // Close signaling socket
         if (this.ws) {
             try { this.ws.onmessage = null; } catch { }
@@ -448,6 +457,19 @@ class P2PMesh {
             return;
         }
 
+        // Glare rollback (perfect negotiation): kendi offer'ımızı üretirken
+        // rakibin offer'ı geldiyse önce yerel offer'ı geri al — aksi halde
+        // setRemoteDescription "have-local-offer" durumunda InvalidStateError
+        // fırlatır. Sadece polite taraf buraya ulaşır (impolite yukarıda döndü).
+        if (offerCollision && pc.signalingState === "have-local-offer") {
+            try {
+                await pc.setLocalDescription({ type: "rollback" });
+            } catch (e) {
+                console.warn("[P2P] rollback failed:", e);
+            }
+            peerObj._makingOffer = false;
+        }
+
         await pc.setRemoteDescription(new RTCSessionDescription(sdp));
 
 
@@ -557,8 +579,14 @@ class P2PMesh {
                 this.localStream.getTracks().forEach(t => {
                     try { peerObj.pc.addTrack(t, this.localStream); } catch { }
                 });
-                // Ses bitrate tavanı: opus fmtp ile birlikte çift güvence.
-                this._applySenderBitrate(peerObj.pc, this.localStream, "audio", 64);
+                // Ses bitrate tavanı: kullanıcı ayarı (24-128k) varsa onu kullan,
+                // yoksa opus varsayılanıyla aynı 64k. SDP fmtp + sender tavanı
+                // çifte güvence olarak aynı değeri kullanır.
+                const vs = (typeof window !== "undefined" && window.state && window.state.voiceSettings) || {};
+                let audioKbps = parseInt(vs.audioBitrate, 10) || 64;
+                if (audioKbps < 24) audioKbps = 24;
+                if (audioKbps > 128) audioKbps = 128;
+                this._applySenderBitrate(peerObj.pc, this.localStream, "audio", audioKbps);
             }
             return true;
         } catch (err) {

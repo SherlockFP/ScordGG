@@ -9,3 +9,5 @@ scord_accounts.db
 node_modules/
 .DS_Store
 *.log
+.freebuff/
+.serena/
