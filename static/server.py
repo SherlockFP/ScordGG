@@ -22,7 +22,7 @@ import secrets
 from typing import Dict, Set, Optional, Any
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi import Response
@@ -40,6 +40,13 @@ rooms: Dict[str, "Room"] = {}
 # gelmemeli; istemciler sync s─▒ras─▒nda bunlar─▒ g├╢r├╝p yerel kopyay─▒ temizler.
 deleted_room_ids: Set[str] = set()
 DELETED_TOMBSTONE_CAP = 500
+
+# Basit in-memory login rate-limit: ip -> ba┼ƒar─▒s─▒z deneme zaman damgalar─▒.
+# (ponytail: tek dict + time.time yeter, redis yok — tek instance varsay─▒m─▒.)
+LOGIN_RATE_WINDOW = 60.0
+LOGIN_RATE_MAX = 10
+_login_attempts: Dict[str, list] = {}
+_login_attempts_lock = threading.Lock()
 # Kal─▒c─▒ disk deste─ƒi: Render'da SCORD_DATA_DIR ile persistent disk yolunu ver
 # (├╢rn. /var/data). Verilmezse repo k├╢k├╝ kullan─▒l─▒r ΓÇö free tier'da her
 # restart'ta s─▒f─▒rlan─▒r; istemci taraf─▒ndaki auto-reregister bunu telafi eder.
@@ -157,14 +164,43 @@ def _account_public(row: sqlite3.Row) -> dict:
     }
 
 
+SESSION_MAX_AGE_SEC = 30 * 24 * 3600  # 30 g├╝n
+
+
 def _account_by_token(token: str) -> Optional[sqlite3.Row]:
     if not token:
         return None
     with _db() as conn:
-        sess = conn.execute("SELECT peer_id FROM sessions WHERE token = ?", (token,)).fetchone()
+        sess = conn.execute(
+            "SELECT peer_id, created_at FROM sessions WHERE token = ?", (token,)
+        ).fetchone()
         if not sess:
             return None
+        # S├╝resi dolmu┼ƒ session'─▒ g├Âsterimde de─ƒil, ger├ºekten sil.
+        if time.time() - sess["created_at"] > SESSION_MAX_AGE_SEC:
+            conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+            log.info("Expired session token rejected and removed")
+            return None
         return conn.execute("SELECT * FROM accounts WHERE peer_id = ?", (sess["peer_id"],)).fetchone()
+
+
+def _check_login_rate_limit(request: Request):
+    """Ayn─▒ IP'den pencere i├ºinde LOGIN_RATE_MAX'tan fazla ba┼ƒar─▒s─▒z deneme → 429."""
+    ip = request.client.host if request.client else "unknown"
+    now = time.time()
+    with _login_attempts_lock:
+        stamps = [t for t in _login_attempts.get(ip, []) if now - t < LOGIN_RATE_WINDOW]
+        if len(stamps) >= LOGIN_RATE_MAX:
+            log.warning(f"Rate limit hit for {ip} (login/register)")
+            raise HTTPException(status_code=429, detail="too many attempts")
+        stamps.append(now)
+        _login_attempts[ip] = stamps
+
+
+def _clear_login_attempts(request: Request):
+    ip = request.client.host if request.client else "unknown"
+    with _login_attempts_lock:
+        _login_attempts.pop(ip, None)
 
 def _role_defaults(role_id: str) -> dict:
     return {p: True for p in DEFAULT_ROLE_PERMISSIONS.get(role_id, DEFAULT_ROLE_PERMISSIONS["member"])}
@@ -175,8 +211,17 @@ def save_db():
         # Tombstone listesi oda kay─▒tlar─▒yla ayn─▒ dosyada ya┼ƒ─▒yor ("_deleted"
         # anahtar─▒ oda id format─▒nda olmad─▒─ƒ─▒ i├ºin ├ºak─▒┼ƒmaz).
         data["_deleted"] = sorted(deleted_room_ids)[-DELETED_TOMBSTONE_CAP:]
-        with open(DATABASE_FILE, "w", encoding="utf-8") as f:
+        tmp_file = DATABASE_FILE + ".tmp"
+        if os.path.exists(tmp_file):  # ├Ânceki yar─▒da kalm─▒┼ƒ yaz─▒m kal─▒nt─▒s─▒
+            os.remove(tmp_file)
+        with open(tmp_file, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
+        # Mevcut dosyay─▒ yede─ƒe al (os.replace atomik — her save'de tek .bak ├╝zerine yazar).
+        if os.path.exists(DATABASE_FILE):
+            os.replace(DATABASE_FILE, DATABASE_FILE + ".bak")
+        # Atomik takas: tmp -> as─▒l. Windows'ta ayn─▒ dizin i├ºinde os.replace atomiktir;
+        # yaz─▒m ortas─▒nda crash olsa bile rooms.json ya eski ya da yeni tam i├ºeriktir.
+        os.replace(tmp_file, DATABASE_FILE)
         log.info(f"Database saved to {DATABASE_FILE}")
     except Exception as e:
         log.error(f"Failed to save db: {e}")
@@ -212,6 +257,7 @@ def load_db():
         deleted_room_ids.update(data.pop("_deleted", []))
         for rid, rdata in data.items():
             room = Room(rid, rdata["name"], rdata.get("owner_id", "unknown"))
+            room.owner_key = rdata.get("owner_key")
             room.channels = rdata.get("channels", room.channels)
             room.roles = rdata.get("roles", room.roles)
             room.channel_permissions = rdata.get("channel_permissions", room.channel_permissions)
@@ -226,7 +272,32 @@ def load_db():
             rooms[rid] = room
         log.info(f"Database loaded from {DATABASE_FILE} ({len(rooms)} rooms)")
     except Exception as e:
-        log.error(f"Failed to load db: {e}")
+        log.error(f"Failed to load db from {DATABASE_FILE}: {e}")
+        bak_file = DATABASE_FILE + ".bak"
+        if os.path.exists(bak_file):
+            try:
+                with open(bak_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                for rid, rdata in data.items():
+                    room = Room(rid, rdata["name"], rdata.get("owner_id", "unknown"))
+                    room.owner_key = rdata.get("owner_key")
+                    room.channels = rdata.get("channels", room.channels)
+                    room.roles = rdata.get("roles", room.roles)
+                    room.channel_permissions = rdata.get("channel_permissions", room.channel_permissions)
+                    room.peer_roles = rdata.get("peer_roles", room.peer_roles)
+                    room.pinned_messages = rdata.get("pinned_messages", [])
+                    room.messages = rdata.get("messages", {})
+                    room.channel_backgrounds = rdata.get("channel_backgrounds", {})
+                    room.icon_url = rdata.get("icon_url", None)
+                    room.description = rdata.get("description", "")
+                    room.invite_code = rdata.get("invite_code", str(uuid.uuid4())[:6].upper())
+                    room.normalize_permissions()
+                    rooms[rid] = room
+                log.warning(f"Recovered {len(rooms)} rooms from backup {bak_file}")
+            except Exception as be:
+                log.error(f"Backup {bak_file} also corrupted — {len(rooms)} rooms lost. Fix or delete {DATABASE_FILE} and restart.")
+        else:
+            log.error(f"No backup found — rooms in {DATABASE_FILE} are lost. Fix or delete the file and restart.")
 
 
 def _template_channels(kind: str) -> list[dict]:
@@ -336,6 +407,7 @@ class Room:
         self.room_id = room_id
         self.name = name
         self.owner_id = owner_id
+        self.owner_key: Optional[str] = None  # gizli sahip anahtarı (sadece diskte; to_dict'e ASLA)
         self.created_at = time.time()
         self.last_seen: Dict[str, float] = {}
         self.voice_members: Dict[str, Dict[str, dict]] = {}
@@ -371,6 +443,7 @@ class Room:
             "room_id": self.room_id,
             "name": self.name,
             "owner_id": self.owner_id,
+            "owner_key": self.owner_key,
             "channels": self.channels,
             "roles": self.roles,
             "channel_permissions": self.channel_permissions,
@@ -551,12 +624,13 @@ def get_room(room_id: str):
     return room.to_dict()
 
 @app.post("/api/auth/register")
-def register_account(body: dict):
+def register_account(body: dict, request: Request):
+    _check_login_rate_limit(request)
     username = (body.get("username") or "").strip()
     password = body.get("password") or ""
     if len(username) < 2 or len(username) > 32:
         return {"error": "invalid_username"}
-    if len(password) < 1:
+    if len(password) < 4:
         return {"error": "invalid_password"}
     peer_id = legacy_peer_id(username, password)
     salt = secrets.token_hex(16)
@@ -585,7 +659,8 @@ def register_account(body: dict):
 
 
 @app.post("/api/auth/login")
-def login_account(body: dict):
+def login_account(body: dict, request: Request):
+    _check_login_rate_limit(request)
     username = (body.get("username") or "").strip()
     password = body.get("password") or ""
     with _db() as conn:
@@ -601,6 +676,7 @@ def login_account(body: dict):
             "INSERT INTO sessions (token, peer_id, created_at) VALUES (?, ?, ?)",
             (token, row["peer_id"], time.time()),
         )
+    _clear_login_attempts(request)
     return {"success": True, "token": token, **_account_public(row)}
 
 
@@ -613,7 +689,12 @@ def logout_account(body: dict):
 
 
 @app.get("/api/account/me")
-def get_account_me(token: str = ""):
+def get_account_me(request: Request, token: str = ""):
+    # Token ├Âncelikle Authorization: Bearer <token> header'─▒ndan (URL loglar─▒na
+    # s─▒zmaz); eski istemciler i├ºin query param fallback'i korunur.
+    auth = request.headers.get("authorization") or ""
+    if auth.lower().startswith("bearer "):
+        token = auth[7:].strip() or token
     row = _account_by_token(token)
     if not row:
         return {"error": "unauthorized"}
@@ -673,14 +754,28 @@ def get_runtime_config():
 
 @app.post("/api/rooms")
 def create_room(body: dict):
-    """Create a new P2P room (server). Returns the room_id."""
+    """Create a new P2P room (server). Returns the room_id + secret owner_key."""
     room_id = str(uuid.uuid4())
     name = body.get("name", "Unnamed Server")
     owner_id = body.get("owner_id", "unknown")
-    rooms[room_id] = Room(room_id, name, owner_id)
+    room = Room(room_id, name, owner_id)
+    room.owner_key = secrets.token_urlsafe(32)
+    rooms[room_id] = room
     save_db()
     log.info(f"Room created: {name!r} ({room_id}) by {owner_id}")
-    return {"room_id": room_id, "invite_code": rooms[room_id].invite_code}
+    return {"room_id": room_id, "invite_code": room.invite_code, "owner_key": room.owner_key}
+
+def _owner_key_ok(room, body: dict | None, query):
+    """Owner-op gate: gizli owner_key (body JSON'daki `owner_key` veya ?owner_key=).
+    Legacy odalar (owner_key None) geçer — eski davranış korunur. Anahtar yanlış/eksikse 403."""
+    if room.owner_key is None:
+        return  # legacy
+    supplied = body.get("owner_key") if body else None
+    if not supplied:
+        supplied = query.get("owner_key")
+    if not isinstance(supplied, str) or not secrets.compare_digest(supplied, room.owner_key):
+        raise HTTPException(status_code=403, detail="forbidden")
+
 
 @app.post("/api/rooms/{room_id}/pin")
 def toggle_pin(room_id: str, body: dict):
@@ -773,10 +868,11 @@ async def set_channel_background(room_id: str, body: dict):
 
 
 @app.post("/api/rooms/{room_id}/settings")
-async def update_room_settings(room_id: str, body: dict):
+async def update_room_settings(room_id: str, body: dict, request: Request):
     if room_id not in rooms:
         return {"error": "Not found"}
     room = rooms[room_id]
+    _owner_key_ok(room, body, request.query_params)
     if body.get("name"):
         room.name = body["name"]
     if "icon_url" in body:
@@ -808,10 +904,11 @@ async def update_room_settings(room_id: str, body: dict):
 
 
 @app.post("/api/rooms/{room_id}/invite_rotate")
-def rotate_invite(room_id: str, body: dict):
+def rotate_invite(room_id: str, body: dict, request: Request):
     if room_id not in rooms:
         return {"error": "Not found"}
     room = rooms[room_id]
+    _owner_key_ok(room, body, request.query_params)
     if body.get("owner_id") != room.owner_id:
         return {"error": "Unauthorized"}
     room.invite_code = str(uuid.uuid4())[:6].upper()
@@ -827,9 +924,12 @@ def get_room_by_code(invite_code: str):
     return {"error": "Not found"}
 
 @app.delete("/api/rooms/{room_id}")
-async def delete_room(room_id: str, owner_id: str):
+async def delete_room(room_id: str, owner_id: str, request: Request):
     if room_id not in rooms: return {"error": "Not found"}
     room = rooms[room_id]
+    # Yeni odalar: owner_key şart. Legacy odalar (owner_key yok): eski owner_id kontrolü.
+    if room.owner_key is not None:
+        _owner_key_ok(room, None, request.query_params)
     if room.owner_id != owner_id:
         return {"error": "Unauthorized"}
     del rooms[room_id]
@@ -869,7 +969,7 @@ def sync_rooms(body: dict):
 
 
 @app.post("/api/rooms/{room_id}/restore")
-def restore_room(room_id: str, body: dict):
+def restore_room(room_id: str, body: dict, request: Request):
     """
     Sunucu (├╢rn. Render redeploy sonras─▒ ephemeral disk s─▒f─▒rlan─▒nca) bir oday─▒
     unutmu┼ƒ ama istemcide h├ól├ó tam kopyas─▒ varsa, istemci bu u├ºla oday─▒ geri
@@ -879,10 +979,13 @@ def restore_room(room_id: str, body: dict):
     if room_id in deleted_room_ids:
         return {"error": "deleted"}
     if room_id in rooms:
+        _owner_key_ok(rooms[room_id], body, request.query_params)
         return {"success": True, "room": rooms[room_id].to_dict()}
     name = body.get("name", "Unnamed Server")
     owner_id = body.get("owner_id", "unknown")
     room = Room(room_id, name, owner_id)
+    if body.get("owner_key"):
+        room.owner_key = body["owner_key"]  # restore sonrası güvenlik korunur
     if body.get("channels"):
         room.channels = body["channels"]
     if body.get("roles"):
@@ -908,10 +1011,11 @@ def restore_room(room_id: str, body: dict):
     return {"success": True, "room": room.to_dict()}
 
 @app.post("/api/rooms/{room_id}/channels")
-def add_channel(room_id: str, body: dict):
+def add_channel(room_id: str, body: dict, request: Request):
     if room_id not in rooms:
         return {"error": "Not found"}
     room = rooms[room_id]
+    _owner_key_ok(room, body, request.query_params)
     new_ch = {
         "id": str(uuid.uuid4())[:8],
         "name": body.get("name", "new-channel"),
@@ -922,10 +1026,11 @@ def add_channel(room_id: str, body: dict):
     return new_ch
 
 @app.delete("/api/rooms/{room_id}/channels/{channel_id}")
-async def delete_channel(room_id: str, channel_id: str, requester_id: str = ""):
+async def delete_channel(room_id: str, channel_id: str, request: Request, requester_id: str = ""):
     if room_id not in rooms:
         return {"error": "Not found"}
     room = rooms[room_id]
+    _owner_key_ok(room, None, request.query_params)
     channel = next((c for c in room.channels if c["id"] == channel_id), None)
     if not channel:
         return {"error": "Channel not found"}
@@ -945,10 +1050,11 @@ async def delete_channel(room_id: str, channel_id: str, requester_id: str = ""):
 
 
 @app.patch("/api/rooms/{room_id}/channels/{channel_id}")
-async def rename_channel(room_id: str, channel_id: str, body: dict, requester_id: str = ""):
+async def rename_channel(room_id: str, channel_id: str, body: dict, request: Request, requester_id: str = ""):
     if room_id not in rooms:
         return {"error": "Not found"}
     room = rooms[room_id]
+    _owner_key_ok(room, body, request.query_params)
     channel = next((c for c in room.channels if c["id"] == channel_id), None)
     if not channel:
         return {"error": "Channel not found"}
@@ -967,10 +1073,11 @@ async def rename_channel(room_id: str, channel_id: str, body: dict, requester_id
 
 
 @app.post("/api/rooms/{room_id}/roles")
-def add_role(room_id: str, body: dict):
+def add_role(room_id: str, body: dict, request: Request):
     if room_id not in rooms:
         return {"error": "Not found"}
     room = rooms[room_id]
+    _owner_key_ok(room, body, request.query_params)
     role_id = body.get("name", "new-role").lower()
     room.roles[role_id] = {
         "name": body.get("name", "New Role"),
@@ -982,10 +1089,11 @@ def add_role(room_id: str, body: dict):
     return {"role_id": role_id}
 
 @app.patch("/api/rooms/{room_id}/roles/{role_id}")
-def update_role(room_id: str, role_id: str, body: dict):
+def update_role(room_id: str, role_id: str, body: dict, request: Request):
     if room_id not in rooms:
         return {"error": "Not found"}
     room = rooms[room_id]
+    _owner_key_ok(room, body, request.query_params)
     if role_id not in room.roles:
         return {"error": "Role not found"}
     
@@ -998,10 +1106,11 @@ def update_role(room_id: str, role_id: str, body: dict):
     return {"success": True, "role": room.roles[role_id]}
 
 @app.post("/api/rooms/{room_id}/assign_role")
-def assign_role(room_id: str, body: dict):
+def assign_role(room_id: str, body: dict, request: Request):
     if room_id not in rooms:
         return {"error": "Not found"}
     room = rooms[room_id]
+    _owner_key_ok(room, body, request.query_params)
     peer_id = body.get("peer_id")
     role_id = body.get("role_id")
     if peer_id and role_id in room.roles:

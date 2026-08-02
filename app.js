@@ -3896,6 +3896,13 @@ async function createServer(name) {
     const created = await res.json();
     const room_id = created.room_id;
     const inviteCode = created.invite_code || "";
+    if (created.owner_key) {
+        try {
+            const keys = JSON.parse(localStorage.getItem("scordOwnerKeys") || "{}");
+            keys[room_id] = created.owner_key;
+            localStorage.setItem("scordOwnerKeys", JSON.stringify(keys));
+        } catch (e) {}
+    }
 
     console.log("[Create] Server created:", room_id);
 
@@ -3964,10 +3971,11 @@ async function submitAddChannel(serverId, type) {
     const name = nameInput.value.trim().toLowerCase().replace(/\s+/g, '-');
     if (!name) return toast("Bir kanal adı girmelisin.", "error");
 
+    const keys = JSON.parse(localStorage.getItem("scordOwnerKeys") || "{}");
     const res = await fetch(`${API_BASE}/rooms/${serverId}/channels`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, type })
+        body: JSON.stringify({ name, type, ...(keys[serverId] ? { owner_key: keys[serverId] } : {}) })
     });
     const newCh = await res.json();
 
@@ -3995,7 +4003,8 @@ async function deleteChannel(serverId, channelId) {
     if (!confirm(`"#${channel.name}" kanalını silmek istediğine emin misin?`)) return;
 
     try {
-        const res = await fetch(`${API_BASE}/rooms/${serverId}/channels/${channelId}`, { method: "DELETE" });
+        const keys = JSON.parse(localStorage.getItem("scordOwnerKeys") || "{}");
+        const res = await fetch(`${API_BASE}/rooms/${serverId}/channels/${channelId}${keys[serverId] ? `?owner_key=${encodeURIComponent(keys[serverId])}` : ""}`, { method: "DELETE" });
         const data = await res.json();
         if (data.success || res.ok) {
             server.channels = server.channels.filter(c => c.id !== channelId);
@@ -4028,10 +4037,11 @@ async function renameChannel(serverId, channelId) {
     if (!newName || newName === channel.name) return;
 
     try {
+        const keys = JSON.parse(localStorage.getItem("scordOwnerKeys") || "{}");
         const res = await fetch(`${API_BASE}/rooms/${serverId}/channels/${channelId}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name: newName.toLowerCase().replace(/\s+/g, '-') })
+            body: JSON.stringify({ name: newName.toLowerCase().replace(/\s+/g, '-'), ...(keys[serverId] ? { owner_key: keys[serverId] } : {}) })
         });
         const data = await res.json();
         if (data.success || res.ok) {
@@ -7325,10 +7335,11 @@ function openServerSettingsModal() {
         const srv = state.servers.find(s => s.id === state.activeServerId);
         if (!srv || srv.ownerId !== state.peerId) return;
         try {
+        const keys = JSON.parse(localStorage.getItem("scordOwnerKeys") || "{}");
         const res = await fetch(`${API_BASE}/rooms/${srv.id}/invite_rotate`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ owner_id: state.peerId }),
+                body: JSON.stringify({ owner_id: state.peerId, ...(keys[srv.id] ? { owner_key: keys[srv.id] } : {}) }),
             });
             const data = await res.json();
             if (data.invite_code) {
@@ -7381,6 +7392,7 @@ function saveServerSettings() {
 
     // Server'a kaydet (API)
     if (typeof API_BASE !== "undefined") {
+        const keys = JSON.parse(localStorage.getItem("scordOwnerKeys") || "{}");
         fetch(`${API_BASE}/rooms/${server.id}/settings`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -7391,6 +7403,7 @@ function saveServerSettings() {
                 peer_roles: server.peer_roles,
                 channel_permissions: server.channel_permissions || {},
                 voicePermissionMode: server.voicePermissionMode,
+                ...(keys[server.id] ? { owner_key: keys[server.id] } : {}),
             }),
         }).catch(() => {});
     }
@@ -9085,9 +9098,13 @@ function updateTheme(themeName) {
 async function deleteServer(serverId) {
     if (!confirm("Bu sunucuyu kalıcı olarak silmek istediğine emin misin? Bu işlem geri alınamaz!")) return;
     try {
-        const res = await fetch(`${API_BASE}/rooms/${encodeURIComponent(serverId)}?owner_id=${encodeURIComponent(state.peerId)}`, { method: "DELETE" });
+        const keys = JSON.parse(localStorage.getItem("scordOwnerKeys") || "{}");
+        const ownerKey = keys[serverId] || "";
+        const res = await fetch(`${API_BASE}/rooms/${encodeURIComponent(serverId)}?owner_id=${encodeURIComponent(state.peerId)}${ownerKey ? `&owner_key=${encodeURIComponent(ownerKey)}` : ""}`, { method: "DELETE" });
         const data = await res.json();
         if (data.success) {
+            delete keys[serverId];
+            try { localStorage.setItem("scordOwnerKeys", JSON.stringify(keys)); } catch (e) {}
             toast("Sunucu başarıyla silindi.", "success");
             state.servers = state.servers.filter(s => s.id !== serverId);
             if (state.activeServerId === serverId) state.activeServerId = null;
@@ -11245,10 +11262,13 @@ async function reconcileServerRegistry() {
         const server = state.servers.find(s => s.id === id);
         if (!server) continue;
         try {
+            const payload = _localServerToRestorePayload(server);
+            const ok = (JSON.parse(localStorage.getItem("scordOwnerKeys") || "{}")[id] || "");
+            if (ok) payload.owner_key = ok;
             const res = await fetch(`${API_BASE}/rooms/${encodeURIComponent(id)}/restore`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(_localServerToRestorePayload(server)),
+                body: JSON.stringify(payload),
             });
             const data = await res.json();
             if (data.error === "deleted") {
@@ -11295,10 +11315,13 @@ async function handleRoomNotFound(roomId) {
     if (!server) return;
     if ((result.unknown || []).includes(roomId)) {
         try {
+            const payload = _localServerToRestorePayload(server);
+            const ok = (JSON.parse(localStorage.getItem("scordOwnerKeys") || "{}")[roomId] || "");
+            if (ok) payload.owner_key = ok;
             const res = await fetch(`${API_BASE}/rooms/${encodeURIComponent(roomId)}/restore`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(_localServerToRestorePayload(server)),
+                body: JSON.stringify(payload),
             });
             const data = await res.json();
             if (data.error === "deleted") { purgeLocalServer(roomId); return; }
@@ -11857,10 +11880,11 @@ saveProfessionalServerSettings = window.saveProfessionalServerSettings = functio
     server.icon_url = icon || null;
     if (desc !== undefined) server.description = desc;
     // Sunucuya kalıcı yaz (isim/ikon/açıklama)
+    const keys = JSON.parse(localStorage.getItem("scordOwnerKeys") || "{}");
     fetch(`${API_BASE}/rooms/${server.id}/settings`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: server.name, icon_url: server.icon_url, description: server.description || "" }),
+        body: JSON.stringify({ name: server.name, icon_url: server.icon_url, description: server.description || "", ...(keys[server.id] ? { owner_key: keys[server.id] } : {}) }),
     }).catch(() => { });
     if (!server.roles) server.roles = {};
     if (!server.roles.member) server.roles.member = { name: "Uye", color: "#94a3b8", permissions: {} };
@@ -26302,10 +26326,11 @@ window._v25RotateInvite = async function (serverId) {
     const server = currentServer();
     if (!server || server.ownerId !== state.peerId) return toast("Sadece sahip davet kodunu yenileyebilir.", "warning");
     try {
+        const keys = JSON.parse(localStorage.getItem("scordOwnerKeys") || "{}");
         const res = await scordFetch(`${API_BASE}/rooms/${serverId}/invite_rotate`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ owner_id: state.peerId }),
+            body: JSON.stringify({ owner_id: state.peerId, ...(keys[serverId] ? { owner_key: keys[serverId] } : {}) }),
         });
         const data = await res.json();
         if (data.invite_code) {
