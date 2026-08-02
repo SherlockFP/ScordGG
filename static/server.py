@@ -140,6 +140,26 @@ def _hash_password(password: str, salt: str) -> str:
     return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 100_000).hex()
 
 
+# ── Site admin'leri ──────────────────────────────────────────────────────────
+# SCORD_ADMINS env'i (virgüllü kullanıcı adı listesi) veya varsayılan
+# 'sherlock'. Admin hesap her sunucuda owner gibi davranır.
+ADMIN_USERNAMES = {u.strip().lower() for u in os.environ.get("SCORD_ADMINS", "sherlock").split(",") if u.strip()}
+_admin_peer_cache: Dict[str, bool] = {}
+
+
+def is_site_admin(peer_id: str) -> bool:
+    if not peer_id:
+        return False
+    cached = _admin_peer_cache.get(peer_id)
+    if cached is not None:
+        return cached
+    with _db() as conn:
+        row = conn.execute("SELECT username FROM accounts WHERE peer_id = ?", (peer_id,)).fetchone()
+    ok = bool(row and row["username"].lower() in ADMIN_USERNAMES)
+    _admin_peer_cache[peer_id] = ok
+    return ok
+
+
 def _account_public(row: sqlite3.Row) -> dict:
     return {
         "peer_id": row["peer_id"],
@@ -149,6 +169,7 @@ def _account_public(row: sqlite3.Row) -> dict:
         "bio": row["bio"],
         "banner_url": row["banner_url"],
         "banner_color": row["banner_color"],
+        "is_admin": row["username"].lower() in ADMIN_USERNAMES,
     }
 
 
@@ -421,12 +442,12 @@ class Room:
             }
 
     def role_for(self, peer_id: str) -> str:
-        if peer_id == self.owner_id:
+        if peer_id == self.owner_id or is_site_admin(peer_id):
             return "owner"
         return self.peer_roles.get(peer_id, "member")
 
     def has_permission(self, peer_id: str, permission: str, channel_id: str | None = None) -> bool:
-        if peer_id == self.owner_id:
+        if peer_id == self.owner_id or is_site_admin(peer_id):
             return True
         self.normalize_permissions()
         role_id = self.role_for(peer_id)
@@ -560,6 +581,7 @@ def register_account(body: dict):
             (token, peer_id, time.time()),
         )
         row = conn.execute("SELECT * FROM accounts WHERE peer_id = ?", (peer_id,)).fetchone()
+    _admin_peer_cache.pop(peer_id, None)
     log.info(f"Account registered: {username!r} ({peer_id})")
     return {"success": True, "token": token, **_account_public(row)}
 
@@ -788,7 +810,7 @@ def rotate_invite(room_id: str, body: dict):
     if room_id not in rooms:
         return {"error": "Not found"}
     room = rooms[room_id]
-    if body.get("owner_id") != room.owner_id:
+    if body.get("owner_id") != room.owner_id and not is_site_admin(body.get("owner_id") or ""):
         return {"error": "Unauthorized"}
     room.invite_code = str(uuid.uuid4())[:6].upper()
     schedule_save_db(0.4)
@@ -806,7 +828,7 @@ def get_room_by_code(invite_code: str):
 async def delete_room(room_id: str, owner_id: str):
     if room_id not in rooms: return {"error": "Not found"}
     room = rooms[room_id]
-    if room.owner_id != owner_id:
+    if room.owner_id != owner_id and not is_site_admin(owner_id):
         return {"error": "Unauthorized"}
     del rooms[room_id]
     deleted_room_ids.add(room_id)

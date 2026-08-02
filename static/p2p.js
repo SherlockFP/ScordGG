@@ -582,15 +582,18 @@ class P2PMesh {
             // Kalite/FPS kullanıcı ayarlarından gelir (app.js openScreenSharePicker).
             const winState = (typeof window !== "undefined" && window.state) || {};
             const q = winState.screenShareQuality || "720p";
-            const fps = winState.screenShareFPS || 30;
+            const fps = Math.max(15, Math.min(240, winState.screenShareFPS || 30));
+            // app.js _v25ScreenQualityConstraints ile ayni kural: 720p/1080p'de
+            // fps siniri yok (120/144/240), 4K max 60, dusuk cozunurluk max 30.
             const qMap = {
-                "4k": { width: { ideal: 3840 }, height: { ideal: 2160 }, frameRate: { ideal: Math.min(fps, 30) } },
-                "1080p": { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: Math.min(fps, 60) } },
-                "720p": { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: Math.min(fps, 60) } },
-                "480p": { width: { ideal: 854 }, height: { ideal: 480 }, frameRate: { ideal: Math.min(fps, 30) } },
-                "360p": { width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: Math.min(fps, 30) } },
+                "4k": { width: { ideal: 3840 }, height: { ideal: 2160 }, frameRate: { ideal: Math.min(fps, 60), max: 60 } },
+                "1080p": { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: fps, max: fps } },
+                "720p": { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: fps, max: fps } },
+                "480p": { width: { ideal: 854 }, height: { ideal: 480 }, frameRate: { ideal: Math.min(fps, 30), max: 30 } },
+                "360p": { width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: Math.min(fps, 30), max: 30 } },
             };
-            const bitrateMap = { "4k": 8000, "1080p": 4000, "720p": 2500, "480p": 1200, "360p": 700 };
+            const fpsMult = fps >= 144 ? 2 : fps > 60 ? 1.5 : 1;
+            const bitrateMap = { "4k": 8000 * fpsMult, "1080p": 4000 * fpsMult, "720p": 2500 * fpsMult, "480p": 1200, "360p": 700 };
             this.screenStream = await navigator.mediaDevices.getDisplayMedia({
                 video: { ...(qMap[q] || qMap["720p"]), cursor: "always" },
                 audio: winState.screenShareAudio === true,

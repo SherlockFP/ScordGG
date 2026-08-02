@@ -10264,11 +10264,14 @@ input, textarea, select, button {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
 }
 
+/* Aurora: CSS filter YOK. blur(90px) bloblar her frame hareket ederken tum
+   katmani yeniden filtreliyordu — entegre GPU'larda ekran titremesinin
+   sebebiydi. Yumusaklik rgba falloff'ta, animasyon compositor-only transform. */
 .aurora-bg {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  filter: blur(90px) saturate(1.3);
+  transform: translateZ(0);
 }
 
 .aurora-blob {
@@ -10276,26 +10279,28 @@ input, textarea, select, button {
   border-radius: 50%;
   opacity: 0.5;
   will-change: transform;
+  transform: translate3d(0, 0, 0);
+  backface-visibility: hidden;
 }
 
 .aurora-blob--1 {
   width: 46vw; height: 46vw;
   left: -12vw; top: -14vh;
-  background: radial-gradient(circle at 30% 30%, #7c3aed, transparent 65%);
+  background: radial-gradient(circle at 30% 30%, rgba(124, 58, 237, 0.55), transparent 62%);
   animation: sc-drift-1 34s ease-in-out infinite alternate;
 }
 
 .aurora-blob--2 {
   width: 38vw; height: 38vw;
   right: -10vw; bottom: -16vh;
-  background: radial-gradient(circle at 70% 60%, #0891b2, transparent 65%);
+  background: radial-gradient(circle at 70% 60%, rgba(8, 145, 178, 0.5), transparent 62%);
   animation: sc-drift-2 40s ease-in-out infinite alternate;
 }
 
 .aurora-blob--3 {
   width: 26vw; height: 26vw;
   left: 42vw; top: 46vh;
-  background: radial-gradient(circle at 50% 50%, #db2777, transparent 60%);
+  background: radial-gradient(circle at 50% 50%, rgba(219, 39, 119, 0.4), transparent 58%);
   opacity: 0.22;
   animation: sc-drift-3 48s ease-in-out infinite alternate;
 }
@@ -10845,4 +10850,93 @@ input, textarea, select, button {
   .v25-server { inset: 6px; }
   .v25-server .scord-server-settings-main { padding: 14px; }
   .v25-seg button { min-width: 52px; padding: 8px 6px; font-size: 12px; }
+}
+
+/* ── Global form kontrolleri: slider / checkbox / select ─────────────────────
+   Site genelinde ses acma-kisma, hassasiyet vb. kaydiricilar duz beyaz OS
+   gorunumundeydi; hepsi marka renkleriyle stillenir. ─────────────────────── */
+
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  accent-color: var(--accent);
+  outline: none;
+  cursor: pointer;
+  margin: 6px 0 2px;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  border: 3px solid var(--accent);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45), 0 0 0 4px rgba(167, 139, 250, 0.12);
+  cursor: grab;
+  transition: box-shadow 0.15s, transform 0.15s;
+  margin-top: -6px;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45), 0 0 0 6px rgba(167, 139, 250, 0.22);
+  transform: scale(1.08);
+}
+
+input[type="range"]::-webkit-slider-thumb:active { cursor: grabbing; }
+
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-light)) left center / var(--sc-fill, 0%) 100% no-repeat,
+    rgba(255, 255, 255, 0.08);
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  border: 3px solid var(--accent);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+  cursor: grab;
+}
+
+input[type="range"]::-moz-range-track {
+  height: 6px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+input[type="range"]::-moz-range-progress {
+  height: 6px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-light));
+}
+
+input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+/* Kaydirici satirindaki canli deger rozeti (ör. %80) */
+label .set-val,
+label span[id^="val-"] {
+  min-width: 44px;
+  text-align: center;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  background: rgba(167, 139, 250, 0.18);
+  border: 1px solid rgba(167, 139, 250, 0.25);
+  display: inline-block;
+  margin-left: 6px;
 }

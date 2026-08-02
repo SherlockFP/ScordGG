@@ -628,7 +628,7 @@ function applyChannelBackground(serverId, channelId) {
 function getMyEffectiveRole(server) {
     if (!server) return "member";
     if (isSuperAdmin()) return "owner";
-    if (server.ownerId === state.peerId) return "owner";
+    if ((server.ownerId === state.peerId || state.isAdmin)) return "owner";
     return server.peer_roles?.[state.peerId] || "member";
 }
 
@@ -1990,7 +1990,7 @@ function showServerContextMenu(ev, server) {
     ev.stopPropagation();
     if (!server) return;
 
-    const isOwner = server.ownerId === state.peerId || server.owner_id === state.peerId;
+    const isOwner = (server.ownerId === state.peerId || state.isAdmin) || (server.owner_id === state.peerId || state.isAdmin);
     const menu = document.createElement("div");
     menu.className = "ctx-menu ctx-menu--chat";
     menu.id = "ctx-menu";
@@ -2070,6 +2070,8 @@ async function persistChannelBackground(roomId, channelId, url) {
 
 function hideModal() {
     document.getElementById("modal-backdrop").classList.add("hidden");
+    // Ayarlar kapaninca mikrofon testi acik kalmasin.
+    if (typeof window.stopMicTest === "function") window.stopMicTest();
 }
 
 /* ── Setup overlay — gerçek üyelik sistemi ───────────────────
@@ -2114,6 +2116,8 @@ function applyAccountToState(acc) {
     state.bio = acc.bio || "";
     state.bannerUrl = acc.banner_url || "";
     state.bannerColor = acc.banner_color || "";
+    state.isAdmin = !!acc.is_admin;
+    localStorage.setItem("scord_is_admin", acc.is_admin ? "1" : "0");
     localStorage.setItem("scord_username", acc.username);
     localStorage.setItem("scord_peer_id", acc.peer_id);
     localStorage.setItem("scord_color", state.avatarColor);
@@ -2174,6 +2178,7 @@ async function initSetup() {
         state.bio = localStorage.getItem("scord_bio") || "";
         state.bannerUrl = localStorage.getItem("scord_banner_url") || "";
         state.bannerColor = localStorage.getItem("scord_banner_color") || "";
+        state.isAdmin = localStorage.getItem("scord_is_admin") === "1";
         var savedTheme = localStorage.getItem("scord_theme");
         if (savedTheme) { state.theme = savedTheme; document.documentElement.setAttribute("data-theme", savedTheme); if (typeof applyTheme === "function") applyTheme(savedTheme); }
         if (typeof startApp === "function") {
@@ -2846,7 +2851,7 @@ function _updateChannelSidebarImpl(serverId) {
         cat.style.alignItems = "center";
         cat.innerHTML = `<span><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg> METİN KANALLARI</span>`;
 
-        const isAdmin = server.ownerId === state.peerId || server.peer_roles?.[state.peerId] === "admin";
+        const isAdmin = (server.ownerId === state.peerId || state.isAdmin) || server.peer_roles?.[state.peerId] === "admin";
         if (isAdmin) {
             const addBtn = document.createElement("span");
             addBtn.className = "add-ch-btn";
@@ -2872,7 +2877,7 @@ function _updateChannelSidebarImpl(serverId) {
         cat.style.alignItems = "center";
         cat.innerHTML = `<span><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg> SESLİ KANALLAR</span>`;
 
-        const isAdmin = server.ownerId === state.peerId || server.peer_roles?.[state.peerId] === "admin";
+        const isAdmin = (server.ownerId === state.peerId || state.isAdmin) || server.peer_roles?.[state.peerId] === "admin";
         if (isAdmin) {
             const addBtn = document.createElement("span");
             addBtn.className = "add-ch-btn";
@@ -3019,7 +3024,7 @@ function createChannelItem(channel, serverId) {
     };
 
     if (channel.type === "voice") {
-        const isAdmin = server && (server.ownerId === state.peerId || server.peer_roles?.[state.peerId] === "admin");
+        const isAdmin = server && ((server.ownerId === state.peerId || state.isAdmin) || server.peer_roles?.[state.peerId] === "admin");
 
         if (isAdmin) {
             item.ondragover = (e) => e.preventDefault();
@@ -3125,7 +3130,7 @@ function _updateMembersPanelImpl(serverId) {
                 item.className = "member-item";
                 item.setAttribute("data-peer-id", m.peer_id);
 
-                const isAdmin = server.ownerId === state.peerId || server.peer_roles?.[state.peerId] === "admin";
+                const isAdmin = (server.ownerId === state.peerId || state.isAdmin) || server.peer_roles?.[state.peerId] === "admin";
                 if (isAdmin && m.peer_id !== state.peerId) {
                     item.draggable = true;
                     item.ondragstart = (e) => {
@@ -4686,6 +4691,11 @@ function handleVoiceStream(peerId, stream) {
         video.playsInline = true;
         video.muted = peerId === state.peerId;
         video.className = "voice-video";
+        // Secili cikis cihazi (hoparlor) varsa yeni elemente uygula.
+        const spk = state.voiceSettings?.speakerId;
+        if (spk && spk !== "default" && typeof video.setSinkId === "function") {
+            video.setSinkId(spk).catch(() => { });
+        }
 
         // Ensure UI updates when video actually starts
         const refreshVoiceUI = () => {
@@ -4949,6 +4959,8 @@ async function joinVoiceChannel(channelId) {
         const source = state.audioCtx.createMediaStreamSource(stream);
         const gainNode = state.audioCtx.createGain();
         gainNode.gain.value = state.voiceSettings?.volume || 1;
+        state.voiceGainNode = gainNode;      // canli ses ayari icin (applyVoiceSettingsLive)
+        state.voiceRawStream = stream;       // applyConstraints icin ham mikrofon stream'i
         const gateNode = state.audioCtx.createGain();
         // Varsayılan: gate KAPALI (gateEnabled=false) — mikrofon her zaman açık.
         // Gate açıkken konuşma başındaki ~100ms'lik hece analyser eşiği aşana
@@ -4989,7 +5001,7 @@ async function joinVoiceChannel(channelId) {
             stream.getAudioTracks()[0].enabled = !!state._pttActive;
         }
 
-        const currentRole = server.ownerId === state.peerId ? "owner"
+        const currentRole = (server.ownerId === state.peerId || state.isAdmin) ? "owner"
             : server.peer_roles?.[state.peerId] === "admin" ? "admin"
                 : server.peer_roles?.[state.peerId] === "mod" ? "mod" : "member";
         const isVoiceRestricted = server.voicePermissionMode === "mods_only" && !["owner", "admin", "mod"].includes(currentRole);
@@ -5701,7 +5713,7 @@ function renderVoiceParticipants(serverId, channelId) {
         }
 
         // Drag and Drop Admin
-        const isAdmin = server && (server.ownerId === state.peerId || server.peer_roles?.[state.peerId] === "admin");
+        const isAdmin = server && ((server.ownerId === state.peerId || state.isAdmin) || server.peer_roles?.[state.peerId] === "admin");
         if (isAdmin && m.peer_id !== state.peerId) {
             card.draggable = true;
             card.ondragstart = (e) => { e.dataTransfer.setData("peerId", m.peer_id); };
@@ -6263,7 +6275,7 @@ function showContextMenu(peerId, username, x, y) {
     const server = state.servers.find(s => s.id === state.activeServerId);
     if (!server) return;
 
-    const myRole = server.ownerId === state.peerId ? "owner"
+    const myRole = (server.ownerId === state.peerId || state.isAdmin) ? "owner"
         : server.peer_roles?.[state.peerId] === "admin" ? "admin"
             : server.peer_roles?.[state.peerId] === "mod" ? "mod" : "member";
 
@@ -6955,7 +6967,7 @@ function openServerSettingsModal() {
 
     if (!server.bannedUsers) server.bannedUsers = [];
 
-    const isOwner = server.ownerId === state.peerId;
+    const isOwner = (server.ownerId === state.peerId || state.isAdmin);
     const isAdmin = isOwner || server.peer_roles?.[state.peerId] === "admin";
     const isMember = isOwner || server.members?.some(m => m.peer_id === state.peerId);
     const canEdit = isAdmin;
@@ -7188,7 +7200,7 @@ function openServerSettingsModal() {
 
     window._rotateInviteCode = async () => {
         const srv = state.servers.find(s => s.id === state.activeServerId);
-        if (!srv || srv.ownerId !== state.peerId) return;
+        if (!srv || (srv.ownerId !== state.peerId && !state.isAdmin)) return;
         try {
         const res = await fetch(`${API_BASE}/rooms/${srv.id}/invite_rotate`, {
                 method: "POST",
@@ -7220,7 +7232,7 @@ function saveServerSettings() {
     const server = state.servers.find(s => s.id === state.activeServerId);
     if (!server) return;
 
-    const isOwner = server.ownerId === state.peerId;
+    const isOwner = (server.ownerId === state.peerId || state.isAdmin);
     const isAdmin = isOwner || server.peer_roles?.[state.peerId] === "admin";
     if (!isAdmin) {
         toast("Bu işlem için yönetici yetkisi gerekli.", "error");
@@ -10038,7 +10050,7 @@ function openServerSettingsPanel() {
     const server = state.servers.find(s => s.id === state.activeServerId);
     if (!server) return;
 
-    const isOwner = server.ownerId === state.peerId;
+    const isOwner = (server.ownerId === state.peerId || state.isAdmin);
     const isAdmin = isOwner || server.peer_roles?.[state.peerId] === "admin";
     if (!isAdmin) return toast("Bu işlem için yönetici yetkisi gerekli.", "error");
 
@@ -10309,7 +10321,7 @@ function renderRolesSettings(server) {
                 <input type="text" class="role-name-input" value="${escapeHtml(roleData.name)}" 
                        onchange="updateRoleName('${roleId}', this.value)" />
                 <span style="font-size:11px;color:var(--text-muted);">${memberCount} üye</span>
-                ${server.ownerId !== state.peerId ? '' : `
+                ${(server.ownerId !== state.peerId && !state.isAdmin) ? '' : `
                     <button style="background:none;border:none;color:var(--red);cursor:pointer;font-size:16px;" 
                             onclick="deleteRole('${roleId}')">🗑️</button>
                 `}
@@ -10341,7 +10353,7 @@ function renderMembersSettings(server) {
                     ${initials(member.username)}
                 </div>
                 <span style="flex:1;font-size:14px;color:var(--text-primary);">${escapeHtml(member.username)}</span>
-                ${server.ownerId === state.peerId ? `
+                ${(server.ownerId === state.peerId || state.isAdmin) ? `
                     <select class="member-role-select" onchange="updateMemberRole('${member.peer_id}', this.value)">
                         <option value="member">Üye</option>
                         ${roleOptions}
@@ -11212,7 +11224,7 @@ function isSuperAdmin() {
 function myRoleId(server) {
     if (!server) return "member";
     if (isSuperAdmin()) return "owner";
-    if (server.ownerId === state.peerId || server.owner_id === state.peerId) return "owner";
+    if ((server.ownerId === state.peerId || state.isAdmin) || (server.owner_id === state.peerId || state.isAdmin)) return "owner";
     return server.peer_roles?.[state.peerId] || "member";
 }
 
@@ -11611,7 +11623,7 @@ openServerSettingsPanel = window.openServerSettingsPanel = function () {
     if (!state.activeServerId) return toast("Once bir sunucu sec.", "info");
     const server = currentServer();
     if (!server) return;
-    const isOwner = server.ownerId === state.peerId;
+    const isOwner = (server.ownerId === state.peerId || state.isAdmin);
     const canManage = isOwner || roleAllows(server, "manage_server") || roleAllows(server, "manage_roles");
     if (!canManage) return toast("Sunucu ayarlari icin yetkin yok.", "warning");
     let panel = document.getElementById("server-settings-panel");
@@ -18786,7 +18798,7 @@ function renderCategoryHeader(list, label, serverId, type) {
     cat.className = "channel-category channel-category--grouped";
     cat.innerHTML = `<span><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg> ${escapeHtml(label)}</span>`;
     const server = state.servers.find(s => s.id === serverId);
-    const canAdd = server && (server.ownerId === state.peerId || server.peer_roles?.[state.peerId] === "admin");
+    const canAdd = server && ((server.ownerId === state.peerId || state.isAdmin) || server.peer_roles?.[state.peerId] === "admin");
     if (canAdd) {
         const addBtn = document.createElement("span");
         addBtn.className = "add-ch-btn";
@@ -18894,7 +18906,7 @@ function showRichUserMenu(peerId, username, x, y) {
     const server = currentServer();
     const isSelf = peerId === state.peerId;
     const role = profileRoleLine(server, peerId);
-    const canKick = !isSelf && server && (server.ownerId === state.peerId || roleAllows(server, "force_disconnect", state.voiceChannelId || state.activeChannelId));
+    const canKick = !isSelf && server && ((server.ownerId === state.peerId || state.isAdmin) || roleAllows(server, "force_disconnect", state.voiceChannelId || state.activeChannelId));
     const menu = document.createElement("div");
     menu.className = "rich-user-menu";
     menu.style.left = `${Math.min(x, window.innerWidth - 280)}px`;
@@ -18942,7 +18954,7 @@ openUserProfile = window.openUserProfile = function (peerId, username, avatarIma
     const note = getUserNote(peerId);
     const isFriend = state.friends?.some(f => f.peerId === peerId);
     const serverName = server?.name || "Shercord";
-    const canModerate = !isSelf && server && (server.ownerId === state.peerId || roleAllows(server, "force_disconnect", state.voiceChannelId || state.activeChannelId));
+    const canModerate = !isSelf && server && ((server.ownerId === state.peerId || state.isAdmin) || roleAllows(server, "force_disconnect", state.voiceChannelId || state.activeChannelId));
     const body = `
       <div class="profile-pro-card">
         <div class="profile-pro-banner" style="background:linear-gradient(135deg, ${avatarColor || "#5865f2"}, #111827);"></div>
@@ -19426,7 +19438,7 @@ handleAuthoritativeServerEvent = window.handleAuthoritativeServerEvent = functio
 function leaveCurrentServerSelf() {
     const server = currentServer();
     if (!server) return;
-    if (server.ownerId === state.peerId || server.owner_id === state.peerId) {
+    if ((server.ownerId === state.peerId || state.isAdmin) || (server.owner_id === state.peerId || state.isAdmin)) {
         toast("Sunucu sahibisin; ayrilmak yerine sunucuyu kapatabilirsin.", "warning");
         return;
     }
@@ -19774,7 +19786,7 @@ openServerSettingsPanel = window.openServerSettingsPanel = function () {
     const main = panel.querySelector(".scord-server-settings-main");
     if (nav && !nav.querySelector('[data-page="background"]')) {
         nav.querySelector('[data-page="roles"]')?.insertAdjacentHTML("afterend", `<button data-page="background">Arka Plan</button>`);
-        if (server.ownerId !== state.peerId && !nav.querySelector('[data-page="leave"]')) {
+        if ((server.ownerId !== state.peerId && !state.isAdmin) && !nav.querySelector('[data-page="leave"]')) {
             nav.querySelector(".danger")?.insertAdjacentHTML("beforebegin", `<button data-page="leave">Ayril</button>`);
         }
     }
@@ -23055,7 +23067,7 @@ function showServerStatsModal() {
                 <div style="font-size:13px;color:var(--text-secondary);">
                     <div>Kuruluş: ${createdDate}</div>
                     <div>Sunucu ID: ${server.id}</div>
-                    <div>Sahip: ${server.ownerId === state.peerId ? 'Sen' : 'Bilgi yok'}</div>
+                    <div>Sahip: ${(server.ownerId === state.peerId || state.isAdmin) ? 'Sen' : 'Bilgi yok'}</div>
                 </div>
             </div>
         </div>
@@ -24019,10 +24031,15 @@ function showUserSettingsModal() {
     html += '    <div class="scord-settings-page hidden" id="set-voice">';
     html += '      <h3>Ses ve Görüntü</h3>';
     html += '      <label>Mikrofon Cihazı<select class="modal-input" id="settings-mic-device"><option value="default">Varsayılan</option></select></label>';
+    html += '      <label>Çıkış Cihazı (Hoparlör)<select class="modal-input" id="settings-speaker-device"><option value="default">Varsayılan</option></select></label>';
     html += '      <label>Kamera Cihazı<select class="modal-input" id="settings-camera-device"><option value="default">Varsayılan</option></select></label>';
-    html += '      <label class="scord-check"><input type="checkbox" ' + (vs.noiseSuppression !== false ? 'checked' : '') + ' onchange="state.voiceSettings=state.voiceSettings||{};state.voiceSettings.noiseSuppression=this.checked;localStorage.setItem(\'scord_voice_settings\',JSON.stringify(state.voiceSettings))"> Gürültü Engelleme</label>';
-    html += '      <label class="scord-check"><input type="checkbox" ' + (vs.echoCancellation !== false ? 'checked' : '') + ' onchange="state.voiceSettings=state.voiceSettings||{};state.voiceSettings.echoCancellation=this.checked;localStorage.setItem(\'scord_voice_settings\',JSON.stringify(state.voiceSettings))"> Yankı Engelleme</label>';
-    html += '      <label class="scord-check"><input type="checkbox" ' + (vs.autoGainControl === true ? 'checked' : '') + ' onchange="state.voiceSettings=state.voiceSettings||{};state.voiceSettings.autoGainControl=this.checked;localStorage.setItem(\'scord_voice_settings\',JSON.stringify(state.voiceSettings))"> Otomatik Seviye Dengeleme</label>';
+    html += '      <div style="display:flex;align-items:center;gap:10px;margin:6px 0 10px;">';
+    html += '        <button type="button" class="btn-secondary" id="settings-mic-test-btn" onclick="window.toggleMicTest()">Mikrofonu Test Et</button>';
+    html += '        <div style="flex:1;height:8px;border-radius:4px;background:rgba(255,255,255,0.08);overflow:hidden;"><div id="settings-mic-meter" style="width:0%;height:100%;border-radius:4px;background:var(--accent);transition:width 0.06s linear;"></div></div>';
+    html += '      </div>';
+    html += '      <label class="scord-check"><input type="checkbox" ' + (vs.noiseSuppression !== false ? 'checked' : '') + ' onchange="state.voiceSettings=state.voiceSettings||{};state.voiceSettings.noiseSuppression=this.checked;localStorage.setItem(\'scord_voice_settings\',JSON.stringify(state.voiceSettings));window.applyVoiceSettingsLive&&applyVoiceSettingsLive()"> Gürültü Engelleme (önerilen)</label>';
+    html += '      <label class="scord-check"><input type="checkbox" ' + (vs.echoCancellation !== false ? 'checked' : '') + ' onchange="state.voiceSettings=state.voiceSettings||{};state.voiceSettings.echoCancellation=this.checked;localStorage.setItem(\'scord_voice_settings\',JSON.stringify(state.voiceSettings));window.applyVoiceSettingsLive&&applyVoiceSettingsLive()"> Yankı Engelleme</label>';
+    html += '      <label class="scord-check"><input type="checkbox" ' + (vs.autoGainControl === true ? 'checked' : '') + ' onchange="state.voiceSettings=state.voiceSettings||{};state.voiceSettings.autoGainControl=this.checked;localStorage.setItem(\'scord_voice_settings\',JSON.stringify(state.voiceSettings));window.applyVoiceSettingsLive&&applyVoiceSettingsLive()"> Otomatik Seviye Dengeleme</label>';
     html += '      <label class="scord-check"><input type="checkbox" ' + (vs.gateEnabled === true ? 'checked' : '') + ' onchange="state.voiceSettings=state.voiceSettings||{};state.voiceSettings.gateEnabled=this.checked;localStorage.setItem(\'scord_voice_settings\',JSON.stringify(state.voiceSettings))"> Ses Kapısı (sessizken mikrofonu kapat — kelime başlarını kırpabilir)</label>';
     html += '      <label>Mikrofon Hassasiyeti <span id="val-gate-vol">' + (vs.gateThreshold || 8) + '</span><input type="range" min="3" max="30" value="' + (vs.gateThreshold || 8) + '" oninput="state.voiceSettings=state.voiceSettings||{};state.voiceSettings.gateThreshold=parseInt(this.value);document.getElementById(\'val-gate-vol\').textContent=this.value;localStorage.setItem(\'scord_voice_settings\',JSON.stringify(state.voiceSettings))"></label>';
     html += '      <label>Mikrofon Ses <span id="val-mic-vol">' + (vols.micVolume || 80) + '%</span><input type="range" min="0" max="100" value="' + (vols.micVolume || 80) + '" oninput="updateSetting(\'micVolume\',this.value);document.getElementById(\'val-mic-vol\').textContent=this.value+\'%\'"></label>';
@@ -24108,7 +24125,32 @@ function showUserSettingsModal() {
             state.voiceSettings = state.voiceSettings || {};
             state.voiceSettings.micId = micSel.value;
             localStorage.setItem("scord_voice_settings", JSON.stringify(state.voiceSettings));
-            toast("Mikrofon değişikliği bir sonraki ses kanalı katılımında uygulanır.", "info");
+            // Sesli kanaldaysa mikrofonu CANLI degistir (Discord gibi).
+            if (state.mesh && state.mesh.voiceActive) {
+                switchMicLive(micSel.value);
+            }
+        };
+    }
+    var spkSel = document.getElementById("settings-speaker-device");
+    if (spkSel && navigator.mediaDevices?.enumerateDevices) {
+        navigator.mediaDevices.enumerateDevices().then(function (devices) {
+            devices.filter(function (d) { return d.kind === "audiooutput"; }).forEach(function (d, i) {
+                var opt = document.createElement("option");
+                opt.value = d.deviceId;
+                opt.textContent = d.label || ("Hoparlör " + (i + 1));
+                spkSel.appendChild(opt);
+            });
+            spkSel.value = (state.voiceSettings && state.voiceSettings.speakerId) || "default";
+        }).catch(function () { });
+        spkSel.onchange = function () {
+            state.voiceSettings = state.voiceSettings || {};
+            state.voiceSettings.speakerId = spkSel.value;
+            localStorage.setItem("scord_voice_settings", JSON.stringify(state.voiceSettings));
+            // Mevcut uzak ses/video elementlerine hemen uygula.
+            Object.values(state.remoteMedia || {}).forEach(function (el) {
+                if (el && typeof el.setSinkId === "function") el.setSinkId(spkSel.value === "default" ? "" : spkSel.value).catch(function () { });
+            });
+            toast("Çıkış cihazı değiştirildi.", "success");
         };
     }
     var camSel = document.getElementById("settings-camera-device");
@@ -24130,6 +24172,110 @@ function showUserSettingsModal() {
         };
     }
 }
+
+/* ── Ses ayarlari: sesli kanaldayken CANLI uygulama ─────────── */
+function applyVoiceSettingsLive() {
+    var vs = state.voiceSettings || {};
+    var track = state.voiceRawStream && state.voiceRawStream.getAudioTracks()[0];
+    if (track && typeof track.applyConstraints === "function") {
+        track.applyConstraints({
+            noiseSuppression: vs.noiseSuppression !== false,
+            echoCancellation: vs.echoCancellation !== false,
+            autoGainControl: vs.autoGainControl === true,
+        }).catch(function (e) { console.warn("[Voice] applyConstraints:", e); });
+    }
+    if (state.voiceGainNode) {
+        try { state.voiceGainNode.gain.value = vs.volume || 1; } catch (e) { /* noop */ }
+    }
+}
+window.applyVoiceSettingsLive = applyVoiceSettingsLive;
+
+/* Sesli kanaldayken mikrofon cihazini canli degistir: yeni cihazdan stream
+   al, tum peer'lardaki audio sender'da replaceTrack yap. */
+async function switchMicLive(deviceId) {
+    try {
+        var vs = state.voiceSettings || {};
+        var constraints = {
+            noiseSuppression: vs.noiseSuppression !== false,
+            echoCancellation: vs.echoCancellation !== false,
+            autoGainControl: vs.autoGainControl === true,
+            channelCount: 1,
+        };
+        if (deviceId && deviceId !== "default") constraints.deviceId = { exact: deviceId };
+        var newStream = await navigator.mediaDevices.getUserMedia({ audio: constraints });
+        var newTrack = newStream.getAudioTracks()[0];
+        if (!newTrack) return;
+        var oldTrack = state.voiceRawStream && state.voiceRawStream.getAudioTracks()[0];
+        var replaced = false;
+        Object.values((state.mesh && state.mesh.peers) || {}).forEach(function (p) {
+            var pc = p && p.pc;
+            if (!pc || pc.connectionState === "closed") return;
+            pc.getSenders().forEach(function (sender) {
+                if (sender.track && sender.track.kind === "audio") {
+                    // Ekran paylasim sesi karismasin: yalnizca mikrofon track'i degistir.
+                    var isScreenAudio = state.screenStream && state.screenStream.getAudioTracks().includes(sender.track);
+                    if (isScreenAudio) return;
+                    sender.replaceTrack(newTrack).then(function () { replaced = true; }).catch(function () { });
+                }
+            });
+        });
+        if (oldTrack) { try { oldTrack.stop(); } catch (e) { /* noop */ } }
+        state.voiceRawStream = newStream;
+        if (state.mesh) state.mesh.localStream = state.mesh.localStream || newStream;
+        toast("Mikrofon canlı olarak değiştirildi.", "success");
+    } catch (e) {
+        console.warn("[Voice] switchMicLive:", e);
+        toast("Mikrofon değiştirilemedi — bir sonraki katılımda uygulanır.", "warning");
+    }
+}
+window.switchMicLive = switchMicLive;
+
+/* ── Mikrofon testi: canli seviye cubugu ────────────────────── */
+var _micTest = null;
+async function toggleMicTest() {
+    var btn = document.getElementById("settings-mic-test-btn");
+    var meter = document.getElementById("settings-mic-meter");
+    if (_micTest) {
+        stopMicTest();
+        return;
+    }
+    try {
+        var vs = state.voiceSettings || {};
+        var constraints = { noiseSuppression: vs.noiseSuppression !== false, echoCancellation: vs.echoCancellation !== false };
+        if (vs.micId && vs.micId !== "default") constraints.deviceId = { exact: vs.micId };
+        var stream = await navigator.mediaDevices.getUserMedia({ audio: constraints });
+        var ctx = new (window.AudioContext || window.webkitAudioContext)();
+        var src = ctx.createMediaStreamSource(stream);
+        var analyser = ctx.createAnalyser();
+        analyser.fftSize = 256;
+        src.connect(analyser);
+        var data = new Uint8Array(analyser.frequencyBinCount);
+        var timer = setInterval(function () {
+            analyser.getByteFrequencyData(data);
+            var sum = 0;
+            for (var i = 0; i < data.length; i++) sum += data[i];
+            var pct = Math.min(100, Math.round((sum / data.length) * 1.8));
+            if (meter) meter.style.width = pct + "%";
+        }, 60);
+        _micTest = { stream: stream, ctx: ctx, timer: timer };
+        if (btn) btn.textContent = "Testi Durdur";
+    } catch (e) {
+        toast("Mikrofona erişilemedi.", "error");
+    }
+}
+function stopMicTest() {
+    if (!_micTest) return;
+    clearInterval(_micTest.timer);
+    try { _micTest.stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) { /* noop */ }
+    try { _micTest.ctx.close(); } catch (e) { /* noop */ }
+    _micTest = null;
+    var btn = document.getElementById("settings-mic-test-btn");
+    var meter = document.getElementById("settings-mic-meter");
+    if (btn) btn.textContent = "Mikrofonu Test Et";
+    if (meter) meter.style.width = "0%";
+}
+window.toggleMicTest = toggleMicTest;
+window.stopMicTest = stopMicTest;
 
 function updateSetting(key, val) {
     if (!state.settings) state.settings = {};
@@ -25590,19 +25736,24 @@ console.log("[App] Settings V-layout + Profile preview + Animations OFF + Cautio
 // ══════════════════════════════════════════════════════════
 
 function _v25ScreenQualityConstraints(q, fps) {
-    const f = Math.max(15, Math.min(60, fps || 30));
+    // 120/144/240 Hz monitörler için yüksek kare hızı: 720p/1080p'de sınır yok,
+    // 4K'da 60, düşük çözünürlüklerde 30 tavan (bant genişliği dengesi).
+    const f = Math.max(15, Math.min(240, fps || 30));
     const map = {
-        "4k": { width: { ideal: 3840 }, height: { ideal: 2160 }, frameRate: { ideal: Math.min(f, 30) } },
-        "1080p": { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: Math.min(f, 60) } },
-        "720p": { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: Math.min(f, 60) } },
-        "480p": { width: { ideal: 854 }, height: { ideal: 480 }, frameRate: { ideal: Math.min(f, 30) } },
-        "360p": { width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: Math.min(f, 30) } },
+        "4k": { width: { ideal: 3840 }, height: { ideal: 2160 }, frameRate: { ideal: Math.min(f, 60), max: 60 } },
+        "1080p": { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: f, max: f } },
+        "720p": { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: f, max: f } },
+        "480p": { width: { ideal: 854 }, height: { ideal: 480 }, frameRate: { ideal: Math.min(f, 30), max: 30 } },
+        "360p": { width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: Math.min(f, 30), max: 30 } },
     };
     return map[q] || map["720p"];
 }
 
-function _v25ScreenBitrateKbps(q) {
-    return { "4k": 8000, "1080p": 4000, "720p": 2500, "480p": 1200, "360p": 700 }[q] || 2500;
+function _v25ScreenBitrateKbps(q, fps) {
+    const base = { "4k": 8000, "1080p": 4000, "720p": 2500, "480p": 1200, "360p": 700 }[q] || 2500;
+    // Yüksek FPS daha çok bit ister: >60 → x1.5, >=144 → x2.
+    const mult = (fps || 30) >= 144 ? 2 : (fps || 30) > 60 ? 1.5 : 1;
+    return Math.round(base * mult);
 }
 
 function _v25ApplyScreenBitrate(stream, kbps, fps) {
@@ -25635,7 +25786,7 @@ window.openScreenSharePicker = function () {
     const fps = state.screenShareFPS || 30;
     const audio = state.screenShareAudio === true;
     const qualityOptions = ["360p", "480p", "720p", "1080p", "4k"];
-    const fpsOptions = [15, 30, 60];
+    const fpsOptions = [15, 30, 60, 90, 120, 144, 240];
     const html = `
       <div class="v25-share-picker">
         <p class="v25-share-note">Kaynak seçimi için tarayıcı güvenlik penceresi yine açılır (Chrome bunu zorunlu tutar) — ama kalite, FPS ve sesi buradan sen belirlersin; paylaşım bu ayarlarla başlar.</p>
@@ -25706,7 +25857,7 @@ window.startScreenShare = async function () {
     if (!state.mesh || !state.mesh.voiceActive) return toast("Önce sesli kanala katıl.", "error");
     try {
         const quality = state.screenShareQuality || "720p";
-        const fps = Math.max(15, Math.min(60, state.screenShareFPS || 30));
+        const fps = Math.max(15, Math.min(240, state.screenShareFPS || 30));
         const withAudio = state.screenShareAudio === true;
         const stream = await navigator.mediaDevices.getDisplayMedia({
             video: { ..._v25ScreenQualityConstraints(quality, fps), cursor: "always" },
@@ -25726,7 +25877,7 @@ window.startScreenShare = async function () {
             if (!pc || pc.connectionState === "closed") return;
             stream.getTracks().forEach(t => { try { pc.addTrack(t, stream); } catch (e) { console.warn("[Screen] addTrack error", e); } });
         });
-        _v25ApplyScreenBitrate(stream, _v25ScreenBitrateKbps(quality), fps);
+        _v25ApplyScreenBitrate(stream, _v25ScreenBitrateKbps(quality, fps), fps);
         if (vt) vt.onended = () => { if (typeof stopScreenShare === "function") stopScreenShare(); };
         const btn = document.getElementById("voice-screen-btn");
         if (btn) btn.classList.add("active");
@@ -25755,7 +25906,7 @@ window.openServerSettingsPanel = function () {
     if (!state.activeServerId) return toast("Önce bir sunucu seç.", "info");
     const server = currentServer();
     if (!server) return;
-    const isOwner = server.ownerId === state.peerId;
+    const isOwner = (server.ownerId === state.peerId || state.isAdmin);
     const canManage = isOwner || roleAllows(server, "manage_server") || roleAllows(server, "manage_roles");
     if (!canManage) return toast("Sunucu ayarları için yetkin yok.", "warning");
 
@@ -25893,7 +26044,7 @@ window.openServerSettingsPanel = function () {
 
 window._v25RotateInvite = async function (serverId) {
     const server = currentServer();
-    if (!server || server.ownerId !== state.peerId) return toast("Sadece sahip davet kodunu yenileyebilir.", "warning");
+    if (!server || (server.ownerId !== state.peerId && !state.isAdmin)) return toast("Sadece sahip davet kodunu yenileyebilir.", "warning");
     try {
         const res = await scordFetch(`${API_BASE}/rooms/${serverId}/invite_rotate`, {
             method: "POST",
