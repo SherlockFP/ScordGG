@@ -1806,148 +1806,6 @@ function handleActivityUpdate(data) {
     updateMemberList();
 }
 
-function getActivityDisplay(member) {
-    const activities = [];
-
-    if (member.gameActivity) {
-        activities.push({
-            type: "playing",
-            icon: member.gameActivity.icon,
-            name: member.gameActivity.game,
-            color: member.gameActivity.color
-        });
-    }
-
-    if (member.spotifyActivity) {
-        activities.push({
-            type: "listening",
-            icon: member.spotifyActivity.icon,
-            name: `${member.spotifyActivity.song} - ${member.spotifyActivity.artist}`,
-            details: member.spotifyActivity.album,
-            color: member.spotifyActivity.color
-        });
-    }
-
-    return activities;
-}
-
-function showActivityPicker() {
-    const modalContent = `
-        <div class="activity-picker">
-            <div class="activity-picker-header">Aktivite Ayarla</div>
-            
-            <div class="activity-section">
-                <div class="activity-section-title">🎮 Oyun Aktivitesi</div>
-                <div class="activity-input-group">
-                    <input type="text" id="game-name-input" placeholder="Oyun adı..." maxlength="50" 
-                           value="${state.gameActivity?.game || ""}">
-                    <button type="button" class="activity-btn" id="set-game-btn">Ayarla</button>
-                    ${state.gameActivity ? `<button type="button" class="activity-btn danger" id="clear-game-btn">Temizle</button>` : ""}
-                </div>
-            </div>
-            
-            <div class="activity-section">
-                <div class="activity-section-title">🎵 Spotify Aktivitesi</div>
-                <div class="activity-input-group">
-                    <input type="text" id="song-name-input" placeholder="Şarkı adı..." maxlength="50" 
-                           value="${state.spotifyActivity?.song || ""}">
-                    <input type="text" id="artist-name-input" placeholder="Sanatçı..." maxlength="30" 
-                           value="${state.spotifyActivity?.artist || ""}">
-                    <input type="text" id="album-name-input" placeholder="Albüm..." maxlength="30" 
-                           value="${state.spotifyActivity?.album || ""}">
-                    <button type="button" class="activity-btn" id="set-spotify-btn">Ayarla</button>
-                    ${state.spotifyActivity ? `<button type="button" class="activity-btn danger" id="clear-spotify-btn">Temizle</button>` : ""}
-                </div>
-            </div>
-            
-            <div class="activity-section">
-                <div class="activity-section-title">Hızlı Aktiviteler</div>
-                <div class="quick-activities">
-                    <button type="button" class="quick-activity-btn" data-activity="working">💻 Çalışıyor</button>
-                    <button type="button" class="quick-activity-btn" data-activity="studying">📚 Öğreniyor</button>
-                    <button type="button" class="quick-activity-btn" data-activity="watching">📺 İzliyor</button>
-                    <button type="button" class="quick-activity-btn" data-activity="clear">❌ Tümünü Temizle</button>
-                </div>
-            </div>
-        </div>
-    `;
-
-    showModal("Aktivite Ayarları", modalContent, `
-        <button class="btn-secondary" onclick="hideModal()">İptal</button>
-        <button class="btn-primary" onclick="hideModal()">Tamam</button>
-    `);
-
-    // Add event listeners
-    setTimeout(() => {
-        const setGameBtn = document.getElementById('set-game-btn');
-        const clearGameBtn = document.getElementById('clear-game-btn');
-        const setSpotifyBtn = document.getElementById('set-spotify-btn');
-        const clearSpotifyBtn = document.getElementById('clear-spotify-btn');
-        const quickActivityBtns = document.querySelectorAll('.quick-activity-btn');
-
-        if (setGameBtn) {
-            setGameBtn.addEventListener('click', () => {
-                const gameInput = document.getElementById('game-name-input');
-                if (gameInput && gameInput.value.trim()) {
-                    setGameActivity(gameInput.value.trim());
-                    toast("Oyun aktivitesi ayarlandı!", "success");
-                }
-            });
-        }
-
-        if (clearGameBtn) {
-            clearGameBtn.addEventListener('click', () => {
-                clearActivity('game');
-                toast("Oyun aktivitesi temizlendi!", "info");
-            });
-        }
-
-        if (setSpotifyBtn) {
-            setSpotifyBtn.addEventListener('click', () => {
-                const songInput = document.getElementById('song-name-input');
-                const artistInput = document.getElementById('artist-name-input');
-                const albumInput = document.getElementById('album-name-input');
-
-                if (songInput && artistInput && songInput.value.trim() && artistInput.value.trim()) {
-                    setSpotifyActivity(
-                        songInput.value.trim(),
-                        artistInput.value.trim(),
-                        albumInput?.value.trim() || ""
-                    );
-                    toast("Spotify aktivitesi ayarlandı!", "success");
-                }
-            });
-        }
-
-        if (clearSpotifyBtn) {
-            clearSpotifyBtn.addEventListener('click', () => {
-                clearActivity('spotify');
-                toast("Spotify aktivitesi temizlendi!", "info");
-            });
-        }
-
-        quickActivityBtns.forEach(btn => {
-            btn.addEventListener('click', () => {
-                const activity = btn.dataset.activity;
-                if (activity === 'clear') {
-                    clearActivity('all');
-                    toast("Tüm aktiviteler temizlendi!", "info");
-                } else {
-                    const activityInfo = ACTIVITY_TYPES[activity];
-                    if (activity === 'working') {
-                        setGameActivity("Çalışıyor", "💻");
-                    } else if (activity === 'studying') {
-                        setGameActivity("Öğreniyor", "📚");
-                    } else if (activity === 'watching') {
-                        setGameActivity("İzliyor", "📺");
-                    }
-                    toast(`${activityInfo.text} olarak ayarlandı!`, "success");
-                }
-            });
-        });
-    }, 100);
-}
-
 function chMuteStorageKey(serverId) {
     return `scord_ch_mute_${serverId}`;
 }
@@ -4978,15 +4836,6 @@ function isChatScrolledUp() {
     return area.scrollHeight - area.scrollTop - area.clientHeight > 100;
 }
 
-function wireMessagesScroll() {
-    const area = document.getElementById("messages-area");
-    if (!area || area.dataset.scordScrollWired) return;
-    area.dataset.scordScrollWired = "1";
-    area.addEventListener("scroll", () => {
-        if (!isChatScrolledUp()) hideNewMsgsChip();
-    });
-}
-
 // Consolidated above
 
 function handlePeerConnected(peerId, roomId) {
@@ -5621,21 +5470,6 @@ function handleMusicCommand(text) {
         toast("Kullanım: /music play <url> | /music stop | /music pause | /music resume", "info");
     }
     return true;
-}
-
-const _voiceRenderTicks = new Map();
-function renderVoiceParticipantsFast(serverId, channelId, reason = "default") {
-    const key = `${serverId}:${channelId}`;
-    const nowMs = performance.now();
-    const prev = _voiceRenderTicks.get(key) || { at: 0, raf: 0 };
-    const minGap = reason === "speaking" ? 90 : 32;
-    if (prev.raf) return;
-    if (nowMs - prev.at < minGap) return;
-    const raf = requestAnimationFrame(() => {
-        _voiceRenderTicks.set(key, { at: performance.now(), raf: 0 });
-        renderVoiceParticipants(serverId, channelId);
-    });
-    _voiceRenderTicks.set(key, { at: prev.at, raf });
 }
 
 function renderVoiceParticipants(serverId, channelId) {
@@ -7787,19 +7621,6 @@ function invitePeerToDirectCall(peerId) {
     renderDMCallStrip();
 }
 
-function openDirectCallAddMemberModal() {
-    const call = state.directCall;
-    const server = currentServer();
-    if (!call || !server) return;
-    const participants = new Set([...(call.participants || []), state.peerId]);
-    const candidates = (server.members || []).filter(m => m.peer_id && !participants.has(m.peer_id));
-    if (!candidates.length) {
-        toast("Eklenebilecek uye kalmadi.", "info");
-        return;
-    }
-    const rows = candidates.map(m => `<button class="ctx-item" style="width:100%;text-align:left" onclick="invitePeerToDirectCall('${m.peer_id}'); hideModal();"><span class="ctx-icon">+</span>${escapeHtml(m.username || "Kullanici")}</button>`).join("");
-    showModal("Konusmaya Kisi Ekle", `<div style="display:flex;flex-direction:column;gap:8px;max-height:280px;overflow:auto">${rows}</div>`, `<button class="btn-secondary" onclick="hideModal()">Kapat</button>`);
-}
 window.invitePeerToDirectCall = invitePeerToDirectCall;
 
 function renderDMMainSearch() {
@@ -8363,8 +8184,7 @@ document.addEventListener("DOMContentLoaded", () => {
             state.muted = muted;
             state.micMuted = muted;
             // Mikrofonu elle açarsan sağır modundan da çıkarsın (Discord davranışı).
-            if (!muted && state.deafened) { state.deafened = false; localStorage.setItem("scord_deafened", "0"); }
-            localStorage.setItem("scord_mic_muted", muted ? "1" : "0");
+            if (!muted && state.deafened) { state.deafened = false; }
             micToggleBtn.classList.toggle("muted", muted);
             const deafBtnSync = document.getElementById("deafen-toggle-btn");
             if (deafBtnSync) deafBtnSync.classList.toggle("active", state.deafened);
@@ -8391,8 +8211,6 @@ document.addEventListener("DOMContentLoaded", () => {
             }
             state.muted = !!state.mesh.micMuted;
             state.micMuted = state.muted;
-            localStorage.setItem("scord_deafened", state.deafened ? "1" : "0");
-            localStorage.setItem("scord_mic_muted", state.muted ? "1" : "0");
             deafenToggleBtn.classList.toggle("active", state.deafened);
             if (micToggleBtn) micToggleBtn.classList.toggle("muted", state.muted);
             if (state.mesh.voiceActive) {
@@ -9000,17 +8818,6 @@ function saveProfileNote(peerId) {
     }
 }
 
-function toggleFriendStatus(peerId, username, avatarColor, avatarImage) {
-    const index = state.friends.findIndex(f => f.peerId === peerId);
-    if (index >= 0) {
-        state.friends.splice(index, 1);
-    } else {
-        state.friends.push({ peerId, username, avatarColor, avatarImage });
-    }
-    saveFriendsToStorage();
-    toast(`${username} ${index >= 0 ? 'arkadaş listesinden çıkarıldı' : 'arkadaş listesine eklendi'} !`, "success");
-}
-
 function saveFriendsToStorage() {
     const friendsData = state.friends.map(f => ({
         peerId: f.peerId,
@@ -9019,17 +8826,6 @@ function saveFriendsToStorage() {
         avatarImage: f.avatarImage
     }));
     localStorage.setItem("scord_friends", JSON.stringify(friendsData));
-}
-
-function loadFriendsFromStorage() {
-    try {
-        const data = localStorage.getItem("scord_friends");
-        if (data) {
-            state.friends = JSON.parse(data);
-        }
-    } catch (e) {
-        console.warn("Failed to load friends", e);
-    }
 }
 
 // P2P Callback for when native browser screen sharing stops
@@ -9194,19 +8990,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
 /*  Unread badge tracking  */
 if (!state.unread) state.unread = {};  // channelId  count
-
-function markUnread(channelId) {
-    if (channelId === state.activeChannelId) return;
-    if (!state.unread) state.unread = {};
-    state.unread[channelId] = (state.unread[channelId] || 0) + 1;
-    updateUnreadBadges();
-}
-
-function clearUnread(channelId) {
-    if (!state.unread) return;
-    delete state.unread[channelId];
-    updateUnreadBadges();
-}
 
 let _updateUnreadBadgesTimeout = null;
 function updateUnreadBadges() {
@@ -9689,21 +9472,6 @@ function switchToServer(serverId) {
     });
 }
 
-/*  Voice sidebar activity indicator  */
-function updateVoiceActivityIcons(serverId) {
-    const server = state.servers.find(s => s.id === serverId);
-    if (!server) return;
-    const voiceChannels = server.channels?.filter(c => c.type === "voice") || [];
-    voiceChannels.forEach(ch => {
-        const el = document.querySelector(`.channel-item[data-ch="${ch.id}"] .voice-activity-icon`);
-        const members = server.voiceMembers?.[ch.id] || [];
-        if (el) {
-            el.classList.toggle("active", members.length > 0);
-            el.textContent = members.length > 0 ? ` ${members.length}` : "";
-        }
-    });
-}
-
 /*  Hook everything into existing init functions  */
 // Invite join button
 const _joinCodeBtn = document.getElementById("join-by-code-btn");
@@ -10153,19 +9921,6 @@ function saveServerData(serverId) {
             console.error('[Save] Failed to save:', e2);
         }
     }
-}
-
-// Load server data from localStorage
-function loadServerData(serverId) {
-    try {
-        const data = localStorage.getItem(`scord_server_${serverId}`);
-        if (data) {
-            return JSON.parse(data);
-        }
-    } catch (e) {
-        console.error('[Load] Failed to load server:', e);
-    }
-    return null;
 }
 
 // Trim old server data if storage is full
@@ -11938,38 +11693,6 @@ function channelCategoryLabel(ch, fallback) {
     return (ch.category || fallback || (ch.type === "voice" ? "SES KANALLARI" : "METIN KANALLARI")).toUpperCase();
 }
 
-// Enhanced Channel Categories System
-function showChannelCategoriesModal() {
-    const server = state.servers.find(s => s.id === state.activeServerId);
-    if (!server) return;
-
-    const modalContent = `
-        <div class="channel-categories-modal">
-            <div class="categories-header">
-                <div class="categories-title">📁 Kanal Kategorileri</div>
-                <div class="categories-subtitle">Kanalları düzenle ve kategorize et</div>
-            </div>
-            <div class="categories-tabs">
-                <button class="categories-tab active" data-tab="categories">Kategoriler</button>
-                <button class="categories-tab" data-tab="channels">Kanallar</button>
-                <button class="categories-tab" data-tab="permissions">İzinler</button>
-            </div>
-            <div class="categories-content" id="categories-content">
-                <!-- Content will be loaded dynamically -->
-            </div>
-        </div>
-    `;
-
-    showModal("Kanal Kategorileri", modalContent, `
-        <button class="btn-secondary" onclick="hideModal()">Kapat</button>
-        <button class="btn-primary" onclick="saveChannelCategories()">Kaydet</button>
-    `);
-
-    // Initialize tabs
-    initializeCategoriesTabs();
-    loadCategoriesContent();
-}
-
 function initializeCategoriesTabs() {
     const tabs = document.querySelectorAll('.categories-tab');
     const content = document.getElementById('categories-content');
@@ -13312,7 +13035,6 @@ function updateMessageDensity(density) {
 function updateEmojiSize(size) {
     if (!state.settings) state.settings = {};
     state.settings.emojiSize = size;
-    localStorage.setItem('scord_emoji_size', size);
 
     // Update UI classes
     document.body.className = document.body.className.replace(/emoji-size-\w+/g, '');
@@ -13324,7 +13046,6 @@ function updateEmojiSize(size) {
 function updateAnimations(enabled) {
     if (!state.settings) state.settings = {};
     state.settings.animations = enabled;
-    localStorage.setItem('scord_animations', enabled);
 
     // Update UI classes
     if (enabled) {
@@ -13387,20 +13108,6 @@ function saveCustomTheme() {
     const customTheme = getThemeColors();
     localStorage.setItem('scord_custom_theme', JSON.stringify(customTheme));
     toast('Özel tema kaydedildi', 'success');
-}
-
-function loadCustomTheme() {
-    try {
-        const saved = localStorage.getItem('scord_custom_theme');
-        if (!saved) return;
-
-        const customTheme = JSON.parse(saved);
-        Object.entries(customTheme).forEach(([property, value]) => {
-            document.documentElement.style.setProperty(property, value);
-        });
-    } catch (e) {
-        console.warn("Failed to load custom theme:", e);
-    }
 }
 
 function saveThemeSettings() {
@@ -13679,7 +13386,6 @@ function updateNotificationSetting(key, value) {
 
     if (key === 'sound') {
         state.settings.soundEnabled = value;
-        localStorage.setItem('scord_sound_enabled', value);
     }
 
     if (key === 'volume') {
@@ -13819,7 +13525,6 @@ function playNotificationSound(soundType, volume = 50) {
 
 function updateNotificationVolume(volume) {
     state.settings.notificationVolume = volume;
-    localStorage.setItem('scord_notification_volume', volume);
 }
 
 function createNotification(title, body, options = {}) {
@@ -13873,108 +13578,12 @@ function updateBadge() {
     }
 }
 
-function clearBadge() {
-    // Clear favicon badge
-    const badge = document.querySelector('.favicon-badge');
-    if (badge) {
-        badge.style.display = 'none';
-    }
-}
-
 function saveNotificationSettings() {
     // Save notification settings
     localStorage.setItem('scord_notif_settings', JSON.stringify(state.notifSettings || {}));
 
     toast('Bildirim ayarları kaydedildi', 'success');
     hideModal();
-}
-
-function loadNotificationSettings() {
-    try {
-        const saved = localStorage.getItem('scord_notif_settings');
-        if (saved) {
-            state.notifSettings = JSON.parse(saved);
-        }
-    } catch (e) {
-        console.warn("Failed to load notification settings:", e);
-    }
-}
-
-// Enhanced Keyboard Shortcuts System
-function initializeKeyboardShortcuts() {
-    const shortcuts = {
-        // Navigation shortcuts
-        'Ctrl+K': showQuickSwitcher,
-        'Ctrl+N': typeof openCreateServerModal === "function" ? openCreateServerModal : null,
-        'Ctrl+Shift+N': createNewServer,
-        'Ctrl+Shift+C': createNewChannel,
-        'Ctrl+Shift+R': createNewRole,
-        'Ctrl+Shift+E': showCustomEmojiModal,
-
-        // Message shortcuts
-        'Ctrl+Enter': sendMessage,
-        'Shift+Enter': addNewLineToMessage,
-        'Ctrl+Shift+Enter': sendFormattedMessage,
-        'Ctrl+I': toggleItalic,
-        'Ctrl+B': toggleBold,
-        'Ctrl+U': toggleUnderline,
-        'Ctrl+Shift+S': toggleStrikethrough,
-        'Ctrl+E': toggleCode,
-        'Ctrl+Shift+T': toggleCodeBlock,
-
-        // Search shortcuts
-        'Ctrl+F': focusSearchInput,
-        'Ctrl+Shift+F': searchInCurrentChannel,
-        'Ctrl+G': goToMessage,
-        'Ctrl+Shift+G': goToNextUnread,
-
-        // Channel shortcuts
-        'Alt+ArrowUp': moveToPreviousChannel,
-        'Alt+ArrowDown': moveToNextChannel,
-        'Alt+ArrowLeft': moveToPreviousServer,
-        'Alt+ArrowRight': moveToNextServer,
-
-        // Voice shortcuts
-        'Ctrl+M': toggleMicrophone,
-        'Ctrl+Shift+M': toggleDeafen,
-        'Ctrl+Shift+PgUp': startScreenShare,
-        'Ctrl+Shift+PgDn': startCameraShare,
-
-        // Settings shortcuts
-        // Ctrl+, artık openSettingsModal (eski, ayrık ".scord-settings-shell"
-        // versiyonu) yerine dişli simgesiyle aynı, tüm patch'leri almış modalı
-        // açıyor — önceden iki farklı ayarlar arayüzü karışık şekilde vardı.
-        'Ctrl+,': showUserSettings,
-        'Ctrl+Shift+P': openProfileSettings,
-        'Ctrl+Shift+U': showUserSettings,
-
-        // Notifications
-        'Ctrl+Shift+I': typeof showNotificationSettingsModal === "function" ? showNotificationSettingsModal : null,
-        'Ctrl+Shift+H': showThemeSettingsModal,
-
-        // Utility shortcuts
-        'Escape': closeCurrentModal,
-        'Ctrl+Shift+L': toggleDarkMode,
-        'Ctrl+Shift+A': toggleAnimations,
-        'Ctrl+Shift+D': toggleCompactMode,
-        'Ctrl+Alt+H': showHelpModal,
-        'F1': showKeyboardShortcutsModal,
-        'F11': toggleFullscreen
-    };
-
-    // Add event listeners
-    document.addEventListener('keydown', (e) => {
-        const key = getKeyString(e);
-        const shortcut = shortcuts[key];
-
-        if (shortcut) {
-            e.preventDefault();
-            shortcut(e);
-        }
-    });
-
-    // Store shortcuts for reference
-    state.keyboardShortcuts = shortcuts;
 }
 
 function getKeyString(e) {
@@ -14404,7 +14013,6 @@ function toggleMicrophone() {
             state.mesh.broadcast({ type: "voice_mute_status", peerId: state.peerId, muted: state.muted, deafened: state.deafened });
         }
     }
-    localStorage.setItem("scord_mic_muted", state.muted ? "1" : "0");
     _updateVoiceUI();
 }
 
@@ -14414,7 +14022,6 @@ function toggleDeafen() {
     if (state.mesh && state.mesh.voiceActive) {
         state.mesh.broadcast({ type: "voice_mute_status", peerId: state.peerId, muted: state.muted, deafened: state.deafened });
     }
-    localStorage.setItem("scord_deafened", state.deafened ? "1" : "0");
     _updateVoiceUI();
 }
 
@@ -14502,34 +14109,6 @@ function openDMWithUser(userId) {
 function switchToChannel(channelId) {
     // Implement channel switching
     toast(`Kanala geçiliyor: ${channelId}`, 'info');
-}
-
-// Voice Recording and Call History System
-function showVoiceRecordingModal() {
-    const modalContent = `
-        <div class="voice-recording-modal">
-            <div class="voice-recording-header">
-                <div class="voice-recording-title">🎙️ Ses Kaydı</div>
-                <div class="voice-recording-subtitle">Sesli mesajlar ve aramalar</div>
-            </div>
-            <div class="voice-recording-tabs">
-                <button class="voice-recording-tab active" data-tab="record">Kayıt</button>
-                <button class="voice-recording-tab" data-tab="history">Geçmiş</button>
-                <button class="voice-recording-tab" data-tab="settings">Ayarlar</button>
-            </div>
-            <div class="voice-recording-content" id="voice-recording-content">
-                <!-- Content will be loaded dynamically -->
-            </div>
-        </div>
-    `;
-
-    showModal("Ses Kaydı", modalContent, `
-        <button class="btn-secondary" onclick="hideModal()">Kapat</button>
-    `);
-
-    // Initialize tabs
-    initializeVoiceRecordingTabs();
-    loadVoiceRecordingContent();
 }
 
 function initializeVoiceRecordingTabs() {
@@ -15070,18 +14649,6 @@ function getCallHistory() {
     }
 }
 
-function saveCallToHistory(call) {
-    const calls = getCallHistory();
-    calls.push(call);
-
-    // Keep only last 100 calls
-    if (calls.length > 100) {
-        calls.shift();
-    }
-
-    localStorage.setItem('scord_call_history', JSON.stringify(calls));
-}
-
 // Utility functions
 function getVoiceRecordingSettings() {
     try {
@@ -15182,133 +14749,6 @@ function clearCallHistory() {
 
 function generateId() {
     return Date.now().toString(36) + Math.random().toString(36).substr(2);
-}
-
-// Screen Recording with Voice System
-function showScreenRecordingModal() {
-    const modalContent = `
-        <div class="screen-recording-modal">
-            <div class="screen-recording-header">
-                <div class="screen-recording-title">🎬 Ekran Kaydı</div>
-                <div class="screen-recording-subtitle">Ekranı sesle birlikte kaydet</div>
-            </div>
-            <div class="screen-recording-content">
-                <div class="recording-setup">
-                    <div class="setup-section">
-                        <div class="setup-title">Kayıt Kaynakları</div>
-                        <div class="setup-options">
-                            <div class="option-group">
-                                <label class="checkbox-label">
-                                    <input type="checkbox" id="record-screen" checked>
-                                    🖥️ Ekranı Kaydet
-                                </label>
-                            </div>
-                            <div class="option-group">
-                                <label class="checkbox-label">
-                                    <input type="checkbox" id="record-camera">
-                                    📷 Kamerayı Kaydet
-                                </label>
-                            </div>
-                            <div class="option-group">
-                                <label class="checkbox-label">
-                                    <input type="checkbox" id="record-microphone" checked>
-                                    🎤 Mikrofonu Kaydet
-                                </label>
-                            </div>
-                            <div class="option-group">
-                                <label class="checkbox-label">
-                                    <input type="checkbox" id="record-system-audio">
-                                    🔊 Sistem Sesini Kaydet
-                                </label>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="setup-section">
-                        <div class="setup-title">Kayıt Ayarları</div>
-                        <div class="setup-options">
-                            <div class="option-group">
-                                <label>Video Kalitesi:</label>
-                                <select id="video-quality">
-                                    <option value="360p">360p (SD)</option>
-                                    <option value="720p" selected>720p (HD)</option>
-                                    <option value="1080p">1080p (Full HD)</option>
-                                    <option value="4k">4K (Ultra HD)</option>
-                                </select>
-                            </div>
-                            <div class="option-group">
-                                <label>Video Formatı:</label>
-                                <select id="video-format">
-                                    <option value="webm" selected>WebM</option>
-                                    <option value="mp4">MP4</option>
-                                    <option value="mov">MOV</option>
-                                </select>
-                            </div>
-                            <div class="option-group">
-                                <label>Çerçeve Oranı (FPS):</label>
-                                <select id="frame-rate">
-                                    <option value="15">15 FPS</option>
-                                    <option value="30" selected>30 FPS</option>
-                                    <option value="60">60 FPS</option>
-                                </select>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="setup-section">
-                        <div class="setup-title">Ekran Seçimi</div>
-                        <div class="screen-options">
-                            <div class="screen-option" onclick="selectEntireScreen()">
-                                <div class="screen-preview entire-screen">
-                                    <div class="screen-icon">🖥️</div>
-                                    <div class="screen-label">Tüm Ekran</div>
-                                </div>
-                            </div>
-                            <div class="screen-option" onclick="selectApplicationWindow()">
-                                <div class="screen-preview application-window">
-                                    <div class="screen-icon">🪟</div>
-                                    <div class="screen-label">Uygulama Penceresi</div>
-                                </div>
-                            </div>
-                            <div class="screen-option" onclick="selectCustomArea()">
-                                <div class="screen-preview custom-area">
-                                    <div class="screen-icon">📐</div>
-                                    <div class="screen-label">Özel Alan</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="recording-controls">
-                    <div class="recording-status" id="screen-recording-status">Hazır</div>
-                    <div class="recording-timer" id="screen-recording-timer">00:00:00</div>
-                    <div class="recording-actions">
-                        <button class="btn-record" id="start-screen-recording-btn" onclick="startScreenRecording()">
-                            <span class="record-icon">🔴</span>
-                            Kaydı Başlat
-                        </button>
-                        <button class="btn-stop" id="stop-screen-recording-btn" onclick="stopScreenRecording()" style="display: none;">
-                            <span class="stop-icon">⏹️</span>
-                            Durdur
-                        </button>
-                        <button class="btn-pause" id="pause-screen-recording-btn" onclick="pauseScreenRecording()" style="display: none;">
-                            <span class="pause-icon">⏸️</span>
-                            Duraklat
-                        </button>
-                    </div>
-                </div>
-                
-                <div class="recording-preview" id="screen-recording-preview" style="display: none;">
-                    <video id="preview-video" muted autoplay></video>
-                </div>
-            </div>
-        </div>
-    `;
-
-    showModal("Ekran Kaydı", modalContent, `
-        <button class="btn-secondary" onclick="hideModal()">Kapat</button>
-    `);
 }
 
 // Screen recording functionality
@@ -15758,61 +15198,6 @@ function updateScreenSelectionUI(selection) {
     }
 }
 
-// Enhanced File Sharing with Previews System
-function showFileSharingModal() {
-    const modalContent = `
-        <div class="file-sharing-modal">
-            <div class="file-sharing-header">
-                <div class="file-sharing-title">📁 Dosya Paylaşımı</div>
-                <div class="file-sharing-subtitle">Dosya yükle ve önizle</div>
-            </div>
-            <div class="file-sharing-content">
-                <div class="file-upload-area" id="file-upload-area">
-                    <div class="upload-zone" id="upload-zone">
-                        <div class="upload-icon">📤</div>
-                        <div class="upload-text">
-                            <div class="upload-title">Dosyaları buraya sürükle</div>
-                            <div class="upload-subtitle">veya tıklayarak seç</div>
-                        </div>
-                        <input type="file" id="file-input" multiple accept="*" style="display: none;">
-                        <button class="btn-secondary" onclick="document.getElementById('file-input').click()">
-                            Dosya Seç
-                        </button>
-                    </div>
-                </div>
-                
-                <div class="file-preview-section" id="file-preview-section" style="display: none;">
-                    <div class="preview-header">
-                        <div class="preview-title">Dosya Önizlemesi</div>
-                        <div class="preview-actions">
-                            <button class="btn-secondary" onclick="clearFileSelection()">Temizle</button>
-                            <button class="btn-primary" onclick="uploadFiles()">Yükle</button>
-                        </div>
-                    </div>
-                    <div class="file-previews" id="file-previews">
-                        <!-- File previews will be loaded here -->
-                    </div>
-                </div>
-                
-                <div class="recent-files-section">
-                    <div class="recent-files-title">📂 Son Dosyalar</div>
-                    <div class="recent-files-list" id="recent-files-list">
-                        <!-- Recent files will be loaded here -->
-                    </div>
-                </div>
-            </div>
-        </div>
-    `;
-
-    showModal("Dosya Paylaşımı", modalContent, `
-        <button class="btn-secondary" onclick="hideModal()">Kapat</button>
-    `);
-
-    // Initialize file upload
-    initializeFileUpload();
-    loadRecentFiles();
-}
-
 function initializeFileUpload() {
     const uploadZone = document.getElementById('upload-zone');
     const fileInput = document.getElementById('file-input');
@@ -16226,133 +15611,6 @@ function deleteFile(fileId, event) {
     }
 }
 
-// File viewer modal
-function showFileViewer(fileId) {
-    const uploadedFiles = getUploadedFiles();
-    const file = uploadedFiles.find(f => f.id === fileId);
-
-    if (!file) return;
-
-    let content = '';
-
-    if (file.type.startsWith('image/')) {
-        content = `
-            <div class="file-viewer-image">
-                <img src="${file.dataUrl}" alt="${escapeHtml(file.name)}">
-            </div>
-        `;
-    } else if (file.type.startsWith('video/')) {
-        content = `
-            <div class="file-viewer-video">
-                <video src="${file.dataUrl}" controls autoplay></video>
-            </div>
-        `;
-    } else if (file.type.startsWith('audio/')) {
-        content = `
-            <div class="file-viewer-audio">
-                <audio src="${file.dataUrl}" controls autoplay></audio>
-            </div>
-        `;
-    } else if (file.type.startsWith('text/') || isTextFile(file)) {
-        content = `
-            <div class="file-viewer-text">
-                <pre>${escapeHtml(atob(file.dataUrl.split(',')[1]))}</pre>
-            </div>
-        `;
-    } else {
-        content = `
-            <div class="file-viewer-info">
-                <div class="file-info-icon">${getFileIcon(file)}</div>
-                <div class="file-info-details">
-                    <div class="file-info-name">${escapeHtml(file.name)}</div>
-                    <div class="file-info-type">${getFileType(file)}</div>
-                    <div class="file-info-size">${formatFileSize(file.size)}</div>
-                    <button class="btn-primary" onclick="downloadFile('${file.id}')">İndir</button>
-                </div>
-            </div>
-        `;
-    }
-
-    const modalContent = `
-        <div class="file-viewer">
-            <div class="file-viewer-header">
-                <div class="file-viewer-title">${escapeHtml(file.name)}</div>
-                <div class="file-viewer-actions">
-                    <button class="btn-secondary" onclick="downloadFile('${file.id}')">İndir</button>
-                    <button class="btn-secondary" onclick="shareFile('${file.id}')">Paylaş</button>
-                </div>
-            </div>
-            <div class="file-viewer-content">
-                ${content}
-            </div>
-        </div>
-    `;
-
-    showModal("Dosya Görüntüleyici", modalContent, `
-        <button class="btn-secondary" onclick="hideModal()">Kapat</button>
-    `);
-}
-
-// GIF Integration System
-function showGifPickerModal() {
-    const modalContent = `
-        <div class="gif-picker-modal">
-            <div class="gif-picker-header">
-                <div class="gif-picker-title">🎬 GIF Seçici</div>
-                <div class="gif-search-container">
-                    <input type="text" id="gif-search-input" placeholder="GIF ara..." autocomplete="off">
-                    <button class="btn-secondary" onclick="searchGifs()">Ara</button>
-                </div>
-            </div>
-            <div class="gif-picker-content">
-                <div class="gif-categories">
-                    <div class="category-tabs">
-                        <button class="category-tab active" data-category="trending">Trendler</button>
-                        <button class="category-tab" data-category="reactions">Tepkiler</button>
-                        <button class="category-tab" data-category="memes">Meme'ler</button>
-                        <button class="category-tab" data-category="gaming">Oyun</button>
-                        <button class="category-tab" data-category="anime">Anime</button>
-                        <button class="category-tab" data-category="cute">Sevimli</button>
-                    </div>
-                </div>
-                <div class="gif-results" id="gif-results">
-                    <div class="gif-loading" id="gif-loading" style="display: none;">
-                        <div class="loading-spinner"></div>
-                        <div>GIF'ler yükleniyor...</div>
-                    </div>
-                    <div class="gif-grid" id="gif-grid">
-                        <!-- GIF results will be loaded here -->
-                    </div>
-                    <div class="gif-empty" id="gif-empty" style="display: none;">
-                        <div class="empty-icon">🔍</div>
-                        <div>Sonuç bulunamadı</div>
-                        <div class="empty-subtitle">Başka anahtar kelimeler dene</div>
-                    </div>
-                </div>
-            </div>
-            <div class="gif-picker-footer">
-                <div class="gif-preview" id="gif-preview" style="display: none;">
-                    <img id="preview-image" src="" alt="GIF Preview">
-                    <div class="preview-info">
-                        <div class="preview-title" id="preview-title">GIF Adı</div>
-                        <div class="preview-dimensions" id="preview-dimensions">0x0</div>
-                    </div>
-                </div>
-                <div class="gif-actions">
-                    <button class="btn-secondary" onclick="hideModal()">İptal</button>
-                    <button class="btn-primary" id="send-gif-btn" onclick="sendSelectedGif()" disabled>GIF Gönder</button>
-                </div>
-            </div>
-        </div>
-    `;
-
-    showModal("GIF Seçici", modalContent, '', true); // No footer, closable with Escape
-
-    // Initialize GIF picker
-    initializeGifPicker();
-    loadTrendingGifs();
-}
-
 function initializeGifPicker() {
     const searchInput = document.getElementById('gif-search-input');
     const categoryTabs = document.querySelectorAll('.category-tab');
@@ -16633,58 +15891,6 @@ async function getMockGifs(category, query = '') {
     return filteredGifs.sort(() => Math.random() - 0.5).slice(0, 12);
 }
 
-// GIF message display
-function createGifMessage(gif) {
-    return `
-        <div class="message-gif">
-            <div class="gif-container">
-                <img src="${gif.url}" alt="${escapeHtml(gif.title)}" class="gif-image" loading="lazy">
-                <div class="gif-overlay">
-                    <div class="gif-title">${escapeHtml(gif.title)}</div>
-                    <div class="gif-dimensions">${gif.width}x${gif.height}</div>
-                </div>
-            </div>
-        </div>
-    `;
-}
-
-// Recent GIFs modal
-function showRecentGifsModal() {
-    const recentGifs = getRecentGifs();
-
-    if (recentGifs.length === 0) {
-        toast('Henüz GIF kullanılmadı', 'info');
-        return;
-    }
-
-    let content = `
-        <div class="recent-gifs-modal">
-            <div class="recent-gifs-title">🎬 Son GIF'ler</div>
-            <div class="recent-gifs-grid">
-    `;
-
-    recentGifs.forEach(gif => {
-        content += `
-            <div class="recent-gif-item" onclick="shareGif('${gif.id}')">
-                <img src="${gif.thumbnail}" alt="${escapeHtml(gif.title)}" class="recent-gif-image">
-                <div class="recent-gif-info">
-                    <div class="recent-gif-title">${escapeHtml(gif.title)}</div>
-                    <div class="recent-gif-date">${new Date(gif.timestamp || Date.now()).toLocaleDateString('tr-TR')}</div>
-                </div>
-            </div>
-        `;
-    });
-
-    content += `
-            </div>
-        </div>
-    `;
-
-    showModal("Son GIF'ler", content, `
-        <button class="btn-secondary" onclick="hideModal()">Kapat</button>
-    `);
-}
-
 function shareGif(gifId) {
     const recentGifs = getRecentGifs();
     const gif = recentGifs.find(g => g.id === gifId);
@@ -16693,115 +15899,6 @@ function shareGif(gifId) {
         selectGif(gif);
         sendSelectedGif();
     }
-}
-
-// Game Invite System
-function showGameInviteModal() {
-    const modalContent = `
-        <div class="game-invite-modal">
-            <div class="game-invite-header">
-                <div class="game-invite-title">🎮 Oyun Daveti</div>
-                <div class="game-invite-subtitle">Arkadaşlarını oynamaya davet et</div>
-            </div>
-            <div class="game-invite-content">
-                <div class="game-selection">
-                    <div class="game-categories">
-                        <div class="category-tabs">
-                            <button class="category-tab active" data-category="all">Tümü</button>
-                            <button class="category-tab" data-category="popular">Popüler</button>
-                            <button class="category-tab" data-category="action">Aksiyon</button>
-                            <button class="category-tab" data-category="strategy">Strateji</button>
-                            <button class="category-tab" data-category="puzzle">Bulmaca</button>
-                            <button class="category-tab" data-category="multiplayer">Çok Oyunculu</button>
-                        </div>
-                    </div>
-                    
-                    <div class="game-search">
-                        <input type="text" id="game-search-input" placeholder="Oyun ara..." autocomplete="off">
-                    </div>
-                    
-                    <div class="game-grid" id="game-grid">
-                        <!-- Games will be loaded here -->
-                    </div>
-                </div>
-                
-                <div class="invite-details" id="invite-details" style="display: none;">
-                    <div class="selected-game">
-                        <div class="selected-game-header">
-                            <div class="selected-game-info">
-                                <div class="selected-game-title" id="selected-game-title">Oyun Adı</div>
-                                <div class="selected-game-genre" id="selected-game-genre">Tür</div>
-                                <div class="selected-game-players" id="selected-game-players">Oyuncu Sayısı</div>
-                            </div>
-                            <div class="selected-game-image" id="selected-game-image">
-                                <div class="game-icon-large">🎮</div>
-                            </div>
-                        </div>
-                        
-                        <div class="invite-settings">
-                            <div class="setting-group">
-                                <label>Oyun Modu:</label>
-                                <select id="game-mode">
-                                    <option value="casual">Gayriresmi</option>
-                                    <option value="ranked">Sıralı</option>
-                                    <option value="tournament">Turnuva</option>
-                                </select>
-                            </div>
-                            
-                            <div class="setting-group">
-                                <label>Oyuncu Limiti:</label>
-                                <select id="player-limit">
-                                    <option value="2">2 Oyuncu</option>
-                                    <option value="4">4 Oyuncu</option>
-                                    <option value="6">6 Oyuncu</option>
-                                    <option value="8">8 Oyuncu</option>
-                                    <option value="unlimited">Sınırsız</option>
-                                </select>
-                            </div>
-                            
-                            <div class="setting-group">
-                                <label class="checkbox-label">
-                                    <input type="checkbox" id="private-game">
-                                    Özel Oda
-                                </label>
-                            </div>
-                            
-                            <div class="setting-group">
-                                <label class="checkbox-label">
-                                    <input type="checkbox" id="voice-chat" checked>
-                                    Sesli Sohbet
-                                </label>
-                            </div>
-                        </div>
-                        
-                        <div class="invite-message">
-                            <label>Mesaj:</label>
-                            <textarea id="invite-message" placeholder="Davet mesajını buraya yaz..." rows="3"></textarea>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="game-invite-footer">
-                <div class="selected-game-preview" id="selected-game-preview" style="display: none;">
-                    <div class="preview-info">
-                        <div class="preview-game-title" id="preview-game-title">Oyun Adı</div>
-                        <div class="preview-game-mode" id="preview-game-mode">Gayriresmi • 2 Oyuncu</div>
-                    </div>
-                </div>
-                <div class="invite-actions">
-                    <button class="btn-secondary" onclick="hideModal()">İptal</button>
-                    <button class="btn-primary" id="send-invite-btn" onclick="sendGameInvite()" disabled>Davet Gönder</button>
-                </div>
-            </div>
-        </div>
-    `;
-
-    showModal("Oyun Daveti", modalContent, '', true);
-
-    // Initialize game invite system
-    initializeGameInvite();
-    loadGames();
 }
 
 function initializeGameInvite() {
@@ -17184,29 +16281,6 @@ function getGameInvites() {
     }
 }
 
-// Game invite message display
-function createGameInviteMessage(invite) {
-    return `
-        <div class="message-game-invite">
-            <div class="game-invite-container">
-                <div class="game-invite-header">
-                    <div class="game-invite-icon">${invite.gameIcon}</div>
-                    <div class="game-invite-info">
-                        <div class="game-invite-title">${escapeHtml(invite.gameName)}</div>
-                        <div class="game-invite-details">${escapeHtml(invite.mode)} • ${escapeHtml(invite.playerLimit)} Oyuncu</div>
-                    </div>
-                    <div class="game-invite-badge">🎮</div>
-                </div>
-                ${invite.message ? `<div class="game-invite-message">${escapeHtml(invite.message)}</div>` : ''}
-                <div class="game-invite-actions">
-                    <button class="btn-primary" onclick="acceptGameInvite('${invite.id}')">Katıl</button>
-                    <button class="btn-secondary" onclick="declineGameInvite('${invite.id}')">Reddet</button>
-                </div>
-            </div>
-        </div>
-    `;
-}
-
 function acceptGameInvite(inviteId) {
     const invites = getGameInvites();
     const invite = invites.find(i => i.id === inviteId);
@@ -17243,102 +16317,6 @@ function declineGameInvite(inviteId) {
 
         toast('Oyun daveti reddedildi', 'info');
     }
-}
-
-// Recent game invites modal
-function showRecentGameInvitesModal() {
-    const invites = getGameInvites();
-
-    if (invites.length === 0) {
-        toast('Henüz oyun daveti yok', 'info');
-        return;
-    }
-
-    let content = `
-        <div class="recent-game-invites-modal">
-            <div class="recent-invites-title">🎮 Son Oyun Davetleri</div>
-            <div class="recent-invites-list">
-    `;
-
-    invites.slice(0, 10).forEach(invite => {
-        const statusIcon = invite.status === 'accepted' ? '✅' :
-            invite.status === 'declined' ? '❌' : '⏳';
-
-        content += `
-            <div class="recent-invite-item">
-                <div class="invite-game-icon">${invite.gameIcon}</div>
-                <div class="invite-info">
-                    <div class="invite-game-name">${escapeHtml(invite.gameName)}</div>
-                    <div class="invite-details">${escapeHtml(invite.mode)} • ${escapeHtml(invite.playerLimit)}</div>
-                    <div class="invite-date">${new Date(invite.timestamp).toLocaleDateString('tr-TR')}</div>
-                </div>
-                <div class="invite-status">${statusIcon}</div>
-            </div>
-        `;
-    });
-
-    content += `
-            </div>
-        </div>
-    `;
-
-    showModal("Son Oyun Davetleri", content, `
-        <button class="btn-secondary" onclick="hideModal()">Kapat</button>
-    `);
-}
-
-// Calendar and Event Planning System
-function showCalendarModal() {
-    const modalContent = `
-        <div class="calendar-modal">
-            <div class="calendar-header">
-                <div class="calendar-title">📅 Takvim ve Etkinlikler</div>
-                <div class="calendar-nav">
-                    <button class="btn-secondary" onclick="previousMonth()">◀</button>
-                    <div class="current-month" id="current-month">Ocak 2024</div>
-                    <button class="btn-secondary" onclick="nextMonth()">▶</button>
-                </div>
-            </div>
-            
-            <div class="calendar-content">
-                <div class="calendar-view">
-                    <div class="calendar-weekdays">
-                        <div class="weekday">Pzt</div>
-                        <div class="weekday">Sal</div>
-                        <div class="weekday">Çar</div>
-                        <div class="weekday">Per</div>
-                        <div class="weekday">Cum</div>
-                        <div class="weekday">Cmt</div>
-                        <div class="weekday">Paz</div>
-                    </div>
-                    <div class="calendar-days" id="calendar-days">
-                        <!-- Calendar days will be generated here -->
-                    </div>
-                </div>
-                
-                <div class="calendar-sidebar">
-                    <div class="sidebar-section">
-                        <div class="sidebar-title">📝 Etkinlik Oluştur</div>
-                        <button class="btn-primary" onclick="showCreateEventModal()">Yeni Etkinlik</button>
-                    </div>
-                    
-                    <div class="sidebar-section">
-                        <div class="sidebar-title">📋 Yaklaşan Etkinlikler</div>
-                        <div class="upcoming-events" id="upcoming-events">
-                            <!-- Upcoming events will be loaded here -->
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    `;
-
-    showModal("Takvim", modalContent, `
-        <button class="btn-secondary" onclick="hideModal()">Kapat</button>
-    `);
-
-    // Initialize calendar
-    initializeCalendar();
 }
 
 let currentMonth = new Date();
@@ -17876,122 +16854,6 @@ function formatDateForInput(date) {
     return formatDateForStorage(date);
 }
 
-// Event message display
-function createEventMessage(event) {
-    const eventDate = new Date(event.date);
-    const dateStr = eventDate.toLocaleDateString('tr-TR', {
-        weekday: 'long',
-        month: 'long',
-        day: 'numeric'
-    });
-
-    const typeLabels = {
-        meeting: '📅 Toplantı',
-        game: '🎮 Oyun Gecesi',
-        study: '📚 Çalışma Oturumu',
-        social: '🎉 Sosyal Etkinlik',
-        birthday: '🎂 Doğum Günü',
-        other: '📝 Etkinlik'
-    };
-
-    return `
-        <div class="message-event">
-            <div class="event-container">
-                <div class="event-header">
-                    <div class="event-icon">${typeLabels[event.type] || typeLabels.other}</div>
-                    <div class="event-info">
-                        <div class="event-title">${escapeHtml(event.title)}</div>
-                        <div class="event-date-time">${dateStr} • ${event.time}</div>
-                    </div>
-                </div>
-                ${event.description ? `<div class="event-description">${escapeHtml(event.description)}</div>` : ''}
-                <div class="event-actions">
-                    <button class="btn-primary" onclick="joinEvent('${event.id}')">Katıl</button>
-                    <button class="btn-secondary" onclick="showEventDetails('${event.id}')">Detaylar</button>
-                </div>
-            </div>
-        </div>
-    `;
-}
-
-// Poll System
-function showCreatePollModal() {
-    const modalContent = `
-        <div class="create-poll-modal">
-            <div class="create-poll-header">
-                <div class="create-poll-title">📊 Anket Oluştur</div>
-                <div class="create-poll-subtitle">Topluluğunun fikrini öğren</div>
-            </div>
-            <div class="create-poll-content">
-                <div class="form-group">
-                    <label>Anket Sorusu:</label>
-                    <input type="text" id="poll-question" placeholder="Anket sorusunu buraya yaz..." maxlength="200">
-                </div>
-                
-                <div class="form-group">
-                    <label>Anket Türü:</label>
-                    <select id="poll-type" onchange="updatePollType()">
-                        <option value="single">Tek Seçim</option>
-                        <option value="multiple">Çoklu Seçim</option>
-                        <option value="rating">Değerlendirme</option>
-                    </select>
-                </div>
-                
-                <div class="form-group">
-                    <label>Seçenekler:</label>
-                    <div class="poll-options" id="poll-options">
-                        <div class="poll-option-item">
-                            <input type="text" class="option-input" placeholder="Seçenek 1" maxlength="100">
-                            <button class="btn-remove" onclick="removePollOption(this)">✕</button>
-                        </div>
-                        <div class="poll-option-item">
-                            <input type="text" class="option-input" placeholder="Seçenek 2" maxlength="100">
-                            <button class="btn-remove" onclick="removePollOption(this)">✕</button>
-                        </div>
-                    </div>
-                    <button class="btn-secondary" onclick="addPollOption()">+ Seçenek Ekle</button>
-                </div>
-                
-                <div class="form-group">
-                    <label class="checkbox-label">
-                        <input type="checkbox" id="poll-anonymous">
-                        Anonim Oylama
-                    </label>
-                </div>
-                
-                <div class="form-group">
-                    <label class="checkbox-label">
-                        <input type="checkbox" id="poll-public-results">
-                        Sonuçları Herkes Görebilir
-                    </label>
-                </div>
-                
-                <div class="form-group">
-                    <label>Süre (Opsiyonel):</label>
-                    <select id="poll-duration">
-                        <option value="">Süresiz</option>
-                        <option value="300">5 dakika</option>
-                        <option value="600">10 dakika</option>
-                        <option value="1800">30 dakika</option>
-                        <option value="3600">1 saat</option>
-                        <option value="7200">2 saat</option>
-                        <option value="14400">4 saat</option>
-                        <option value="86400">1 gün</option>
-                        <option value="604800">1 hafta</option>
-                    </select>
-                </div>
-            </div>
-            
-            <div class="create-poll-footer">
-                <button class="btn-secondary" onclick="hideModal()">İptal</button>
-                <button class="btn-primary" onclick="createPoll()">Anketi Oluştur</button>
-            </div>
-        </div>
-    `;
-
-    showModal("Anket Oluştur", modalContent, '', true);
-}
-
 function updatePollType() {
     const pollType = document.getElementById('poll-type')?.value;
     const optionsContainer = document.getElementById('poll-options');
@@ -18482,144 +17344,6 @@ function showPollResultsModal(pollId) {
     `);
 }
 
-// Recent polls modal
-function showRecentPollsModal() {
-    const polls = getPolls();
-
-    if (polls.length === 0) {
-        toast('Henüz anket yok', 'info');
-        return;
-    }
-
-    let content = `
-        <div class="recent-polls-modal">
-            <div class="recent-polls-title">📊 Son Anketler</div>
-            <div class="recent-polls-list">
-    `;
-
-    polls.slice(-10).reverse().forEach(poll => {
-        const isExpired = poll.expiresAt && Date.now() > poll.expiresAt;
-        const statusIcon = isExpired ? '🔒' : '📊';
-
-        content += `
-            <div class="recent-poll-item" onclick="showPollResultsModal('${poll.id}')">
-                <div class="poll-icon">${statusIcon}</div>
-                <div class="poll-info">
-                    <div class="poll-question">${escapeHtml(poll.question)}</div>
-                    <div class="poll-details">${poll.totalVotes} oy • ${getPollTypeLabel(poll.type)}</div>
-                    <div class="poll-date">${new Date(poll.createdAt).toLocaleDateString('tr-TR')}</div>
-                </div>
-            </div>
-        `;
-    });
-
-    content += `
-            </div>
-        </div>
-    `;
-
-    showModal("Son Anketler", content, `
-        <button class="btn-secondary" onclick="hideModal()">Kapat</button>
-    `);
-}
-
-// Welcome System for New Members
-function showWelcomeSettingsModal() {
-    const welcomeSettings = getWelcomeSettings();
-
-    const modalContent = `
-        <div class="welcome-settings-modal">
-            <div class="welcome-settings-header">
-                <div class="welcome-settings-title">👋 Hoş Geldin Sistemi</div>
-                <div class="welcome-settings-subtitle">Yeni üyeleri karşılama ayarları</div>
-            </div>
-            <div class="welcome-settings-content">
-                <div class="settings-section">
-                    <div class="settings-title">Genel Ayarlar</div>
-                    <div class="form-group">
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="welcome-enabled" ${welcomeSettings.enabled ? 'checked' : ''}>
-                            Hoş Geldin Sistemini Aktif Et
-                        </label>
-                    </div>
-                    <div class="form-group">
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="welcome-dm" ${welcomeSettings.sendDM ? 'checked' : ''}>
-                            Yeni Üyelere Özel Mesaj Gönder
-                        </label>
-                    </div>
-                    <div class="form-group">
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="welcome-channel" ${welcomeSettings.postInChannel ? 'checked' : ''}>
-                            Hoş Geldin Mesajını Kanalda Paylaş
-                        </label>
-                    </div>
-                </div>
-                
-                <div class="settings-section">
-                    <div class="settings-title">Hoş Geldin Mesajı</div>
-                    <div class="form-group">
-                        <label>Mesaj Başlığı:</label>
-                        <input type="text" id="welcome-title" value="${escapeHtml(welcomeSettings.title)}" placeholder="Hoş Geldin!" maxlength="100">
-                    </div>
-                    <div class="form-group">
-                        <label>Mesaj İçeriği:</label>
-                        <textarea id="welcome-message" rows="4" placeholder="Sunucumuza hoş geldin!">${escapeHtml(welcomeSettings.message)}</textarea>
-                    </div>
-                    <div class="form-group">
-                        <label>Hoş Geldin GIF'i (opsiyonel):</label>
-                        <input type="text" id="welcome-gif" value="${escapeHtml(welcomeSettings.gifUrl || '')}" placeholder="GIF URL'si">
-                    </div>
-                </div>
-                
-                <div class="settings-section">
-                    <div class="settings-title">Otomasyonlar</div>
-                    <div class="form-group">
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="auto-roles" ${welcomeSettings.autoRoles ? 'checked' : ''}>
-                            Otomatik Rol Ver
-                        </label>
-                    </div>
-                    <div class="form-group">
-                        <label>Otomatik Rol:</label>
-                        <select id="auto-role-select">
-                            <option value="">Rol Seçin</option>
-                            <option value="newbie" ${welcomeSettings.autoRole === 'newbie' ? 'selected' : ''}>Yeni Üye</option>
-                            <option value="member" ${welcomeSettings.autoRole === 'member' ? 'selected' : ''}>Üye</option>
-                            <option value="verified" ${welcomeSettings.autoRole === 'verified' ? 'selected' : ''}>Doğrulanmış</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="welcome-emoji" ${welcomeSettings.addEmoji ? 'checked' : ''}>
-                            Hoş Geldin Emoji Ekle
-                        </label>
-                    </div>
-                </div>
-                
-                <div class="settings-section">
-                    <div class="settings-title">Hoş Geldin Kanalı</div>
-                    <div class="form-group">
-                        <label>Kanal:</label>
-                        <select id="welcome-channel-select">
-                            <option value="">Genel Sohbet</option>
-                            <option value="welcome" ${welcomeSettings.channelId === 'welcome' ? 'selected' : ''}>#hoş-geldin</option>
-                            <option value="announcements" ${welcomeSettings.channelId === 'announcements' ? 'selected' : ''}>#duyurular</option>
-                        </select>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="welcome-settings-footer">
-                <button class="btn-secondary" onclick="hideModal()">İptal</button>
-                <button class="btn-primary" onclick="saveWelcomeSettings()">Kaydet</button>
-            </div>
-        </div>
-    `;
-
-    showModal("Hoş Geldin Ayarları", modalContent, '', true);
-}
-
 function getWelcomeSettings() {
     try {
         const saved = localStorage.getItem('scord_welcome_settings');
@@ -18670,40 +17394,6 @@ function saveWelcomeSettings() {
 
     toast('Hoş geldin ayarları kaydedildi', 'success');
     hideModal();
-}
-
-function triggerWelcomeMessage(memberId, memberName) {
-    const settings = getWelcomeSettings();
-
-    if (!settings.enabled) return;
-
-    const welcomeMessage = createWelcomeMessage(memberName, settings);
-
-    // Send to channel if enabled
-    if (settings.postInChannel) {
-        // This would integrate with the existing message system
-        console.log('Posting welcome message to channel:', welcomeMessage);
-    }
-
-    // Send DM if enabled
-    if (settings.sendDM) {
-        // This would integrate with the existing DM system
-        console.log('Sending welcome DM:', welcomeMessage);
-    }
-
-    // Add emoji reaction if enabled
-    if (settings.addEmoji) {
-        // This would add emoji reactions to the join message
-        console.log('Adding welcome emoji reactions');
-    }
-
-    // Assign auto role if enabled
-    if (settings.autoRoles && settings.autoRole) {
-        assignAutoRole(memberId, settings.autoRole);
-    }
-
-    // Log welcome event
-    logWelcomeEvent(memberId, memberName);
 }
 
 function createWelcomeMessage(memberName, settings) {
@@ -18772,49 +17462,6 @@ function getWelcomeLogs() {
     }
 }
 
-// Welcome logs modal
-function showWelcomeLogsModal() {
-    const logs = getWelcomeLogs();
-
-    if (logs.length === 0) {
-        toast('Henüz hoş geldin kaydı yok', 'info');
-        return;
-    }
-
-    let content = `
-        <div class="welcome-logs-modal">
-            <div class="welcome-logs-title">📋 Hoş Geldin Kayıtları</div>
-            <div class="welcome-logs-list">
-    `;
-
-    logs.slice(-20).reverse().forEach(log => {
-        const date = new Date(log.timestamp);
-        const dateStr = date.toLocaleDateString('tr-TR');
-        const timeStr = date.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
-
-        content += `
-            <div class="welcome-log-item">
-                <div class="log-info">
-                    <div class="log-member">${escapeHtml(log.memberName)}</div>
-                    <div class="log-date">${dateStr} • ${timeStr}</div>
-                </div>
-                <div class="log-actions">
-                    <button class="btn-secondary" onclick="showMemberProfile('${log.memberId}')">Profil</button>
-                </div>
-            </div>
-        `;
-    });
-
-    content += `
-            </div>
-        </div>
-    `;
-
-    showModal("Hoş Geldin Kayıtları", content, `
-        <button class="btn-secondary" onclick="hideModal()">Kapat</button>
-    `);
-}
-
 // Server rules modal
 function showServerRules() {
     const rules = getServerRules();
@@ -18874,7 +17521,6 @@ function getServerRules() {
 
 function acknowledgeRules() {
     // This would mark the user as having read the rules
-    localStorage.setItem('scord_rules_acknowledged', Date.now().toString());
 
     toast('Kuralları anladım olarak işaretlendi', 'success');
     hideModal();
@@ -18970,25 +17616,6 @@ function getServerInfo() {
             links: []
         };
     }
-}
-
-// Test welcome message
-function testWelcomeMessage() {
-    const settings = getWelcomeSettings();
-    const testMessage = createWelcomeMessage("TestKullanıcı", settings);
-
-    const content = `
-        <div class="test-welcome-modal">
-            <div class="test-welcome-title">🧪 Hoş Geldin Mesajı Test</div>
-            <div class="test-welcome-content">
-                ${testMessage}
-            </div>
-        </div>
-    `;
-
-    showModal("Test Mesajı", content, `
-        <button class="btn-secondary" onclick="hideModal()">Kapat</button>
-    `);
 }
 
 function groupedChannels(server, type) {
@@ -23434,24 +22061,6 @@ function getChannelSlowmode(serverId, channelId) {
     } catch (e) { return 0; }
 }
 
-function checkSlowmode(serverId, channelId) {
-    const slowmode = getChannelSlowmode(serverId, channelId);
-    if (slowmode <= 0) return true;
-    
-    const key = `scord_lastmsg_${serverId}_${channelId}_${state.peerId}`;
-    const lastMsg = parseInt(localStorage.getItem(key) || 0);
-    const now = Date.now();
-    
-    if (now - lastMsg < (slowmode * 1000)) {
-        const remaining = Math.ceil((slowmode * 1000 - (now - lastMsg)) / 1000);
-        toast(`Yavaşmod aktif! ${remaining} saniye beklemelisin.`, "error");
-        return false;
-    }
-    
-    localStorage.setItem(key, now);
-    return true;
-}
-
 // ── WARNING SYSTEM ────────────────────────────────────────
 function warnUser(peerId, username, reason) {
     const server = state.servers.find(s => s.id === state.activeServerId);
@@ -23494,12 +22103,6 @@ function warnUser(peerId, username, reason) {
     logModerationAction("Uyarı", username, reason);
 }
 window.warnUser = warnUser;
-
-function getWarnings(peerId) {
-    const server = state.servers.find(s => s.id === state.activeServerId);
-    if (!server || !server.warnings) return [];
-    return server.warnings[peerId] || [];
-}
 
 // ── MODERATION LOGS ─────────────────────────────────────
 function logModerationAction(action, target, reason) {
@@ -23658,12 +22261,6 @@ function requestNotificationPermission() {
 }
 window.requestNotificationPermission = requestNotificationPermission;
 
-function showNotification(title, body, icon) {
-    if (Notification.permission === "granted" && localStorage.getItem("scord_notifications") === "true") {
-        new Notification(title, { body, icon });
-    }
-}
-
 // Add notification toggle to user bar
 setInterval(() => {
     const userBar = document.querySelector(".user-bar-controls");
@@ -23764,73 +22361,6 @@ const MUSIC_STATE = {
     equalizer: { bass: 0, mid: 0, treble: 0 }
 };
 
-function addToQueue(url) {
-    const track = {
-        id: Date.now(),
-        url: url,
-        title: extractVideoTitle(url),
-        addedBy: state.myPeerId,
-        addedAt: Date.now(),
-        duration: 0
-    };
-    MUSIC_STATE.queue.push(track);
-    updateMusicQueueUI();
-    showMusicEmbed(track);
-    return track;
-}
-
-function addPlaylist(name) {
-    if (!MUSIC_STATE.playlists[name]) {
-        MUSIC_STATE.playlists[name] = [];
-        toast(`Playlist "${name}" oluşturuldu`, "success");
-    }
-}
-
-function addToPlaylist(name, url) {
-    if (MUSIC_STATE.playlists[name]) {
-        MUSIC_STATE.playlists[name].push({ url, addedAt: Date.now() });
-        toast(`Şarkı playlist'e eklendi`, "success");
-    }
-}
-
-function playPlaylist(name) {
-    const playlist = MUSIC_STATE.playlists[name];
-    if (playlist && playlist.length > 0) {
-        MUSIC_STATE.queue = [...playlist];
-        MUSIC_STATE.currentIndex = 0;
-        playCurrentTrack();
-        toast(`Playlist "${name}" oynatılıyor`, "info");
-    }
-}
-
-function nextTrack() {
-    if (MUSIC_STATE.repeatMode === "one") {
-        playCurrentTrack();
-    } else if (MUSIC_STATE.currentIndex < MUSIC_STATE.queue.length - 1) {
-        MUSIC_STATE.currentIndex++;
-        playCurrentTrack();
-    } else if (MUSIC_STATE.repeatMode === "all") {
-        MUSIC_STATE.currentIndex = 0;
-        playCurrentTrack();
-    } else {
-        MUSIC_STATE.isPlaying = false;
-    }
-    updateMusicQueueUI();
-}
-
-function previousTrack() {
-    if (MUSIC_STATE.currentIndex > 0) {
-        MUSIC_STATE.currentIndex--;
-        playCurrentTrack();
-        updateMusicQueueUI();
-    }
-}
-
-function setRepeatMode(mode) {
-    MUSIC_STATE.repeatMode = mode;
-    toast(`Tekrar modu: ${mode}`, "info");
-}
-
 function toggleDJMode() {
     MUSIC_STATE.djMode = !MUSIC_STATE.djMode;
     if (MUSIC_STATE.djMode) {
@@ -23848,11 +22378,6 @@ function setVolume(vol) {
         musicAudioElement.volume = MUSIC_STATE.volume;
     }
     updateVolumeUI();
-}
-
-function setEqualizer(bass, mid, treble) {
-    MUSIC_STATE.equalizer = { bass, mid, treble };
-    applyEqualizer();
 }
 
 function applyEqualizer() {
@@ -23902,33 +22427,6 @@ function clearQueue() {
     toast("Sıra temizlendi", "info");
 }
 
-function showMusicQueueModal() {
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-    
-    let queueHtml = MUSIC_STATE.queue.map((track, i) => `
-        <div style="padding:10px;margin:5px 0;background:rgba(255,255,255,0.05);border-radius:6px;display:flex;justify-content:space-between;align-items:center;${i === MUSIC_STATE.currentIndex ? 'border:2px solid var(--accent);' : ''}">
-            <span>${i + 1}. ${track.title}</span>
-            <button onclick="removeFromQueue(${i})" style="background:#ff4444;border:none;padding:4px 8px;border-radius:4px;cursor:pointer;">✕</button>
-        </div>
-    `).join('');
-    
-    modal.innerHTML = `
-        <div style="background:#1a1a2e;padding:20px;border-radius:12px;max-width:500px;max-height:80vh;overflow-y:auto;">
-            <h2>Müzik Kuyruğu 🎵</h2>
-            <div style="margin:10px 0;display:flex;gap:10px;">
-                <button onclick="shuffleQueue()" style="background:#444;border:none;padding:8px 12px;border-radius:6px;cursor:pointer;">🔀 Karıştır</button>
-                <button onclick="clearQueue()" style="background:#444;border:none;padding:8px 12px;border-radius:6px;cursor:pointer;">🗑️ Temizle</button>
-                <button onclick="toggleDJMode()" style="background:${MUSIC_STATE.djMode ? 'var(--accent)' : '#444'};border:none;padding:8px 12px;border-radius:6px;cursor:pointer;">🎧 DJ Mod</button>
-            </div>
-            <div>${queueHtml || "Kuyruk boş"}</div>
-            <button onclick="this.closest('.modal-overlay').remove()" style="margin-top:20px;width:100%;padding:10px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;">Kapat</button>
-        </div>
-    `;
-    document.body.appendChild(modal);
-}
-
 function removeFromQueue(index) {
     MUSIC_STATE.queue.splice(index, 1);
     if (index < MUSIC_STATE.currentIndex) MUSIC_STATE.currentIndex--;
@@ -23945,40 +22443,6 @@ const USER_PROFILE = {
     pronouns: "",
     birthday: null
 };
-
-function showProfileEditorModal() {
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-    
-    modal.innerHTML = `
-        <div style="background:#1a1a2e;padding:20px;border-radius:12px;width:400px;">
-            <h2>Profil Düzenle ✏️</h2>
-            <div style="margin:15px 0;">
-                <label style="display:block;margin-bottom:5px;">Banner URL:</label>
-                <input type="text" id="profile-banner" value="${USER_PROFILE.banner || ''}" style="width:100%;padding:8px;background:#2a2a3e;border:1px solid #444;border-radius:6px;color:#fff;">
-            </div>
-            <div style="margin:15px 0;">
-                <label style="display:block;margin-bottom:5px;">Biyografi:</label>
-                <textarea id="profile-bio" style="width:100%;padding:8px;background:#2a2a3e;border:1px solid #444;border-radius:6px;color:#fff;height:80px;">${USER_PROFILE.bio || ''}</textarea>
-            </div>
-            <div style="margin:15px 0;">
-                <label style="display:block;margin-bottom:5px;">İsimler (örn. ona/hanım):</label>
-                <input type="text" id="profile-pronouns" value="${USER_PROFILE.pronouns || ''}" style="width:100%;padding:8px;background:#2a2a3e;border:1px solid #444;border-radius:6px;color:#fff;">
-            </div>
-            <div style="margin:15px 0;">
-                <label style="display:block;margin-bottom:5px;">Doğum Tarihi:</label>
-                <input type="date" id="profile-birthday" value="${USER_PROFILE.birthday || ''}" style="width:100%;padding:8px;background:#2a2a3e;border:1px solid #444;border-radius:6px;color:#fff;">
-            </div>
-            <div style="margin:15px 0;">
-                <label style="display:block;margin-bottom:5px;">Bağlantılar (her satıra bir URL):</label>
-                <textarea id="profile-connections" style="width:100%;padding:8px;background:#2a2a3e;border:1px solid #444;border-radius:6px;color:#fff;height:60px;">${USER_PROFILE.connections.join('\n') || ''}</textarea>
-            </div>
-            <button onclick="saveProfile()" style="width:100%;padding:10px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;margin-top:10px;">Kaydet</button>
-        </div>
-    `;
-    document.body.appendChild(modal);
-}
 
 function saveProfile() {
     USER_PROFILE.banner = document.getElementById('profile-banner').value;
@@ -24000,42 +22464,6 @@ function updateProfileDisplay() {
     }
 }
 
-function showUserProfileModal(peerId) {
-    const user = state.peers[peerId] || {};
-    const profile = state.peerProfiles?.[peerId] || USER_PROFILE;
-    
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-    
-    modal.innerHTML = `
-        <div style="background:#1a1a2e;border-radius:12px;overflow:hidden;width:350px;">
-            <div style="height:120px;background:${profile.banner ? `url(${profile.banner}) center/cover` : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'};"></div>
-            <div style="padding:20px;">
-                <div style="display:flex;align-items:flex-end;margin-top:-50px;margin-bottom:15px;">
-                    <div style="width:80px;height:80px;border-radius:50%;background:#333;border:4px solid #1a1a2e;display:flex;align-items:center;justify-content:center;font-size:30px;">
-                        ${user.avatar || '👤'}
-                    </div>
-                    <div style="margin-left:15px;">
-                        <h3 style="margin:0;">${user.username || 'Bilinmeyen'}</h3>
-                        ${profile.pronouns ? `<small style="color:#888;">${profile.pronouns}</small>` : ''}
-                    </div>
-                </div>
-                ${profile.bio ? `<p style="color:#ccc;margin:10px 0;">${profile.bio}</p>` : ''}
-                ${profile.connections?.length ? `
-                    <div style="margin-top:15px;">
-                        <small style="color:#888;">Bağlantılar:</small>
-                        <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:5px;">
-                            ${profile.connections.map(c => `<a href="${c}" target="_blank" style="color:var(--accent);font-size:12px;">${new URL(c).hostname}</a>`).join('')}
-                        </div>
-                    </div>
-                ` : ''}
-            </div>
-        </div>
-    `;
-    document.body.appendChild(modal);
-}
-
 // Load profile on init
 try {
     const saved = localStorage.getItem('userProfile');
@@ -24054,64 +22482,10 @@ const BLOCK_SETTINGS = {
     blockCalls: true
 };
 
-function showBlockSettingsModal() {
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-    
-    modal.innerHTML = `
-        <div style="background:#1a1a2e;padding:20px;border-radius:12px;width:400px;">
-            <h2>Engelleme Ayarları 🚫</h2>
-            <div style="margin:15px 0;">
-                <label style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:rgba(255,255,255,0.05);border-radius:6px;margin:5px 0;">
-                    <span>Mesajları engelle</span>
-                    <input type="checkbox" ${BLOCK_SETTINGS.blockMessages ? 'checked' : ''} onchange="BLOCK_SETTINGS.blockMessages = this.checked">
-                </label>
-                <label style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:rgba(255,255,255,0.05);border-radius:6px;margin:5px 0;">
-                    <span>Sesli aramaları engelle</span>
-                    <input type="checkbox" ${BLOCK_SETTINGS.blockVoice ? 'checked' : ''} onchange="BLOCK_SETTINGS.blockVoice = this.checked">
-                </label>
-                <label style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:rgba(255,255,255,0.05);border-radius:6px;margin:5px 0;">
-                    <span>Görüntülü aramaları engelle</span>
-                    <input type="checkbox" ${BLOCK_SETTINGS.blockVideo ? 'checked' : ''} onchange="BLOCK_SETTINGS.blockVideo = this.checked">
-                </label>
-                <label style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:rgba(255,255,255,0.05);border-radius:6px;margin:5px 0;">
-                    <span>Ekran paylaşımını engelle</span>
-                    <input type="checkbox" ${BLOCK_SETTINGS.blockScreenShare ? 'checked' : ''} onchange="BLOCK_SETTINGS.blockScreenShare = this.checked">
-                </label>
-                <label style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:rgba(255,255,255,0.05);border-radius:6px;margin:5px 0;">
-                    <span>Çevrimiçi durumunu gizle</span>
-                    <input type="checkbox" ${BLOCK_SETTINGS.hideOnlineStatus ? 'checked' : ''} onchange="BLOCK_SETTINGS.hideOnlineStatus = this.checked">
-                </label>
-                <label style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:rgba(255,255,255,0.05);border-radius:6px;margin:5px 0;">
-                    <span>Tüm aramaları engelle</span>
-                    <input type="checkbox" ${BLOCK_SETTINGS.blockCalls ? 'checked' : ''} onchange="BLOCK_SETTINGS.blockCalls = this.checked">
-                </label>
-            </div>
-            <button onclick="saveBlockSettings()" style="width:100%;padding:10px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;">Kaydet</button>
-        </div>
-    `;
-    document.body.appendChild(modal);
-}
-
 function saveBlockSettings() {
     localStorage.setItem('blockSettings', JSON.stringify(BLOCK_SETTINGS));
     toast("Engelleme ayarları kaydedildi", "success");
     document.querySelector('.modal-overlay')?.remove();
-}
-
-function shouldBlockAction(peerId, actionType) {
-    const isBlocked = state.blockedUsers?.includes(peerId);
-    if (!isBlocked) return false;
-    
-    switch(actionType) {
-        case 'message': return BLOCK_SETTINGS.blockMessages;
-        case 'voice': return BLOCK_SETTINGS.blockVoice;
-        case 'video': return BLOCK_SETTINGS.blockVideo;
-        case 'screen': return BLOCK_SETTINGS.blockScreenShare;
-        case 'call': return BLOCK_SETTINGS.blockCalls;
-        default: return true;
-    }
 }
 
 try {
@@ -24161,32 +22535,6 @@ function updateActivityDisplay() {
     activityEl.innerHTML = `<span style="font-size:12px;">${icon} ${name}</span>`;
 }
 
-function showActivityPickerModal() {
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-    
-    modal.innerHTML = `
-        <div style="background:#1a1a2e;padding:20px;border-radius:12px;width:350px;">
-            <h2>Etkinlik Ayarla 🎯</h2>
-            <div style="margin:15px 0;">
-                <input type="text" id="activity-name" placeholder="Etkinlik adı" style="width:100%;padding:10px;background:#2a2a3e;border:1px solid #444;border-radius:6px;color:#fff;margin-bottom:10px;">
-                <select id="activity-type" style="width:100%;padding:10px;background:#2a2a3e;border:1px solid #444;border-radius:6px;color:#fff;">
-                    <option value="custom">Özel</option>
-                    <option value="game">Oyun</option>
-                    <option value="spotify">Müzik</option>
-                </select>
-            </div>
-            <div style="display:flex;gap:10px;">
-                <button onclick="setActivityFromModal()" style="flex:1;padding:10px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;">Ayarla</button>
-                <button onclick="clearActivity()" style="flex:1;padding:10px;background:#444;color:#fff;border:none;border-radius:6px;cursor:pointer;">Kaldır</button>
-            </div>
-            <button onclick="this.closest('.modal-overlay').remove()" style="width:100%;margin-top:10px;padding:10px;background:transparent;color:#888;border:none;cursor:pointer;">Kapat</button>
-        </div>
-    `;
-    document.body.appendChild(modal);
-}
-
 function setActivityFromModal() {
     const name = document.getElementById('activity-name').value;
     const type = document.getElementById('activity-type').value;
@@ -24205,42 +22553,6 @@ const VIDEO_QUALITY = {
     bandwidth: 'auto',
     frameRate: 30
 };
-
-function showVideoSettingsModal() {
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-    
-    modal.innerHTML = `
-        <div style="background:#1a1a2e;padding:20px;border-radius:12px;width:350px;">
-            <h2>Video Kalitesi 🎥</h2>
-            <div style="margin:15px 0;">
-                <label style="display:block;margin-bottom:5px;">Kalite:</label>
-                <select id="video-quality-select" style="width:100%;padding:10px;background:#2a2a3e;border:1px solid #444;border-radius:6px;color:#fff;">
-                    <option value="hd" ${VIDEO_QUALITY.preferred === 'hd' ? 'selected' : ''}>HD (720p)</option>
-                    <option value="sd" ${VIDEO_QUALITY.preferred === 'sd' ? 'selected' : ''}>SD (480p)</option>
-                    <option value="low" ${VIDEO_QUALITY.preferred === 'low' ? 'selected' : ''}>Düşük (360p)</option>
-                </select>
-            </div>
-            <div style="margin:15px 0;">
-                <label style="display:block;margin-bottom:5px;">Bant Genişliği:</label>
-                <select id="video-bandwidth-select" style="width:100%;padding:10px;background:#2a2a3e;border:1px solid #444;border-radius:6px;color:#fff;">
-                    <option value="auto">Otomatik</option>
-                    <option value="high">Yüksek</option>
-                    <option value="medium">Orta</option>
-                    <option value="low">Düşük</option>
-                </select>
-            </div>
-            <div style="margin:15px 0;">
-                <label style="display:block;margin-bottom:5px;">FPS:</label>
-                <input type="range" id="video-fps" min="15" max="60" value="${VIDEO_QUALITY.frameRate}" style="width:100%;">
-                <span style="text-align:center;display:block;">${VIDEO_QUALITY.frameRate} FPS</span>
-            </div>
-            <button onclick="saveVideoSettings()" style="width:100%;padding:10px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;">Kaydet</button>
-        </div>
-    `;
-    document.body.appendChild(modal);
-}
 
 function saveVideoSettings() {
     VIDEO_QUALITY.preferred = document.getElementById('video-quality-select').value;
@@ -24559,7 +22871,6 @@ function addFriendByTag(tag) {
 function updateAnimations(enabled) {
     if (!state.settings) state.settings = {};
     state.settings.animations = enabled;
-    localStorage.setItem('scord_animations', enabled);
     document.documentElement.setAttribute("data-animations", enabled ? "on" : "off");
     if (enabled) { document.body.classList.remove('no-animations'); } else { document.body.classList.add('no-animations'); }
     toast("Animasyonlar: " + (enabled ? "etkin" : "devre disi"), "success");
@@ -24632,16 +22943,6 @@ console.log("[App] All features restored: Settings, UI, Animations");
     setInterval(function() { var nameEl = document.getElementById("sidebar-server-name"); if (nameEl && state.voiceChannelId && state.activeServerId) { var srv = state.servers.find(function(s) { return s.id === state.activeServerId; }); if (srv) nameEl.textContent = srv.name; } }, 5000);
 })();
 
-// 5. Avatar click → show profile
-(function() {
-    if (window._avatarClickLoaded) return;
-    window._avatarClickLoaded = true;
-    document.addEventListener("click", function(e) {
-        var avatar = e.target.closest("[data-peer-id].vpc-avatar, [data-peer-id] .vpc-avatar, [data-peer-id].msg-avatar, .member-avatar[data-peer-id]");
-        if (avatar) { var pid = avatar.dataset.peerId; if (pid && typeof openUserProfile === "function") { var user = state.peers ? state.peers[pid] : null; openUserProfile(pid, user ? user.username : pid, user ? user.avatarImage : null, user ? user.avatarColor : null); } }
-    });
-})();
-
 console.log("[App] Final features loaded: Emoji, Mute icons, Context menu, Avatar click, Perf");
 
 
@@ -24712,24 +23013,6 @@ setTimeout(function() {
     var saved = localStorage.getItem('scord_screen_fps');
     if (saved) state.screenShareFPS = parseInt(saved);
 }, 300);
-
-// Custom screen share picker  
-window.showScreenSharePicker = function() {
-    var fps = state.screenShareFPS || 30;
-    var html = '';
-    html += '<div style="text-align:center;padding:10px;">';
-    html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">';
-    html += '<button onclick="window._doScreenShare(\'screen\','+fps+')" style="background:rgba(99,102,241,0.15);border:2px solid rgba(99,102,241,0.3);border-radius:12px;padding:20px 12px;cursor:pointer;color:#fff;transition:transform 0.2s;" onmouseover="this.style.transform=\'scale(1.03)\'" onmouseout="this.style.transform=\'scale(1)\'"><div style="font-size:32px;margin-bottom:8px;">🖥️</div><div style="font-size:14px;font-weight:600;">Tüm Ekran</div><div style="font-size:11px;color:var(--text-muted);">Monitörünü paylaş</div></button>';
-    html += '<button onclick="window._doScreenShare(\'window\','+fps+')" style="background:rgba(34,197,94,0.15);border:2px solid rgba(34,197,94,0.3);border-radius:12px;padding:20px 12px;cursor:pointer;color:#fff;transition:transform 0.2s;" onmouseover="this.style.transform=\'scale(1.03)\'" onmouseout="this.style.transform=\'scale(1)\'"><div style="font-size:32px;margin-bottom:8px;">🪟</div><div style="font-size:14px;font-weight:600;">Pencere</div><div style="font-size:11px;color:var(--text-muted);">Uygulama penceresi</div></button>';
-    html += '</div>';
-    html += '<div style="background:rgba(0,0,0,0.2);border-radius:10px;padding:12px;margin-bottom:8px;">';
-    html += '<label style="display:flex;justify-content:space-between;align-items:center;color:#ccc;font-size:13px;">Yayın FPS <select id="screen-fps-select" style="background:#2a2a3e;color:#fff;border:1px solid #444;border-radius:6px;padding:6px 12px;margin-left:10px;"><option value="30"'+(fps===30?' selected':'')+'>30 FPS (Dengeli)</option><option value="60"'+(fps===60?' selected':'')+'>60 FPS (Akıcı)</option><option value="120"'+(fps===120?' selected':'')+'>120 FPS (Ultra)</option></select></label>';
-    html += '</div>';
-    html += '</div>';
-    if (typeof showModal === "function") {
-        showModal("📺 Ekran Paylaşımı", html, '<button class="btn-secondary" onclick="typeof hideModal===\'function\'&&hideModal()">İptal</button>');
-    }
-};
 
 window._doScreenShare = function(mode, fpsVal) {
     if (typeof hideModal === "function") hideModal();
@@ -24993,7 +23276,7 @@ setTimeout(function() {
     
     // Hook avatar CLICK to open profile
     document.addEventListener("click", function(e) {
-        var av = e.target.closest(".msg-avatar, .vpc-avatar, .member-avatar, #user-bar-avatar, [data-peer-id] .vpc-avatar");
+        var av = e.target.closest(".vpc-avatar, .member-avatar, [data-peer-id] .vpc-avatar");
         if (av) {
             var pid = av.dataset.peerId || av.closest("[data-peer-id]")?.dataset.peerId;
             if (!pid) return;
@@ -25242,35 +23525,6 @@ function executeMsgSearch() {
     }
     if (!found) resultsDiv.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted);">Sonuc bulunamadi</div>';
 }
-
-// Role colors in chat messages
-(function() {
-    if (window._roleColorsPatched) return;
-    window._roleColorsPatched = true;
-    setTimeout(function() {
-        if (typeof window.renderMessages === "function") {
-            var _origRM = window.renderMessages;
-            window.renderMessages = function(sid, cid) {
-                var result = _origRM.apply(this, arguments);
-                setTimeout(function() {
-                    var server = state.servers.find(function(s) { return s.id === sid; });
-                    if (!server || !server.roles || !server.peer_roles) return;
-                    document.querySelectorAll(".msg-author").forEach(function(author) {
-                        var row = author.closest(".msg-row, [data-author-id]");
-                        if (!row) return;
-                        var pid = row.dataset.authorId;
-                        if (pid && server.peer_roles[pid]) {
-                            var roleId = server.peer_roles[pid];
-                            var role = server.roles[roleId];
-                            if (role && role.color) { author.style.color = role.color; author.style.fontWeight = "700"; }
-                        }
-                    });
-                }, 50);
-                return result;
-            };
-        }
-    }, 500);
-})();
 
 // CSP meta injection for XSS protection
 (function() {
@@ -25870,22 +24124,6 @@ document.addEventListener("click", function(e) {
     }
 });
 
-// 2. Add click-to-profile on chat avatars
-document.addEventListener("click", function(e) {
-    var av = e.target.closest(".msg-avatar");
-    if (!av) return;
-    var row = av.closest(".msg-row, .message, [data-author-id]");
-    if (!row) return;
-    var pid = row.dataset.authorId || row.getAttribute("data-author-id");
-    if (!pid || pid === state.peerId) return;
-    if (typeof openUserProfile === "function") {
-        e.preventDefault();
-        var name = row.querySelector(".msg-author")?.textContent || pid;
-        var user = state.peers ? state.peers[pid] : null;
-        openUserProfile(pid, user ? user.username : name, user ? user.avatarImage : null, user ? user.avatarColor : null);
-    }
-});
-
 // 3. Theme guarantee: re-apply theme styles aggressively on load
 setTimeout(function() {
     if (typeof applyTheme === "function" && state.theme) {
@@ -26388,3 +24626,4 @@ window.startApp = function () {
 })();
 
 console.log("[V25] Screen picker + unified settings + server redesign + P2P tuning loaded");
+
