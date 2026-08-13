@@ -228,6 +228,9 @@ function meshBroadcastReliable(payload) {
 /** Fetch with kullanıcıya kısa hata bildirimi */
 async function scordFetch(url, options = {}) {
     try {
+        options.headers = { ...(options.headers || {}) };
+        const token = localStorage.getItem("scord_token");
+        if (token && !options.headers.Authorization) options.headers.Authorization = `Bearer ${token}`;
         const res = await fetch(url, options);
         if (!res.ok) {
             const msg = `${res.status} ${res.statusText || ""}`.trim();
@@ -413,6 +416,34 @@ function _refreshConnectionBadgeImpl() {
     };
     apply(chatEl);
     apply(voiceEl);
+    updateMeshPulse();
+}
+
+function updateMeshPulse() {
+    const label = document.getElementById("mesh-pulse-label");
+    if (!label) return;
+
+    const mesh = state.mesh;
+    const peers = Object.values(mesh?.peers || {});
+    const directCount = peers.filter(peer => peer.dc?.readyState === "open").length;
+    const wsOpen = Boolean(mesh?.ws && mesh.ws.readyState === WebSocket.OPEN);
+    const latencyValues = Object.values(state.peerLatencyMs || {}).filter(value => Number.isFinite(value));
+    const averageLatency = latencyValues.length
+        ? Math.round(latencyValues.reduce((sum, value) => sum + value, 0) / latencyValues.length)
+        : null;
+
+    document.getElementById("mesh-direct-count").textContent = String(directCount);
+    document.getElementById("mesh-signal-state").textContent = mesh ? (wsOpen ? "Bağlı" : "Aranıyor") : "Hazır";
+    document.getElementById("mesh-latency").textContent = averageLatency == null ? "—" : `${averageLatency} ms`;
+    label.textContent = directCount > 0
+        ? `${directCount} doğrudan bağlantı aktif`
+        : mesh && !wsOpen
+            ? "Sinyal bağlantısı kuruluyor"
+            : "Bağlantıya hazır";
+
+    const pulse = document.getElementById("mesh-pulse");
+    pulse?.classList.toggle("is-live", directCount > 0);
+    pulse?.classList.toggle("is-connecting", Boolean(mesh) && !wsOpen);
 }
 
 function flushP2pOutbox() {
@@ -626,11 +657,26 @@ function showModal(title, bodyHTML, footerHTML) {
     if (backdrop) backdrop.classList.remove("hidden");
 }
 
+function normalizeLegacyRoomLabels(channels, roles) {
+    const normalizedChannels = Array.isArray(channels)
+        ? channels.map(channel => ({
+            ...channel,
+            name: channel?.name === "m├╝zik" ? "müzik" : channel?.name,
+        }))
+        : channels;
+    const normalizedRoles = roles && typeof roles === "object" ? { ...roles } : roles;
+    if (normalizedRoles?.member?.name === "├£ye") {
+        normalizedRoles.member = { ...normalizedRoles.member, name: "Üye" };
+    }
+    return { channels: normalizedChannels, roles: normalizedRoles };
+}
+
 function mergeRoomPayloadIntoServer(server, payload) {
     if (!server || !payload) return;
+    const normalized = normalizeLegacyRoomLabels(payload.channels, payload.roles);
     if (payload.name != null && String(payload.name).trim() !== "") server.name = payload.name;
-    if (payload.channels) server.channels = payload.channels;
-    if (payload.roles) server.roles = payload.roles;
+    if (normalized.channels) server.channels = normalized.channels;
+    if (normalized.roles) server.roles = normalized.roles;
     if (payload.peer_roles) server.peer_roles = payload.peer_roles;
     if (payload.channel_backgrounds) server.channel_backgrounds = payload.channel_backgrounds;
     if (payload.voicePermissionMode) server.voicePermissionMode = payload.voicePermissionMode;
@@ -2018,8 +2064,12 @@ var _authMode = "login";
 
 function switchAuthTab(mode) {
     _authMode = mode;
-    document.getElementById("auth-tab-login")?.classList.toggle("active", mode === "login");
-    document.getElementById("auth-tab-register")?.classList.toggle("active", mode === "register");
+    const loginTab = document.getElementById("auth-tab-login");
+    const registerTab = document.getElementById("auth-tab-register");
+    loginTab?.classList.toggle("active", mode === "login");
+    registerTab?.classList.toggle("active", mode === "register");
+    loginTab?.setAttribute("aria-pressed", String(mode === "login"));
+    registerTab?.setAttribute("aria-pressed", String(mode === "register"));
     document.getElementById("auth-confirm-group")?.classList.toggle("hidden", mode !== "register");
     const hint = document.getElementById("auth-hint");
     if (hint) hint.textContent = mode === "register"
@@ -2039,6 +2089,27 @@ function showAuthError(msg) {
 }
 function hideAuthError() {
     document.getElementById("auth-error")?.classList.add("hidden");
+}
+
+function legacyIdentityStorageKey(username, password) {
+    var hash = 0;
+    var source = String(username || "").toLowerCase().trim() + ":" + String(password || "");
+    for (var i = 0; i < source.length; i++) {
+        hash = ((hash << 5) - hash) + source.charCodeAt(i);
+        hash |= 0;
+    }
+    return "scord_identity_id_" + Math.abs(hash).toString(36);
+}
+
+function migrateLegacyIdentityStore(username, password, peerId) {
+    if (!username || !password || !peerId) return;
+    var oldKey = legacyIdentityStorageKey(username, password);
+    var newKey = "scord_identity_" + peerId;
+    if (oldKey === newKey || localStorage.getItem(newKey)) return;
+    var legacyValue = localStorage.getItem(oldKey);
+    if (!legacyValue) return;
+    localStorage.setItem(newKey, legacyValue);
+    localStorage.removeItem(oldKey);
 }
 
 /** Hesap verisini (sunucudan gelen) state + localStorage'a uygula. */
@@ -2204,11 +2275,7 @@ async function initSetup() {
             }
             applyAccountToState(data);
             localStorage.setItem("scord_token", data.token);
-            // Bazı eski yamalar (scord_identity_<hash> kayıtları) hâlâ
-            // kullanıcı adı+şifreden yerel bir kimlik anahtarı türetiyor;
-            // gerçek kimlik doğrulaması artık sunucuda ama o eski
-            // özellikleri kırmamak için şifreyi yerelde de tutuyoruz.
-            localStorage.setItem("scord_pass", pass);
+            migrateLegacyIdentityStore(nick, pass, data.peer_id);
             startApp();
         } catch (e) {
             console.error("[Auth] error", e);
@@ -3743,7 +3810,7 @@ async function createServer(name) {
     const res = await scordFetch(`${API_BASE}/rooms`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, owner_id: state.peerId }),
+        body: JSON.stringify({ name, owner_id: state.peerId, token: localStorage.getItem("scord_token") || "" }),
     });
     if (!res.ok) {
         console.error("[Create] Failed to create server:", res.status);
@@ -3804,7 +3871,7 @@ async function createServer(name) {
     if (server.channels && server.channels.length > 0) {
         showChatView(server.id, server.channels[0].id);
     }
-    toast(`"${name}" sunucusu oluşturuldu! 🎉`, "success");
+    toast(`"${name}" alanı oluşturuldu.`, "success");
     return server;
 }
 
@@ -4772,6 +4839,7 @@ function applyFocusModeButton() {
     if (!btn || !app) return;
     const on = app.getAttribute("data-scord-focus") === "1";
     btn.classList.toggle("active", on);
+    btn.setAttribute("aria-pressed", String(on));
     btn.title = on ? "Odak modunu kapat (üyeleri göster)" : "Odak modu (üye panelini gizle)";
 }
 
@@ -5908,10 +5976,10 @@ function openScreenOverlay(peerId, username) {
 /* ── Modals ───────────────────────────────────────────────── */
 function openCreateServerModal() {
     showModal(
-        "Sunucu Oluştur",
-        `<label class="modal-label">Sunucu Adı</label>
-     <input class="modal-input" id="new-server-name" placeholder="Sunucuma..." maxlength="50" />
-      <p class="modal-info">Sunucun oluşturulduğunda diğer kullanıcılar ana sayfadan bulup katılabilir. Tüm iletişim uçtan uca gerçekleşir.</p>`,
+        "Alan Oluştur",
+        `<label class="modal-label">Alan Adı</label>
+     <input class="modal-input" id="new-server-name" placeholder="Alanım..." maxlength="50" />
+      <p class="modal-info">Alanın oluşturulduğunda diğer kullanıcılar davet koduyla katılabilir. Mesaj ve medya mümkün olduğunda doğrudan bağlantılardan akar.</p>`,
         `<button class="btn-secondary" onclick="hideModal()">İptal</button>
      <button class="btn-primary" style="width:auto;padding:10px 24px" onclick="onCreateServer()">Oluştur</button>`
     );
@@ -6757,14 +6825,23 @@ function leaveServer(serverId) {
     } catch (e) {}
     // If identity store exists, also clean it
     try {
-        var nick = localStorage.getItem("scord_username");
-        var pass = localStorage.getItem("scord_pass");
-        if (nick && pass) {
-            var idKey = "scord_identity_" + window._makeIdFromPass(nick, pass);
+        var identityPeerId = localStorage.getItem("scord_peer_id");
+        if (identityPeerId) {
+            var idKey = "scord_identity_" + identityPeerId;
             var idData = JSON.parse(localStorage.getItem(idKey));
             if (idData && idData.servers) {
                 idData.servers = idData.servers.filter(function (s) { return s.id !== serverId; });
                 localStorage.setItem(idKey, JSON.stringify(idData));
+            }
+        }
+        var legacyNick = localStorage.getItem("scord_username");
+        var legacyPass = localStorage.getItem("scord_pass");
+        if (legacyNick && legacyPass) {
+            var legacyKey = legacyIdentityStorageKey(legacyNick, legacyPass);
+            var legacyData = JSON.parse(localStorage.getItem(legacyKey));
+            if (legacyData && legacyData.servers) {
+                legacyData.servers = legacyData.servers.filter(function (s) { return s.id !== serverId; });
+                localStorage.setItem(legacyKey, JSON.stringify(legacyData));
             }
         }
     } catch (e) {}
@@ -8159,6 +8236,7 @@ document.addEventListener("DOMContentLoaded", () => {
             state.membersOpen = !state.membersOpen;
             const panel = document.getElementById("members-panel");
             if (panel) panel.classList.toggle("collapsed", !state.membersOpen);
+            membersToggleBtn.setAttribute("aria-pressed", String(state.membersOpen));
         };
     }
 
@@ -8186,8 +8264,12 @@ document.addEventListener("DOMContentLoaded", () => {
             // Mikrofonu elle açarsan sağır modundan da çıkarsın (Discord davranışı).
             if (!muted && state.deafened) { state.deafened = false; }
             micToggleBtn.classList.toggle("muted", muted);
+            micToggleBtn.setAttribute("aria-pressed", String(muted));
             const deafBtnSync = document.getElementById("deafen-toggle-btn");
-            if (deafBtnSync) deafBtnSync.classList.toggle("active", state.deafened);
+            if (deafBtnSync) {
+                deafBtnSync.classList.toggle("active", state.deafened);
+                deafBtnSync.setAttribute("aria-pressed", String(state.deafened));
+            }
             if (state.mesh.voiceActive) {
                 state.mesh.broadcast({ type: "voice_mute_status", peerId: state.peerId, muted: state.muted, deafened: state.deafened });
             }
@@ -8212,7 +8294,11 @@ document.addEventListener("DOMContentLoaded", () => {
             state.muted = !!state.mesh.micMuted;
             state.micMuted = state.muted;
             deafenToggleBtn.classList.toggle("active", state.deafened);
-            if (micToggleBtn) micToggleBtn.classList.toggle("muted", state.muted);
+            deafenToggleBtn.setAttribute("aria-pressed", String(state.deafened));
+            if (micToggleBtn) {
+                micToggleBtn.classList.toggle("muted", state.muted);
+                micToggleBtn.setAttribute("aria-pressed", String(state.muted));
+            }
             if (state.mesh.voiceActive) {
                 state.mesh.broadcast({ type: "voice_mute_status", peerId: state.peerId, muted: state.muted, deafened: state.deafened });
             }
@@ -8979,11 +9065,6 @@ function toggleEmojiPicker() {
     picker.classList.toggle("hidden", !state.emojiOpen);
 }
 
-// Global initialization
-document.addEventListener("DOMContentLoaded", () => {
-    console.log("[App] DOM Loaded, initializing...");
-    initSetup();
-});
 /* ═
    SHERCORD V18  DISCORD-LIKE FEATURE PACK
     */
@@ -10918,6 +10999,7 @@ function currentServer() {
 
 function normalizeServerLivePayload(server, room) {
     if (!server || !room) return;
+    const normalized = normalizeLegacyRoomLabels(room.channels, room.roles);
     // BUG FIX: sonradan katılan (late-joiner) kullanıcılar sadece ses/rol
     // verisini alıyordu; kanal listesi, mesaj geçmişi, pinler, kanal arka
     // planları, ikon ve davet kodu hiç uygulanmıyordu. Sunucu bunları
@@ -10927,13 +11009,13 @@ function normalizeServerLivePayload(server, room) {
     if (room.icon_url !== undefined) server.icon_url = room.icon_url;
     if (room.description !== undefined) server.description = room.description;
     if (room.invite_code) server.inviteCode = room.invite_code;
-    if (room.channels) server.channels = room.channels;
+    if (normalized.channels) server.channels = normalized.channels;
     if (room.channel_backgrounds) server.channel_backgrounds = room.channel_backgrounds;
     if (room.pinned_messages) server.pinned_messages = room.pinned_messages;
     if (room.messages) mergeMessageHistoryIntoServer(server, room.messages);
     if (room.voice_members) server.voiceMembers = room.voice_members;
     if (room.music_session !== undefined) server.musicSession = room.music_session;
-    if (room.roles) server.roles = room.roles;
+    if (normalized.roles) server.roles = normalized.roles;
     if (room.peer_roles) server.peer_roles = room.peer_roles;
     if (room.channel_permissions) server.channel_permissions = room.channel_permissions;
     if (room.peers) {
@@ -11169,7 +11251,7 @@ function handleAuthoritativeServerEvent(msg, roomId) {
 }
 
 function isSuperAdmin() {
-    return state.username === "sherlock" && localStorage.getItem("scord_pass") === "123321";
+    return false;
 }
 
 function myRoleId(server) {
@@ -20522,10 +20604,9 @@ console.log("[App] Performance + Mobile optimization loaded");
       window.saveServerSettings = function () {
         var result = _origSSS.apply(this, arguments);
         // Tüm veriyi identity altına kaydet
-        var nick = localStorage.getItem("scord_username");
-        var pass = localStorage.getItem("scord_pass");
-        if (nick && pass && window.state) {
-          var key = "scord_identity_" + window._makeIdFromPass(nick, pass);
+        var identityPeerId = localStorage.getItem("scord_peer_id");
+        if (identityPeerId && window.state) {
+          var key = "scord_identity_" + identityPeerId;
           var data = {
             servers: window.state.servers || [],
             friends: window.state.friends || [],
@@ -20543,10 +20624,14 @@ console.log("[App] Performance + Mobile optimization loaded");
     }
 
     // Identity'den tüm veriyi yükle (startApp'ten önce)
-    var loadedNick = localStorage.getItem("scord_username");
-    var loadedPass = localStorage.getItem("scord_pass");
-    if (loadedNick && loadedPass) {
-      var loadKey = "scord_identity_" + window._makeIdFromPass(loadedNick, loadedPass);
+    var loadedPeerId = localStorage.getItem("scord_peer_id");
+    if (loadedPeerId) {
+      migrateLegacyIdentityStore(
+        localStorage.getItem("scord_username"),
+        localStorage.getItem("scord_pass"),
+        loadedPeerId
+      );
+      var loadKey = "scord_identity_" + loadedPeerId;
       try {
         var savedData = JSON.parse(localStorage.getItem(loadKey));
         if (savedData && window.state) {
@@ -22609,7 +22694,6 @@ function logoutAccount() {
             body: JSON.stringify({ token }),
         }).catch(function () { }).finally(function () {
             localStorage.removeItem("scord_token");
-            localStorage.removeItem("scord_pass");
             localStorage.removeItem("scord_username");
             localStorage.removeItem("scord_peer_id");
             location.reload();
@@ -24626,4 +24710,3 @@ window.startApp = function () {
 })();
 
 console.log("[V25] Screen picker + unified settings + server redesign + P2P tuning loaded");
-

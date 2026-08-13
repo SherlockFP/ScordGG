@@ -62,7 +62,8 @@ class P2PMesh {
         this.username = username;
         this.avatarColor = avatarColor;
         this.avatarImage = avatarImage;
-        const url = `${this.signalingUrl}/${this.roomId}/${this.peerId}?username=${encodeURIComponent(username)}&color=${encodeURIComponent(avatarColor)}`;
+        const token = localStorage.getItem("scord_token") || "";
+        const url = `${this.signalingUrl}/${this.roomId}/${this.peerId}?token=${encodeURIComponent(token)}&username=${encodeURIComponent(username)}&color=${encodeURIComponent(avatarColor)}`;
         this._setStatus("connecting");
         console.log("[P2P] Signaling URL:", url);
         this.ws = new WebSocket(url);

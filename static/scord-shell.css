@@ -1,0 +1,640 @@
+/* SCORD shell v2 — focused product identity layer.
+   Keeps feature styles in style.css while giving the app shell one coherent voice. */
+
+:root {
+  --sidebar-width: 284px;
+  --scord-ink: #090d1a;
+  --scord-panel: #0e1426;
+  --scord-panel-raised: #141c32;
+  --scord-line: rgba(155, 176, 224, 0.16);
+  --scord-text: #f5f7ff;
+  --scord-muted: #97a3bd;
+  --scord-violet: #8b5cf6;
+  --scord-cyan: #38bdf8;
+  --scord-green: #34d399;
+  --scord-gradient: linear-gradient(120deg, var(--scord-violet), var(--scord-cyan));
+}
+
+.app {
+  background:
+    radial-gradient(circle at 78% 18%, rgba(56, 189, 248, 0.08), transparent 32%),
+    radial-gradient(circle at 42% 86%, rgba(139, 92, 246, 0.09), transparent 38%),
+    var(--scord-ink);
+  color: var(--scord-text);
+}
+
+.server-rail {
+  background: rgba(7, 10, 21, 0.94) !important;
+  border-right: 1px solid var(--scord-line);
+  padding-inline: 8px;
+}
+
+.rail-icon {
+  border: 1px solid rgba(151, 163, 189, 0.18) !important;
+  border-radius: 15px !important;
+  background: rgba(20, 28, 50, 0.76) !important;
+  box-shadow: none !important;
+  transition: transform 180ms ease, border-color 180ms ease, background 180ms ease !important;
+}
+
+.rail-icon:hover {
+  transform: translateY(-2px) !important;
+  border-color: rgba(56, 189, 248, 0.5) !important;
+}
+
+.rail-icon.active {
+  background: var(--scord-gradient) !important;
+  border-color: transparent !important;
+  box-shadow: 0 8px 26px rgba(56, 189, 248, 0.2) !important;
+}
+
+.rail-icon.active::before {
+  width: 3px !important;
+  height: 24px !important;
+  left: -10px !important;
+  border-radius: 999px !important;
+  background: var(--scord-cyan) !important;
+}
+
+.channel-sidebar {
+  width: 284px !important;
+  flex: 0 0 284px !important;
+  background: rgba(12, 17, 33, 0.9) !important;
+  border-right: 1px solid var(--scord-line) !important;
+  backdrop-filter: blur(18px);
+}
+
+.sidebar-header,
+.user-bar {
+  background: rgba(17, 24, 43, 0.82) !important;
+  border-color: var(--scord-line) !important;
+}
+
+.sidebar-header {
+  min-height: 58px;
+  padding-inline: 16px !important;
+}
+
+#sidebar-server-name {
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+
+.sidebar-header-btn,
+.user-ctrl-btn,
+.header-btn,
+.modal-close,
+.vsb-btn,
+.dm-close-btn,
+.dm-send-btn {
+  min-width: 44px !important;
+  min-height: 44px !important;
+}
+
+.user-bar {
+  min-height: 64px;
+}
+
+.user-bar .vsb-controls {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.user-bar-controls {
+  flex: 0 0 auto;
+}
+
+.home-view {
+  align-items: flex-start !important;
+  justify-content: center !important;
+  overflow: auto !important;
+  padding: clamp(28px, 4vw, 58px) !important;
+  scrollbar-gutter: stable;
+}
+
+.home-hero {
+  width: min(1080px, 100%);
+  max-width: none !important;
+  margin: 0 auto;
+  padding: 0 !important;
+  text-align: left !important;
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.95fr);
+  column-gap: clamp(34px, 6vw, 78px);
+  row-gap: 16px;
+  align-items: start;
+}
+
+.home-orbit-mark {
+  grid-column: 1;
+  width: 68px;
+  height: 68px;
+  display: grid;
+  place-items: center;
+  position: relative;
+}
+
+.home-orbit-mark::before,
+.home-orbit-mark::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border: 1px solid rgba(56, 189, 248, 0.34);
+  border-radius: 24px;
+  transform: rotate(14deg);
+}
+
+.home-orbit-mark::after {
+  inset: 3px -11px;
+  border-color: rgba(139, 92, 246, 0.32);
+  transform: rotate(-16deg);
+}
+
+.home-orbit-mark svg {
+  width: 56px;
+  height: 56px;
+  filter: drop-shadow(0 10px 28px rgba(139, 92, 246, 0.28));
+}
+
+.home-kicker,
+.mesh-eyebrow {
+  font-family: "Space Grotesk", sans-serif;
+  color: var(--scord-cyan);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+}
+
+.home-kicker {
+  grid-column: 1;
+  margin-top: 10px;
+}
+
+.home-hero h2 {
+  grid-column: 1;
+  margin: 0 !important;
+  max-width: 620px;
+  color: var(--scord-text) !important;
+  font-family: "Space Grotesk", sans-serif !important;
+  font-size: clamp(38px, 5vw, 68px) !important;
+  line-height: 0.98 !important;
+  letter-spacing: -0.045em !important;
+}
+
+.home-hero .home-lead {
+  grid-column: 1;
+  max-width: 600px;
+  margin: 4px 0 6px !important;
+  color: var(--scord-muted) !important;
+  font-size: 15px !important;
+  line-height: 1.65 !important;
+}
+
+.mesh-pulse {
+  grid-column: 2;
+  grid-row: 1 / span 5;
+  align-self: center;
+  padding: 22px;
+  border: 1px solid var(--scord-line);
+  border-radius: 24px;
+  background:
+    linear-gradient(145deg, rgba(139, 92, 246, 0.12), rgba(56, 189, 248, 0.05)),
+    rgba(14, 20, 38, 0.88);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.24);
+  overflow: hidden;
+  position: relative;
+}
+
+.mesh-pulse::before {
+  content: "";
+  position: absolute;
+  width: 170px;
+  height: 170px;
+  right: -80px;
+  top: -100px;
+  border: 1px solid rgba(56, 189, 248, 0.2);
+  border-radius: 50%;
+  box-shadow: 0 0 0 22px rgba(56, 189, 248, 0.035), 0 0 0 44px rgba(139, 92, 246, 0.025);
+}
+
+.mesh-pulse-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--scord-line);
+}
+
+.mesh-pulse-head > div {
+  display: grid;
+  gap: 6px;
+}
+
+.mesh-pulse-head strong {
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 20px;
+}
+
+.mesh-live-dot {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--scord-cyan);
+  box-shadow: 0 0 0 7px rgba(56, 189, 248, 0.1), 0 0 22px rgba(56, 189, 248, 0.55);
+}
+
+.mesh-pulse.is-live .mesh-live-dot {
+  background: var(--scord-green);
+  box-shadow: 0 0 0 7px rgba(52, 211, 153, 0.1), 0 0 22px rgba(52, 211, 153, 0.55);
+}
+
+.mesh-pulse.is-connecting .mesh-live-dot {
+  animation: scord-pulse 1.2s ease-in-out infinite;
+}
+
+.mesh-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  padding-top: 18px;
+}
+
+.mesh-metrics > div {
+  min-width: 0;
+  padding: 12px;
+  border-radius: 15px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.mesh-metrics span,
+.mesh-metrics strong {
+  display: block;
+}
+
+.mesh-metrics span {
+  margin-bottom: 7px;
+  color: var(--scord-muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.mesh-metrics strong {
+  overflow: hidden;
+  color: var(--scord-text);
+  font-size: 13px;
+  text-overflow: ellipsis;
+}
+
+.hero-actions {
+  grid-column: 1;
+  display: flex !important;
+  flex-flow: row wrap !important;
+  justify-content: flex-start !important;
+  gap: 10px !important;
+  margin: 4px 0 0 !important;
+}
+
+.hero-btn {
+  min-height: 46px;
+  border: 1px solid var(--scord-line) !important;
+  border-radius: 14px !important;
+  background: rgba(20, 28, 50, 0.72) !important;
+  color: var(--scord-text) !important;
+  font-weight: 650 !important;
+}
+
+.hero-btn.primary {
+  border-color: transparent !important;
+  background: var(--scord-gradient) !important;
+  box-shadow: 0 12px 30px rgba(82, 122, 245, 0.2) !important;
+}
+
+.hero-btn:hover {
+  transform: translateY(-2px) !important;
+}
+
+.hero-join-code {
+  flex-basis: 100%;
+  justify-content: flex-start !important;
+}
+
+.hero-join-code input {
+  min-height: 44px;
+  border: 1px solid var(--scord-line) !important;
+  border-radius: 13px !important;
+  background: rgba(5, 8, 17, 0.58) !important;
+}
+
+.discover-section {
+  grid-column: 1 / -1;
+  width: 100%;
+  margin-top: 24px !important;
+  text-align: left !important;
+}
+
+.discover-section h3 {
+  color: var(--scord-muted) !important;
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 11px !important;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.room-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  gap: 12px !important;
+}
+
+.room-card {
+  min-height: 92px;
+  border: 1px solid var(--scord-line) !important;
+  border-radius: 18px !important;
+  background: rgba(14, 20, 38, 0.74) !important;
+  box-shadow: none !important;
+}
+
+.room-card:hover {
+  border-color: rgba(56, 189, 248, 0.42) !important;
+  transform: translateY(-3px) !important;
+  background: rgba(20, 28, 50, 0.88) !important;
+}
+
+.room-card-icon {
+  border-radius: 14px !important;
+  background: var(--scord-gradient) !important;
+}
+
+/* Core conversation surface: keep P2P state visible after onboarding. */
+.chat-view,
+.voice-view {
+  background:
+    radial-gradient(circle at 48% 42%, rgba(56, 189, 248, 0.035), transparent 38%),
+    var(--scord-ink) !important;
+}
+
+.chat-header,
+.voice-header {
+  min-height: 60px !important;
+  padding-inline: 18px !important;
+  background: rgba(10, 15, 29, 0.88) !important;
+  border-color: var(--scord-line) !important;
+  backdrop-filter: blur(18px) !important;
+}
+
+.channel-hash {
+  color: var(--scord-cyan) !important;
+  font-weight: 800 !important;
+}
+
+#active-channel-name {
+  font-family: "Space Grotesk", sans-serif;
+  letter-spacing: 0.02em;
+}
+
+#app .connection-badge {
+  display: inline-flex !important;
+  min-height: 28px;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px !important;
+  border: 1px solid var(--scord-line) !important;
+  border-radius: 999px !important;
+  background: rgba(20, 28, 50, 0.82) !important;
+  color: var(--scord-muted) !important;
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 10px !important;
+  letter-spacing: 0.04em;
+}
+
+#app .connection-badge::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 12px currentColor;
+}
+
+#app .connection-badge.ok {
+  color: var(--scord-green) !important;
+}
+
+#app .connection-badge.warn {
+  color: #fbbf24 !important;
+}
+
+#app .connection-badge.err {
+  color: #fb7185 !important;
+}
+
+#channel-list .channel-item {
+  margin: 3px 10px !important;
+  padding: 9px 11px !important;
+  border: 1px solid transparent !important;
+  border-radius: 12px !important;
+}
+
+#channel-list .channel-item:hover {
+  transform: none !important;
+  border-color: var(--scord-line) !important;
+  background: rgba(255, 255, 255, 0.04) !important;
+}
+
+#channel-list .channel-item.active {
+  border-color: rgba(56, 189, 248, 0.24) !important;
+  background: linear-gradient(110deg, rgba(139, 92, 246, 0.22), rgba(56, 189, 248, 0.12)) !important;
+  color: var(--scord-text) !important;
+  box-shadow: inset 3px 0 0 var(--scord-cyan) !important;
+}
+
+.messages-area {
+  padding: 24px 22px 0 !important;
+}
+
+.messages-welcome-icon {
+  background: var(--scord-gradient) !important;
+  box-shadow: 0 14px 36px rgba(82, 122, 245, 0.2) !important;
+}
+
+.members-panel,
+#voice-members-panel {
+  background: rgba(9, 13, 26, 0.72) !important;
+  border-color: var(--scord-line) !important;
+}
+
+.members-panel h4 {
+  color: var(--scord-muted) !important;
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 10px !important;
+  letter-spacing: 0.15em;
+}
+
+.chat-input-wrapper {
+  border: 1px solid rgba(173, 193, 235, 0.14) !important;
+  border-radius: 18px !important;
+  background: linear-gradient(135deg, rgba(255,255,255,0.075), rgba(255,255,255,0.025)) !important;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255,255,255,0.06) !important;
+  backdrop-filter: blur(22px) saturate(135%) !important;
+  -webkit-backdrop-filter: blur(22px) saturate(135%) !important;
+}
+
+.chat-input-wrapper:focus-within {
+  border-color: rgba(139, 92, 246, 0.42) !important;
+  box-shadow: 0 0 28px rgba(139, 92, 246, 0.12), 0 18px 50px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255,255,255,0.08) !important;
+}
+
+#chat-input,
+.message-edit-input,
+.thread-input-wrapper textarea {
+  background: transparent !important;
+  border-color: transparent !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+#chat-input:focus,
+.message-edit-input:focus,
+.thread-input-wrapper textarea:focus {
+  background: transparent !important;
+  border-color: transparent !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+#send-btn,
+.send-btn {
+  background: var(--scord-gradient) !important;
+  border-radius: 13px !important;
+}
+
+@keyframes scord-pulse {
+  0%, 100% { opacity: 0.55; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1.05); }
+}
+
+@media (max-width: 1180px) {
+  .home-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .mesh-pulse {
+    grid-column: 1;
+    grid-row: auto;
+    width: 100%;
+  }
+
+  .room-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+}
+
+@media (max-width: 768px) {
+  #app .server-rail {
+    display: flex !important;
+    position: fixed !important;
+    inset: 0 auto 54px 0 !important;
+    width: 56px !important;
+    z-index: 1700 !important;
+    padding-inline: 4px !important;
+    transform: translateX(-100%) !important;
+    transition: transform 180ms ease !important;
+  }
+
+  body.nav-open #app .server-rail {
+    transform: translateX(0) !important;
+  }
+
+  #app .channel-sidebar {
+    width: min(calc(100vw - 70px), 300px) !important;
+    flex-basis: min(calc(100vw - 70px), 300px) !important;
+    left: 56px !important;
+    z-index: 1600 !important;
+    display: flex !important;
+    transform: translateX(calc(-100% - 56px)) !important;
+  }
+
+  body.nav-open #app .channel-sidebar {
+    transform: translateX(0) !important;
+  }
+
+  .home-view {
+    padding: 24px 18px 92px !important;
+  }
+
+  .home-hero {
+    row-gap: 13px;
+  }
+
+  .home-orbit-mark {
+    width: 56px;
+    height: 56px;
+  }
+
+  .home-orbit-mark svg {
+    width: 46px;
+    height: 46px;
+  }
+
+  .home-hero h2 {
+    font-size: 42px !important;
+  }
+
+  .mesh-pulse {
+    padding: 17px;
+    border-radius: 20px;
+  }
+
+  .mesh-metrics {
+    gap: 6px;
+  }
+
+  .mesh-metrics > div {
+    padding: 10px 8px;
+  }
+
+  .hero-actions,
+  .hero-actions > .hero-btn,
+  .hero-join-code {
+    width: 100%;
+  }
+
+  .hero-actions {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .hero-join-code {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-column: 1 / -1;
+  }
+
+  .hero-join-code input {
+    width: 100% !important;
+    min-width: 0;
+  }
+
+  .hero-join-code .hero-btn {
+    width: auto !important;
+    min-width: 72px;
+  }
+
+  .room-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mesh-live-dot,
+  .rail-icon,
+  .hero-btn,
+  .room-card {
+    animation: none !important;
+    transition: none !important;
+  }
+}

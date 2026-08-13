@@ -420,12 +420,12 @@ class Room:
             {"id": "ch-genel", "name": "genel", "type": "text"},
             {"id": "ch-duyurular", "name": "duyurular", "type": "text"},
             {"id": "ch-sesli", "name": "sesli-sohbet", "type": "voice"},
-            {"id": "ch-muzik", "name": "m├╝zik", "type": "voice"},
+            {"id": "ch-muzik", "name": "müzik", "type": "voice"},
         ]
         self.roles = {
             "admin": {"name": "Admin", "color": "#ef4444", "hoist": True, "permissions": _role_defaults("admin")},
             "mod": {"name": "Moderator", "color": "#22c55e", "hoist": True, "permissions": _role_defaults("mod")},
-            "member": {"name": "├£ye", "color": "#94a3b8", "hoist": False}
+            "member": {"name": "Üye", "color": "#94a3b8", "hoist": False}
         }
         self.channel_permissions = {}
         self.peer_roles = {owner_id: "admin"}
@@ -753,11 +753,16 @@ def get_runtime_config():
 
 
 @app.post("/api/rooms")
-def create_room(body: dict):
+def create_room(body: dict, request: Request):
     """Create a new P2P room (server). Returns the room_id + secret owner_key."""
+    auth = request.headers.get("authorization") or ""
+    token = body.get("token") or (auth[7:].strip() if auth.lower().startswith("bearer ") else "")
+    account = _account_by_token(token)
+    if not account:
+        raise HTTPException(status_code=401, detail="unauthorized")
     room_id = str(uuid.uuid4())
     name = body.get("name", "Unnamed Server")
-    owner_id = body.get("owner_id", "unknown")
+    owner_id = account["peer_id"]
     room = Room(room_id, name, owner_id)
     room.owner_key = secrets.token_urlsafe(32)
     rooms[room_id] = room
@@ -1170,6 +1175,13 @@ def yt_search(q: str):
 @app.websocket("/ws/{room_id}/{peer_id}")
 async def signaling_ws(websocket: WebSocket, room_id: str, peer_id: str):
     await websocket.accept()
+
+    token = websocket.query_params.get("token", "")
+    account = _account_by_token(token)
+    if not account or account["peer_id"] != peer_id:
+        await websocket.send_text(json.dumps({"type": "error", "message": "Unauthorized peer"}))
+        await websocket.close(code=4403, reason="unauthorized")
+        return
 
     # Reject unknown rooms
     if room_id not in rooms:

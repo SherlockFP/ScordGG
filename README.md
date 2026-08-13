@@ -1,6 +1,6 @@
 # SCORD
 
-Discord'un P2P versiyonunu yapmaya çalışan bir proje. Metin, sesli sohbet, ekran paylaşımı, roller/izinler, müzik botu, arkadaşlar/DM — Discord'da ne varsa ona benzer bir şey oturtmaya çalıştım, ama mimarisi tamamen farklı: mesajlar ve ses **peer-to-peer** (WebRTC) üzerinden akıyor, merkezi bir sunucu chat trafiğine dokunmuyor.
+P2P-öncelikli bir topluluk ve sohbet uygulaması. Metin, sesli sohbet, ekran paylaşımı, roller/izinler, müzik botu, arkadaşlar ve DM içeriyor. Medya ve mesajlar mümkün olduğunda **peer-to-peer** (WebRTC) akar; merkezi servis kimlik, alan metadata'sı, sinyalleşme, mesaj geçmişi ve bağlantı kurulamadığında WebSocket fallback'i sağlar.
 
 Canlısı burada: `https://scord.onrender.com` gibi bir Render adresinde host'lanıyor (kendi deploy'unu yaparsan URL değişir).
 
@@ -16,18 +16,18 @@ Canlısı burada: `https://scord.onrender.com` gibi bir Render adresinde host'la
 
 2. **Sinyal / kayıt sunucusu** (`static/server.py`, FastAPI) — Render'da 7/24 açık duran tek sunucu. İşi şu:
    - Hangi sunucuların (server/guild) var olduğunu tutar (`/api/rooms`), oluşturma/silme/davet kodu gibi işlemleri yönetir.
-   - WebRTC bağlantısını kurmak için gereken signaling'i (offer/answer/ICE candidate mesajlarını iki peer arasında forward etmek) yapar — kendisi asla ses/video/mesaj içeriğini görmez, sadece "şu paketi şu peer'a ilet" der.
+   - WebRTC bağlantısını kurmak için gereken signaling'i (offer/answer/ICE candidate mesajlarını iki peer arasında forward etmek) yapar. Metin mesajları deduplikasyon için kimlikli olarak hem açık DataChannel'lara hem WebSocket hattına gönderilir; WebSocket yoksa açık DataChannel tek başına çalışabilir.
    - Kanal listesi, roller, mesaj geçmişi gibi *sunucu metadata'sını* diskte (`rooms.json`) tutar. Bunun sebebi basit: Render'ın ücretsiz planında disk ephemeral, yani container her redeploy'da sıfırlanabiliyor. Bir client'ın elinde hâlâ eski bir sunucunun tam kopyası varsa, açılışta bunu backend'e geri "restore" edip kaybı telafi ediyor. Sahiden silinmiş bir sunucu ise (owner sildiyse) tombstone listesinde tutuluyor ki geri dirilmesin.
 
-3. **P2P mesh** (`static/p2p.js`) — chat, ses, ekran paylaşımı, kamera burada. Odaya giren her peer, odadaki diğer herkesle ayrı ayrı `RTCPeerConnection` açar (full mesh). Metin `RTCDataChannel` üzerinden, ses/görüntü track olarak gider. Sinyalleşme WebSocket üzerinden yukarıdaki sunucuya gidip geliyor, ama trafiğin kendisi doğrudan iki tarayıcı arasında.
+3. **P2P mesh** (`static/p2p.js`) — chat tesliminin P2P kolu, ses, ekran paylaşımı ve kamera burada. Odaya giren her peer, odadaki diğer herkesle ayrı ayrı `RTCPeerConnection` açar (full mesh). Ses/görüntü track'leri mümkün olduğunda doğrudan akar; metin ise DataChannel + WebSocket çift teslim ve merkezi geçmiş kullanır.
 
-Yani kısaca: "kim kimdir, kim nerede, hangi sunucu hâlâ var" gibi sorular için tek bir otorite var (backend), ama "ne konuşuluyor / kim konuşuyor" tamamen uçtan uca.
+Yani kısaca: kimlik ve alan durumu için backend otoritesi, gerçek zamanlı medya için doğrudan WebRTC mesh, metin içinse P2P + merkezi geçmiş/fallback birlikte kullanılır. Bu sürüm uçtan uca şifreli mesajlaşma iddiasında bulunmaz.
 
 ## Kurulum
 
 ```bash
 pip install -r requirements.txt
-python app.py        # ya da: uvicorn app:app --reload --port 8000
+python -m uvicorn app:app --reload --port 8000
 ```
 
 Windows'ta `run.bat` aynısını yapıyor. `http://localhost:8000` açılınca giriş ekranı geliyor — hesabın yoksa "Kayıt Ol" sekmesinden bir tane oluştur.
