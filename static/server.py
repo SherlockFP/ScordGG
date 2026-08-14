@@ -19,6 +19,7 @@ import re
 import sqlite3
 import hashlib
 import secrets
+from contextlib import contextmanager
 from typing import Dict, Set, Optional, Any
 from pathlib import Path
 
@@ -52,7 +53,9 @@ _login_attempts_lock = threading.Lock()
 # restart'ta s─▒f─▒rlan─▒r; istemci taraf─▒ndaki auto-reregister bunu telafi eder.
 _DATA_DIR = Path(os.environ.get("SCORD_DATA_DIR") or Path(__file__).parent.parent)
 _DATA_DIR.mkdir(parents=True, exist_ok=True)
-DATABASE_FILE = str(_DATA_DIR / "rooms.json")
+DATABASE_FILE = str(_DATA_DIR / "rooms.json")  # one-time legacy import
+# Accounts, sessions, friendships, servers and memberships live in one durable
+# SQLite file. Keeping the historical filename preserves existing deployments.
 ACCOUNTS_DB_FILE = str(_DATA_DIR / "scord_accounts.db")
 PLATFORM_ADMIN_USERNAMES = {
     name.strip().lower()
@@ -85,14 +88,23 @@ DEFAULT_ROLE_PERMISSIONS = {
 # profil (avatar/bio/banner) buraya ba─ƒl─▒ ΓÇö art─▒k sadece o an a├º─▒k olan
 # taray─▒c─▒n─▒n localStorage'─▒nda de─ƒil, giri┼ƒ yapan her cihazda ayn─▒ hesap.
 
+@contextmanager
 def _db():
     conn = sqlite3.connect(ACCOUNTS_DB_FILE)
     conn.row_factory = sqlite3.Row
-    return conn
-
+    conn.execute("PRAGMA foreign_keys = ON")
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 def init_accounts_db():
     with _db() as conn:
+        conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS accounts (
                 peer_id TEXT PRIMARY KEY,
@@ -137,7 +149,43 @@ def init_accounts_db():
                 PRIMARY KEY (peer_id, friend_peer_id)
             )
         """)
-    log.info(f"Accounts DB ready at {ACCOUNTS_DB_FILE}")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS servers (
+                room_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                owner_id TEXT NOT NULL,
+                owner_username TEXT NOT NULL DEFAULT '',
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                invite_code TEXT NOT NULL,
+                icon_url TEXT,
+                is_public INTEGER NOT NULL DEFAULT 1,
+                state_json TEXT NOT NULL
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_servers_public_updated ON servers(is_public, updated_at DESC)")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_servers_invite_code ON servers(invite_code)")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS server_members (
+                room_id TEXT NOT NULL,
+                peer_id TEXT NOT NULL,
+                username TEXT NOT NULL DEFAULT '',
+                role TEXT NOT NULL DEFAULT 'member',
+                joined_at REAL NOT NULL,
+                last_seen REAL NOT NULL,
+                PRIMARY KEY (room_id, peer_id),
+                FOREIGN KEY (room_id) REFERENCES servers(room_id) ON DELETE CASCADE
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_server_members_role ON server_members(room_id, role)")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS deleted_servers (
+                room_id TEXT PRIMARY KEY,
+                deleted_at REAL NOT NULL
+            )
+        """)
+    log.info(f"SCORD database ready at {ACCOUNTS_DB_FILE}")
 
 
 def _to_int32(n: int) -> int:
@@ -240,10 +288,34 @@ def _request_account(request: Request, body: dict | None = None) -> Optional[sql
     token = body.get("token") or (auth[7:].strip() if auth.lower().startswith("bearer ") else "")
     return _account_by_token(token)
 
+
+def _upsert_server_member(room_id: str, peer_id: str, username: str, role: str = "member"):
+    if not room_id or not peer_id:
+        return
+    now = time.time()
+    with _db() as conn:
+        conn.execute("""
+            INSERT INTO server_members (room_id, peer_id, username, role, joined_at, last_seen)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(room_id, peer_id) DO UPDATE SET
+                username = excluded.username,
+                role = excluded.role,
+                last_seen = excluded.last_seen
+        """, (room_id, peer_id, username or "", role or "member", now, now))
+
+
+def _server_member_count(room_id: str) -> int:
+    try:
+        with _db() as conn:
+            row = conn.execute("SELECT COUNT(*) FROM server_members WHERE room_id = ?", (room_id,)).fetchone()
+            return int(row[0]) if row else 0
+    except sqlite3.Error:
+        return 0
+
 def _role_defaults(role_id: str) -> dict:
     return {p: True for p in DEFAULT_ROLE_PERMISSIONS.get(role_id, DEFAULT_ROLE_PERMISSIONS["member"])}
 
-def save_db():
+def _save_db_legacy():
     try:
         data: Dict[str, Any] = {rid: r.to_persist_dict() for rid, r in rooms.items()}
         # Tombstone listesi oda kay─▒tlar─▒yla ayn─▒ dosyada ya┼ƒ─▒yor ("_deleted"
@@ -286,7 +358,7 @@ def schedule_save_db(delay_sec: float = 1.2):
         _db_save_timer.daemon = True
         _db_save_timer.start()
 
-def load_db():
+def _load_db_legacy():
     if not os.path.exists(DATABASE_FILE):
         return
     try:
@@ -338,6 +410,115 @@ def load_db():
                 log.error(f"Backup {bak_file} also corrupted — {len(rooms)} rooms lost. Fix or delete {DATABASE_FILE} and restart.")
         else:
             log.error(f"No backup found — rooms in {DATABASE_FILE} are lost. Fix or delete the file and restart.")
+
+
+def _room_from_snapshot(rid: str, data: dict) -> "Room":
+    room = Room(rid, data.get("name", "Unnamed Server"), data.get("owner_id", "unknown"), data.get("owner_username", ""))
+    room.owner_key = data.get("owner_key")
+    room.created_at = data.get("created_at", room.created_at)
+    room.channels = data.get("channels", room.channels)
+    room.roles = data.get("roles", room.roles)
+    room.channel_permissions = data.get("channel_permissions", room.channel_permissions)
+    room.peer_roles = data.get("peer_roles", room.peer_roles)
+    room.pinned_messages = data.get("pinned_messages", [])
+    room.messages = data.get("messages", {})
+    room.channel_backgrounds = data.get("channel_backgrounds", {})
+    room.icon_url = data.get("icon_url")
+    room.description = data.get("description", "")
+    room.invite_code = data.get("invite_code", str(uuid.uuid4())[:6].upper())
+    room.is_public = bool(data.get("is_public", True))
+    room.normalize_permissions()
+    return room
+
+
+def save_db():
+    """Persist all durable SCORD server state in one SQLite transaction."""
+    try:
+        now = time.time()
+        snapshots = [(rid, room, room.to_persist_dict()) for rid, room in rooms.items()]
+        with _db() as conn:
+            existing = {row[0] for row in conn.execute("SELECT room_id FROM servers").fetchall()}
+            live_ids = {rid for rid, _, _ in snapshots}
+            for stale_id in existing - live_ids:
+                conn.execute("DELETE FROM servers WHERE room_id = ?", (stale_id,))
+            for rid, room, payload in snapshots:
+                conn.execute("""
+                    INSERT INTO servers (
+                        room_id, name, owner_id, owner_username, created_at, updated_at,
+                        description, invite_code, icon_url, is_public, state_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(room_id) DO UPDATE SET
+                        name = excluded.name,
+                        owner_id = excluded.owner_id,
+                        owner_username = excluded.owner_username,
+                        created_at = excluded.created_at,
+                        updated_at = excluded.updated_at,
+                        description = excluded.description,
+                        invite_code = excluded.invite_code,
+                        icon_url = excluded.icon_url,
+                        is_public = excluded.is_public,
+                        state_json = excluded.state_json
+                """, (
+                    rid, room.name, room.owner_id, room.owner_username, room.created_at, now,
+                    room.description, room.invite_code, room.icon_url, int(room.is_public),
+                    json.dumps(payload, ensure_ascii=False),
+                ))
+                if room.owner_id:
+                    conn.execute("""
+                        INSERT INTO server_members (room_id, peer_id, username, role, joined_at, last_seen)
+                        VALUES (?, ?, ?, 'owner', ?, ?)
+                        ON CONFLICT(room_id, peer_id) DO UPDATE SET
+                            username = excluded.username,
+                            role = 'owner',
+                            last_seen = excluded.last_seen
+                    """, (rid, room.owner_id, room.owner_username or "", room.created_at, now))
+            for rid in sorted(deleted_room_ids)[-DELETED_TOMBSTONE_CAP:]:
+                conn.execute(
+                    "INSERT OR REPLACE INTO deleted_servers (room_id, deleted_at) VALUES (?, ?)",
+                    (rid, now),
+                )
+            conn.execute("""
+                DELETE FROM deleted_servers WHERE room_id NOT IN (
+                    SELECT room_id FROM deleted_servers ORDER BY deleted_at DESC LIMIT ?
+                )
+            """, (DELETED_TOMBSTONE_CAP,))
+        log.info(f"Server state saved to SQLite ({len(snapshots)} servers)")
+    except Exception as exc:
+        log.error(f"Failed to save server database: {exc}")
+
+
+def load_db():
+    """Load SQLite snapshots and import a legacy rooms.json once if needed."""
+    loaded = 0
+    try:
+        with _db() as conn:
+            rows = conn.execute("SELECT room_id, state_json FROM servers ORDER BY created_at").fetchall()
+            deleted_room_ids.update(row[0] for row in conn.execute("SELECT room_id FROM deleted_servers").fetchall())
+        for row in rows:
+            rooms[row["room_id"]] = _room_from_snapshot(row["room_id"], json.loads(row["state_json"]))
+            loaded += 1
+    except Exception as exc:
+        log.error(f"Failed to load SQLite server state: {exc}")
+
+    if loaded or not os.path.exists(DATABASE_FILE):
+        log.info(f"Loaded {loaded} servers from SQLite")
+        return
+
+    try:
+        with open(DATABASE_FILE, "r", encoding="utf-8") as handle:
+            legacy = json.load(handle)
+        deleted_room_ids.update(legacy.pop("_deleted", []))
+        for rid, payload in legacy.items():
+            rooms[rid] = _room_from_snapshot(rid, payload)
+        save_db()
+        log.info(f"Migrated {len(rooms)} legacy rooms from rooms.json to SQLite")
+    except Exception as exc:
+        log.error(f"Legacy rooms.json migration failed: {exc}")
+        rooms.clear()
+        deleted_room_ids.clear()
+        _load_db_legacy()
+        if rooms:
+            save_db()
 
 
 def _template_channels(kind: str) -> list[dict]:
@@ -475,6 +656,7 @@ class Room:
         self.channel_backgrounds = {}  # channel_id -> image url
         self.icon_url = None
         self.description = ""
+        self.is_public = True
         self.invite_code = str(uuid.uuid4())[:6].upper()
 
     def to_persist_dict(self):
@@ -496,7 +678,23 @@ class Room:
             "channel_backgrounds": self.channel_backgrounds,
             "icon_url": self.icon_url,
             "description": self.description,
+            "is_public": self.is_public,
             "invite_code": self.invite_code,
+        }
+
+    def to_discovery_dict(self):
+        """Small public card payload; message history never leaks into discovery."""
+        return {
+            "room_id": self.room_id,
+            "name": self.name,
+            "description": self.description,
+            "icon_url": self.icon_url,
+            "invite_code": self.invite_code,
+            "owner_username": self.owner_username,
+            "member_count": max(_server_member_count(self.room_id), len(self.peers), 1),
+            "channel_count": len(self.channels),
+            "is_public": self.is_public,
+            "administrators": self.administrator_snapshot(),
         }
 
     def to_dict(self):
@@ -509,7 +707,7 @@ class Room:
             "owner_username": self.owner_username,
             "created_at": self.created_at,
             "administrators": self.administrator_snapshot(),
-            "peer_count": max(1, len(self.peers)),
+            "peer_count": max(_server_member_count(self.room_id), len(self.peers), 1),
             "channels": self.channels,
             "roles": self.roles,
             "channel_permissions": self.channel_permissions,
@@ -518,6 +716,7 @@ class Room:
             "channel_backgrounds": self.channel_backgrounds,
             "icon_url": self.icon_url,
             "description": self.description,
+            "is_public": self.is_public,
             "invite_code": self.invite_code,
             "messages": self.messages, # Sent for history sync
             "peers": [
@@ -679,7 +878,7 @@ def _can_control_music(room: Room, peer_id: str) -> bool:
 
 @app.get("/api/rooms")
 def list_rooms():
-    return [r.to_dict() for r in rooms.values()]
+    return [r.to_discovery_dict() for r in rooms.values() if r.is_public]
 
 
 @app.get("/api/rooms/{room_id}")
@@ -888,6 +1087,7 @@ def create_room(body: dict, request: Request):
     room.owner_key = secrets.token_urlsafe(32)
     rooms[room_id] = room
     save_db()
+    _upsert_server_member(room_id, owner_id, account["username"], "owner")
     log.info(f"Room created: {name!r} ({room_id}) by {owner_id}")
     return {"room_id": room_id, "invite_code": room.invite_code, "owner_key": room.owner_key}
 
@@ -1037,6 +1237,8 @@ async def update_room_settings(room_id: str, body: dict, request: Request):
         room.icon_url = body["icon_url"]
     if "description" in body:
         room.description = str(body["description"])[:500]
+    if "is_public" in body:
+        room.is_public = bool(body["is_public"])
     if body.get("roles"):
         room.roles = body["roles"]
     if "peer_roles" in body:
@@ -1056,6 +1258,7 @@ async def update_room_settings(room_id: str, body: dict, request: Request):
             "peer_roles": room.peer_roles,
             "channel_permissions": room.channel_permissions,
             "icon_url": room.icon_url,
+            "is_public": room.is_public,
         }
     })
     return {"success": True}
@@ -1075,10 +1278,18 @@ def rotate_invite(room_id: str, body: dict, request: Request):
     return {"invite_code": room.invite_code}
 
 @app.get("/api/rooms/join/{invite_code}")
-def get_room_by_code(invite_code: str):
+def get_room_by_code(invite_code: str, request: Request):
     code = invite_code.upper()
     for room in rooms.values():
         if room.invite_code == code:
+            account = _request_account(request)
+            if account:
+                _upsert_server_member(
+                    room.room_id,
+                    account["peer_id"],
+                    account["username"],
+                    room.role_for(account["peer_id"]),
+                )
             return room.to_dict()
     return {"error": "Not found"}
 
@@ -1171,6 +1382,8 @@ def restore_room(room_id: str, body: dict, request: Request):
         room.channel_backgrounds = body["channel_backgrounds"]
     if body.get("icon_url"):
         room.icon_url = body["icon_url"]
+    if "is_public" in body:
+        room.is_public = bool(body["is_public"])
     if body.get("invite_code"):
         room.invite_code = body["invite_code"]
     room.normalize_permissions()
@@ -1284,6 +1497,8 @@ def assign_role(room_id: str, body: dict, request: Request):
     role_id = body.get("role_id")
     if peer_id and role_id in room.roles:
         room.peer_roles[peer_id] = role_id
+        username = room.peer_info.get(peer_id, {}).get("username", "")
+        _upsert_server_member(room_id, peer_id, username, role_id)
         schedule_save_db()
         return {"success": True}
     return {"error": "Invalid data"}
@@ -1370,6 +1585,7 @@ async def signaling_ws(websocket: WebSocket, room_id: str, peer_id: str):
     room.peers[peer_id] = websocket
     room.peer_info[peer_id] = {"username": username, "avatar_color": avatar_color}
     room.last_seen[peer_id] = time.time()
+    _upsert_server_member(room_id, peer_id, account["username"], room.role_for(peer_id))
     log.info(f"Peer {peer_id} ({username}) joined room {room_id}")
 
     # Tell the new peer who else is here
@@ -1651,9 +1867,9 @@ def health_root():
 
 @app.on_event("startup")
 def startup_event():
+    init_accounts_db()
     load_db()
     ensure_template_rooms()
-    init_accounts_db()
 
 if __name__ == "__main__":
     import uvicorn

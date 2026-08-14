@@ -231,7 +231,7 @@ function meshBroadcastReliable(payload) {
 async function scordFetch(url, options = {}) {
     try {
         options.headers = { ...(options.headers || {}) };
-        const token = localStorage.getItem("scord_token");
+        const token = state.authToken || localStorage.getItem("scord_token");
         if (token && !options.headers.Authorization) options.headers.Authorization = `Bearer ${token}`;
         const res = await fetch(url, options);
         if (!res.ok) {
@@ -2173,6 +2173,20 @@ function syncProfileField(fields) {
 window.syncProfileField = syncProfileField;
 
 async function initSetup() {
+    document.querySelectorAll(".auth-password-toggle[data-password-target]").forEach(toggle => {
+        if (toggle.dataset.bound === "true") return;
+        toggle.dataset.bound = "true";
+        toggle.addEventListener("click", () => {
+            const input = document.getElementById(toggle.dataset.passwordTarget);
+            if (!input) return;
+            const reveal = input.type === "password";
+            input.type = reveal ? "text" : "password";
+            toggle.setAttribute("aria-pressed", String(reveal));
+            toggle.setAttribute("aria-label", reveal ? "Şifreyi gizle" : "Şifreyi göster");
+            input.focus({ preventScroll: true });
+        });
+    });
+
     const token = localStorage.getItem("scord_token");
     const savedId = localStorage.getItem("scord_peer_id");
     const savedNick = localStorage.getItem("scord_username");
@@ -2508,6 +2522,10 @@ function initMobileNav() {
 function closeMobileNav() {
     document.body.classList.remove("nav-open");
     document.getElementById("members-panel").classList.remove("mobile-active");
+    if (window.innerWidth <= 980) {
+        state.membersOpen = false;
+        document.getElementById("members-toggle-btn")?.setAttribute("aria-pressed", "false");
+    }
     const mask = document.getElementById("mobile-nav-mask");
     mask.classList.add("hidden");
     mask.classList.remove("active");
@@ -3064,7 +3082,9 @@ function createChannelItem(channel, serverId) {
 
     const icon = document.createElement("span");
     icon.className = "ch-icon";
-    icon.textContent = channel.type === "voice" ? "🔊" : "#";
+    icon.innerHTML = channel.type === "voice"
+        ? '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" aria-hidden="true"><path d="M11 5 6.8 8.5H4v7h2.8L11 19V5Z" fill="currentColor"/><path d="M14.5 8.2a5.2 5.2 0 0 1 0 7.6M17.2 5.7a8.7 8.7 0 0 1 0 12.6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>'
+        : '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" aria-hidden="true"><path d="m9 3-2 18M17 3l-2 18M4 9h16M3 15h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
 
     const name = document.createElement("span");
     name.className = "ch-name";
@@ -3292,7 +3312,7 @@ function _renderMessagesImpl(serverId, channelId) {
     if (!server) {
         console.error("[Messages] Server not found:", serverId);
         area.innerHTML = `<div class="messages-welcome">
-            <div class="messages-welcome-icon">❌</div>
+            <div class="messages-welcome-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="24" height="24" fill="none"><path d="M7 7l10 10M17 7 7 17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
             <h3>Sunucu bulunamadı</h3>
             <p>Bu sunucu mevcut değil veya erişim izniniz yok.</p>
         </div>`;
@@ -3311,7 +3331,7 @@ function _renderMessagesImpl(serverId, channelId) {
             if (lb) lb.onclick = null;
         }
         area.innerHTML = `<div class="messages-welcome">
-    <div class="messages-welcome-icon">💬</div>
+    <div class="messages-welcome-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none"><path d="M6.5 18.2 3.8 20l.8-3.7A8 8 0 1 1 6.5 18.2Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8 11.5h.01M12 11.5h.01M16 11.5h.01" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></div>
     <h3># ${server?.channels.find(c => c.id === cid)?.name || channelId}</h3>
     <p>Bu kanalın başlangıcı. Merhaba! 👋</p>
   </div>`;
@@ -3486,6 +3506,34 @@ function appendMessageDOM(msg, grouped = false, serverId = null, opts = {}) {
     stack.appendChild(bubble);
     inner.appendChild(avatarDiv);
     inner.appendChild(stack);
+    const messageActions = document.createElement("div");
+    messageActions.className = "msg-quick-actions";
+    messageActions.setAttribute("aria-label", "Mesaj işlemleri");
+    const addQuickAction = (label, svg, handler, danger = false) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "msg-quick-action" + (danger ? " danger" : "");
+        button.setAttribute("aria-label", label);
+        button.title = label;
+        button.innerHTML = svg;
+        button.onclick = (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            handler(button);
+        };
+        messageActions.appendChild(button);
+    };
+    addQuickAction("Yanıtla", '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true"><path d="m10 8-5 4 5 4v-2.5h3.5c2.5 0 4.2 1.1 5.5 3.5-.2-5-2.8-7.5-7.2-7.5H10V8Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>', () => setReplyTarget(msg));
+    addQuickAction("Diğer mesaj işlemleri", '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>', (button) => {
+        const rect = button.getBoundingClientRect();
+        showMsgContextMenu(msg, rect.right - 8, rect.bottom + 6);
+    });
+    const activeServer = state.servers.find(server => server.id === sid);
+    const canDeleteMessage = isSelf || ["owner", "admin", "mod"].includes(getMyEffectiveRole(activeServer));
+    if (canDeleteMessage) {
+        addQuickAction("Mesajı sil", '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true"><path d="M5 7h14M9 7V4.8h6V7m-8 0 .7 12h8.6L17 7M10 10.5v5M14 10.5v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>', () => deleteChatMessage(msg), true);
+    }
+    inner.appendChild(messageActions);
     el.appendChild(inner);
 
     if (msg.isPinned) {
@@ -3862,6 +3910,7 @@ async function createServer(name) {
         createdAt: Date.now(),
         administrators: [{ peer_id: state.peerId, username: state.username, role: "owner" }],
         inviteCode,
+        is_public: true,
         channels: [
             { id: "ch-genel", name: "genel", type: "text" },
             { id: "ch-duyurular", name: "duyurular", type: "text" },
@@ -4022,9 +4071,8 @@ async function joinServer(roomId) {
     console.log("[Join] Joining server:", roomId);
 
     // Check room exists
-    const rooms = await fetch(`${API_BASE}/rooms`).then(r => r.json());
-    const room = rooms.find(r => r.room_id === roomId);
-    if (!room) {
+    const room = await fetch(`${API_BASE}/rooms/${encodeURIComponent(roomId)}`).then(r => r.json());
+    if (!room || room.error) {
         console.error("[Join] Room not found:", roomId);
         toast("Sunucu bulunamadı.", "error");
         return;
@@ -4061,6 +4109,7 @@ async function joinServer(roomId) {
         createdAt: room.created_at || Date.now(),
         administrators: room.administrators || [],
         inviteCode: room.invite_code,
+        is_public: room.is_public !== false,
         channels: room.channels || [
             { id: "ch-genel", name: "genel", type: "text" },
             { id: "ch-duyurular", name: "duyurular", type: "text" },
@@ -6534,7 +6583,7 @@ function showMsgContextMenu(msg, x, y) {
     }, 10);
 }
 
-function deleteChatMessage(msg) {
+async function deleteChatMessage(msg) {
     const server = state.servers.find(s => s.id === state.activeServerId);
     if (!server) return;
 
@@ -6546,14 +6595,25 @@ function deleteChatMessage(msg) {
     // Add to edit history before deleting
     addMessageToHistory(server.id, channelId, msg, 'delete');
 
+    const previousMessages = [...server.messages[channelId]];
+    const previousPins = [...(server.pinned_messages || [])];
     server.messages[channelId] = server.messages[channelId].filter(m => m.id !== msg.id);
     server.pinned_messages = (server.pinned_messages || []).filter(m => m.id !== msg.id);
-    scordFetch(`${API_BASE}/rooms/${encodeURIComponent(state.activeServerId)}/messages/${encodeURIComponent(msg.id)}?channel_id=${encodeURIComponent(channelId)}`, {
-        method: "DELETE",
-    }).catch(e => console.warn("[Chat] server delete failed:", e));
-    meshBroadcastReliable({ type: "msg_delete", payload: { channelId, msgId: msg.id } });
     renderMessages(state.activeServerId, state.activeChannelId);
-    toast("Mesaj silindi.", "info");
+    try {
+        const response = await scordFetch(`${API_BASE}/rooms/${encodeURIComponent(state.activeServerId)}/messages/${encodeURIComponent(msg.id)}?channel_id=${encodeURIComponent(channelId)}`, {
+            method: "DELETE",
+        });
+        if (!response.ok) throw new Error(`delete failed: ${response.status}`);
+        meshBroadcastReliable({ type: "msg_delete", payload: { channelId, msgId: msg.id } });
+        toast("Mesaj silindi.", "info");
+    } catch (error) {
+        server.messages[channelId] = previousMessages;
+        server.pinned_messages = previousPins;
+        renderMessages(state.activeServerId, state.activeChannelId);
+        toast("Mesaj silinemedi; içerik geri yüklendi.", "error");
+        console.warn("[Chat] server delete failed:", error);
+    }
 }
 
 // Message Edit/Delete History System
@@ -8288,6 +8348,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const homeBtn = document.getElementById("home-btn");
     if (homeBtn) homeBtn.onclick = showHomeView;
 
+    const discoverBtn = document.getElementById("discover-btn");
+    if (discoverBtn) discoverBtn.onclick = showServerDiscoveryView;
+
     // Join by Code
     const joinIdxBtn = document.getElementById("join-by-code-btn");
     if (joinIdxBtn) joinIdxBtn.onclick = joinByCode;
@@ -8297,8 +8360,16 @@ document.addEventListener("DOMContentLoaded", () => {
     const membersToggleBtn = document.getElementById("members-toggle-btn");
     if (membersToggleBtn) {
         membersToggleBtn.onclick = () => {
-            state.membersOpen = !state.membersOpen;
             const panel = document.getElementById("members-panel");
+            if (window.innerWidth <= 980) {
+                const shouldOpen = !panel?.classList.contains("mobile-active");
+                state.membersOpen = shouldOpen;
+                panel?.classList.remove("collapsed");
+                panel?.classList.toggle("mobile-active", shouldOpen);
+                membersToggleBtn.setAttribute("aria-pressed", String(shouldOpen));
+                return;
+            }
+            state.membersOpen = !state.membersOpen;
             if (panel) panel.classList.toggle("collapsed", !state.membersOpen);
             membersToggleBtn.setAttribute("aria-pressed", String(state.membersOpen));
         };
@@ -9516,7 +9587,7 @@ async function showDiscordInvitePreview(code) {
 }
 window.showDiscordInvitePreview = showDiscordInvitePreview;
 
-async function refreshDiscovery() {
+async function refreshDiscoveryLegacy() {
     const grid = document.getElementById("room-list-home");
     if (!grid) return;
     try {
@@ -9554,6 +9625,110 @@ async function refreshDiscovery() {
     } catch (err) {
         console.error("[Discovery] Error:", err);
         grid.innerHTML = '<p style="color:var(--text-muted);text-align:center;grid-column:1/-1;">Sunucu listesi yüklenemedi. Ağını kontrol edip yenile.</p>';
+    }
+}
+
+function showServerDiscoveryView() {
+    closeMobileNav();
+    const home = document.getElementById("home-view");
+    if (!home) return;
+    home.classList.remove("hidden", "home-dm-active");
+    document.getElementById("chat-view")?.classList.add("hidden");
+    document.getElementById("voice-view")?.classList.add("hidden");
+    document.getElementById("dm-main-view")?.classList.add("hidden");
+    document.querySelector("#home-view .home-hero")?.classList.add("hidden");
+    document.getElementById("scord-friends-directory")?.classList.add("hidden");
+    document.getElementById("sidebar-server-name").textContent = "Keşfet";
+    document.querySelectorAll(".rail-icon").forEach(el => el.classList.remove("active"));
+    document.getElementById("discover-btn")?.classList.add("active");
+
+    let view = document.getElementById("scord-server-discovery");
+    if (!view) {
+        view = document.createElement("section");
+        view.id = "scord-server-discovery";
+        view.className = "scord-server-discovery";
+        home.appendChild(view);
+    }
+    view.classList.remove("hidden");
+    view.innerHTML = `
+      <header class="scord-discovery-head">
+        <div><span class="scord-eyebrow">PUBLIC DIRECTORY</span><h1>Topluluğunu bul</h1><p>Açık SCORD sunucularını ara, bilgilerini incele ve tek dokunuşla katıl.</p></div>
+        <div class="scord-discovery-head-actions">
+          <button type="button" class="scord-discovery-secondary" id="discovery-friends-btn">Arkadaşlar</button>
+          <button type="button" class="scord-discovery-primary" id="discovery-create-btn">Yeni sunucu</button>
+        </div>
+      </header>
+      <div class="scord-discovery-toolbar">
+        <label class="scord-discovery-search">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="6.5" stroke="currentColor" stroke-width="1.8"/><path d="m16 16 4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <input id="discovery-search" type="search" placeholder="Sunucu adı, açıklama veya yönetici ara" autocomplete="off">
+        </label>
+        <span id="discovery-count" class="scord-discovery-count">Yükleniyor…</span>
+      </div>
+      <div id="scord-discovery-grid" class="scord-discovery-grid" aria-live="polite">
+        <div class="scord-discovery-skeleton"></div><div class="scord-discovery-skeleton"></div><div class="scord-discovery-skeleton"></div>
+      </div>`;
+    view.querySelector("#discovery-friends-btn")?.addEventListener("click", showHomeView);
+    view.querySelector("#discovery-create-btn")?.addEventListener("click", openCreateServerModal);
+    view.querySelector("#discovery-search")?.addEventListener("input", event => renderServerDiscovery(event.target.value));
+    refreshDiscovery();
+}
+window.showServerDiscoveryView = showServerDiscoveryView;
+
+function renderServerDiscovery(query = "") {
+    const grid = document.getElementById("scord-discovery-grid");
+    if (!grid) return;
+    const normalized = query.trim().toLocaleLowerCase("tr");
+    const source = Array.isArray(state._publicRooms) ? state._publicRooms : [];
+    const visible = source.filter(room => {
+        const admins = (room.administrators || []).map(item => item.username || "").join(" ");
+        return !normalized || `${room.name || ""} ${room.description || ""} ${room.owner_username || ""} ${admins}`.toLocaleLowerCase("tr").includes(normalized);
+    });
+    const count = document.getElementById("discovery-count");
+    if (count) count.textContent = `${visible.length} açık sunucu`;
+    grid.innerHTML = "";
+    if (!visible.length) {
+        grid.innerHTML = '<div class="scord-discovery-empty"><strong>Sonuç bulunamadı</strong><span>Aramayı değiştir veya kendi topluluğunu oluştur.</span><button type="button">Yeni sunucu oluştur</button></div>';
+        grid.querySelector("button")?.addEventListener("click", openCreateServerModal);
+        return;
+    }
+    visible.forEach(room => {
+        const card = document.createElement("article");
+        card.className = "scord-discovery-card";
+        const initial = (room.name || "?").trim().slice(0, 1).toUpperCase();
+        const owner = room.owner_username || room.administrators?.[0]?.username || "SCORD topluluğu";
+        card.innerHTML = `
+          <div class="scord-discovery-card-top"><div class="scord-discovery-icon" aria-hidden="true">${escapeHtml(initial)}</div><span class="scord-discovery-live"><i></i>Açık</span></div>
+          <div class="scord-discovery-copy"><h2>${escapeHtml(room.name || "İsimsiz sunucu")}</h2><p>${escapeHtml(room.description || "Yeni insanlarla tanış, yazılı ve sesli kanallara katıl.")}</p></div>
+          <div class="scord-discovery-meta"><span>${Number(room.member_count || 1)} üye</span><span>${Number(room.channel_count || 0)} kanal</span><span>Yönetici: ${escapeHtml(owner)}</span></div>
+          <button type="button" class="scord-discovery-join">Sunucuya katıl<svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true"><path d="M5 12h14m-5-5 5 5-5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>`;
+        const icon = card.querySelector(".scord-discovery-icon");
+        if (icon && room.icon_url) {
+            const image = document.createElement("img");
+            image.src = room.icon_url;
+            image.alt = "";
+            image.loading = "lazy";
+            image.decoding = "async";
+            image.onerror = () => image.remove();
+            icon.appendChild(image);
+        }
+        card.querySelector(".scord-discovery-join")?.addEventListener("click", () => joinDiscoveryRoom(room.room_id, room.invite_code));
+        grid.appendChild(card);
+    });
+}
+
+async function refreshDiscovery() {
+    try {
+        const response = await scordFetch("/api/rooms");
+        if (!response.ok) return;
+        const publicRooms = await response.json();
+        state._publicRooms = Array.isArray(publicRooms) ? publicRooms : [];
+        const search = document.getElementById("discovery-search");
+        renderServerDiscovery(search?.value || "");
+    } catch (error) {
+        const grid = document.getElementById("scord-discovery-grid");
+        if (grid) grid.innerHTML = '<div class="scord-discovery-empty"><strong>Sunucular yüklenemedi</strong><span>Bağlantını kontrol edip tekrar dene.</span><button type="button">Tekrar dene</button></div>';
+        grid?.querySelector("button")?.addEventListener("click", refreshDiscovery);
     }
 }
 
@@ -11076,6 +11251,7 @@ function normalizeServerLivePayload(server, room) {
     if (room.administrators) server.administrators = room.administrators;
     if (room.icon_url !== undefined) server.icon_url = room.icon_url;
     if (room.description !== undefined) server.description = room.description;
+    if (room.is_public !== undefined) server.is_public = room.is_public !== false;
     if (room.invite_code) server.inviteCode = room.invite_code;
     if (normalized.channels) server.channels = normalized.channels;
     if (room.channel_backgrounds) server.channel_backgrounds = room.channel_backgrounds;
@@ -11142,6 +11318,7 @@ function _localServerToRestorePayload(server) {
         messages: server.messages,
         channel_backgrounds: server.channel_backgrounds,
         icon_url: server.icon_url,
+        is_public: server.is_public !== false,
         invite_code: server.inviteCode || server.invite_code,
     };
 }
@@ -11786,15 +11963,17 @@ saveProfessionalServerSettings = window.saveProfessionalServerSettings = functio
     const name = document.getElementById("settings-sv-name")?.value?.trim();
     const icon = document.getElementById("settings-sv-icon")?.value?.trim();
     const desc = document.getElementById("settings-sv-desc")?.value?.trim();
+    const isPublic = document.getElementById("settings-sv-public")?.checked !== false;
     if (name) server.name = name;
     server.icon_url = icon || null;
     if (desc !== undefined) server.description = desc;
+    server.is_public = isPublic;
     // Sunucuya kalıcı yaz (isim/ikon/açıklama)
     const keys = JSON.parse(localStorage.getItem("scordOwnerKeys") || "{}");
     scordFetch(`${API_BASE}/rooms/${server.id}/settings`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: server.name, icon_url: server.icon_url, description: server.description || "", ...(keys[server.id] ? { owner_key: keys[server.id] } : {}) }),
+        body: JSON.stringify({ name: server.name, icon_url: server.icon_url, description: server.description || "", is_public: server.is_public, ...(keys[server.id] ? { owner_key: keys[server.id] } : {}) }),
     }).catch(() => { });
     if (!server.roles) server.roles = {};
     if (!server.roles.member) server.roles.member = { name: "Uye", color: "#94a3b8", permissions: {} };
@@ -23042,6 +23221,7 @@ function showScordFriendsDirectory() {
     document.getElementById("voice-view")?.classList.add("hidden");
     document.querySelector("#home-view .home-hero")?.classList.add("hidden");
     document.getElementById("dm-main-view")?.classList.add("hidden");
+    document.getElementById("scord-server-discovery")?.classList.add("hidden");
     document.getElementById("sidebar-server-name").textContent = "Arkadaşlar";
     document.querySelectorAll(".rail-icon").forEach(function (el) { el.classList.remove("active"); });
     document.getElementById("home-btn")?.classList.add("active");
@@ -23053,6 +23233,7 @@ function showScordFriendsDirectory() {
         view.className = "scord-friends-directory";
         home.appendChild(view);
     }
+    view.classList.remove("hidden");
 
     var friends = Array.isArray(state.friends) ? state.friends : [];
     var pending = Array.isArray(state._pendingRequests) ? state._pendingRequests : [];
@@ -23070,7 +23251,7 @@ function showScordFriendsDirectory() {
         var online = peerRows.filter(function (p) { return p.status && p.status !== "offline"; });
         view.innerHTML = '<div class="scord-friends-directory__topbar">' +
             '<div><span class="scord-eyebrow">SOCIAL SPACE</span><h1><span class="scord-friends-directory__hash">✦</span> Arkadaşlar</h1><p>Bağlantılarını keşfet, sohbeti tek yerde tut.</p></div>' +
-            '<button type="button" class="scord-friends-directory__add" id="scord-directory-add">＋ Arkadaş Ekle</button></div>' +
+            '<div class="scord-friends-directory__head-actions"><button type="button" class="scord-friends-directory__discover" id="scord-directory-discover">Sunucuları Keşfet</button><button type="button" class="scord-friends-directory__add" id="scord-directory-add">Arkadaş Ekle</button></div></div>' +
             '<div class="scord-friends-directory__layout"><main class="scord-friends-directory__main">' +
             '<div class="scord-friends-directory__toolbar"><label class="scord-friends-directory__search"><span>⌕</span><input id="scord-directory-search" type="search" placeholder="Arkadaşlarda ara" value="' + escapeHtml(query) + '"></label><span class="scord-friends-directory__count">' + list.length + ' kişi</span></div>' +
             '<nav class="scord-friends-directory__tabs" aria-label="Arkadaş filtreleri">' + tabs.map(function (tab, i) { return '<button type="button" class="' + (i === 0 ? "is-active" : "") + '">' + tab + (tab === "Bekleyen" && pending.length ? ' <b>' + pending.length + '</b>' : '') + '</button>'; }).join("") + '</nav>' +
@@ -23081,6 +23262,7 @@ function showScordFriendsDirectory() {
             '</div><div class="scord-friends-directory__tip"><span>✦</span><div><strong>SCORD ipucu</strong><small>Arkadaş isteklerini ve bildirimlerini tek merkezden yönet.</small></div></div></aside></div>';
 
         view.querySelector("#scord-directory-add")?.addEventListener("click", showAddFriendModal);
+        view.querySelector("#scord-directory-discover")?.addEventListener("click", showServerDiscoveryView);
         view.querySelector("#scord-directory-search")?.addEventListener("input", function (e) { query = e.target.value; render(); var input = document.getElementById("scord-directory-search"); input?.focus(); input?.setSelectionRange(query.length, query.length); });
         view.querySelectorAll(".scord-friends-directory__row").forEach(function (row) {
             row.addEventListener("click", function () {
@@ -24659,6 +24841,7 @@ window.openServerSettingsPanel = function () {
           <h2>Genel</h2>
           <label>Sunucu Adı<input class="modal-input" id="settings-sv-name" value="${escapeHtml(server.name)}"></label>
           <label>Sunucu Açıklaması<textarea class="modal-input" id="settings-sv-desc" rows="2" maxlength="500" placeholder="Sunucunu keşfet listesinde tanıtan kısa açıklama">${escapeHtml(server.description || "")}</textarea></label>
+          <label class="scord-public-toggle"><input type="checkbox" id="settings-sv-public" ${server.is_public !== false ? "checked" : ""}><span><strong>Keşfet listesinde göster</strong><small>Kapatırsan sunucu yalnız davet koduyla bulunur.</small></span></label>
           <label>Sunucu İkonu (URL)<input class="modal-input" id="settings-sv-icon" value="${escapeHtml(server.icon_url || "")}" placeholder="https://..."></label>
           <button class="btn-secondary" onclick="document.getElementById('v25-server-icon-file').click()">📷 PC'den İkon Yükle</button>
           <input type="file" id="v25-server-icon-file" accept="image/*" style="display:none">

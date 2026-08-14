@@ -8,7 +8,9 @@ Canlısı burada: `https://scord.onrender.com` gibi bir Render adresinde host'la
 
 Üç katman var:
 
-1. **Hesap sistemi** (SQLite, `scord_accounts.db`) — gerçek üyelik: kayıt ol /
+1. **Kalıcı SCORD veritabanı** (SQLite, `scord_accounts.db`) — hesaplar, oturumlar,
+   arkadaşlıklar, sunucular, üyelikler, roller, kanallar ve mesaj geçmişi aynı
+   transactional veritabanında tutulur. Gerçek üyelik: kayıt ol /
    giriş yap. Şifreler pbkdf2 ile hash'lenip saklanıyor, girişte oturum token'ı
    veriliyor. Avatar, biyografi ve banner hesaba bağlı — başka tarayıcıdan
    girsen de profilin seninle gelir. (Peer ID hâlâ eski deterministik formülle
@@ -17,7 +19,10 @@ Canlısı burada: `https://scord.onrender.com` gibi bir Render adresinde host'la
 2. **Sinyal / kayıt sunucusu** (`static/server.py`, FastAPI) — Render'da 7/24 açık duran tek sunucu. İşi şu:
    - Hangi sunucuların (server/guild) var olduğunu tutar (`/api/rooms`), oluşturma/silme/davet kodu gibi işlemleri yönetir.
    - WebRTC bağlantısını kurmak için gereken signaling'i (offer/answer/ICE candidate mesajlarını iki peer arasında forward etmek) yapar. Metin mesajları deduplikasyon için kimlikli olarak hem açık DataChannel'lara hem WebSocket hattına gönderilir; WebSocket yoksa açık DataChannel tek başına çalışabilir.
-   - Kanal listesi, roller, mesaj geçmişi gibi *sunucu metadata'sını* diskte (`rooms.json`) tutar. Bunun sebebi basit: Render'ın ücretsiz planında disk ephemeral, yani container her redeploy'da sıfırlanabiliyor. Bir client'ın elinde hâlâ eski bir sunucunun tam kopyası varsa, açılışta bunu backend'e geri "restore" edip kaybı telafi ediyor. Sahiden silinmiş bir sunucu ise (owner sildiyse) tombstone listesinde tutuluyor ki geri dirilmesin.
+   - Kanal listesi, roller, üyelikler ve mesaj geçmişi gibi *sunucu metadata'sını*
+     SQLite'a yazar. Eski kurulumdaki `rooms.json` varsa ilk açılışta otomatik
+     içeri aktarılır. Silinen sunucuların tombstone kayıtları da aynı veritabanında
+     tutulur; istemci kopyaları silinmiş bir sunucuyu geri diriltemez.
 
 3. **P2P mesh** (`static/p2p.js`) — chat tesliminin P2P kolu, ses, ekran paylaşımı ve kamera burada. Odaya giren her peer, odadaki diğer herkesle ayrı ayrı `RTCPeerConnection` açar (full mesh). Ses/görüntü track'leri mümkün olduğunda doğrudan akar; metin ise DataChannel + WebSocket çift teslim ve merkezi geçmiş kullanır.
 
@@ -34,7 +39,18 @@ Windows'ta `run.bat` aynısını yapıyor. `http://localhost:8000` açılınca g
 
 ### Render'a deploy
 
-`Procfile` ve `requirements.txt` zaten hazır, Render'da yeni bir Web Service açıp bu repoyu bağlaman yeterli. `SCORD_TURN_URLS` / `SCORD_TURN_USERNAME` / `SCORD_TURN_CREDENTIAL` env değişkenlerini set edersen kendi TURN sunucunu da devreye sokabilirsin (simetrik olmayan NAT'ların arkasındaki kullanıcılar için STUN yetmeyebiliyor).
+`Procfile` ve `requirements.txt` hazır. Render ayarları:
+
+- Build Command: `pip install -r requirements.txt`
+- Start Command: `uvicorn app:app --host 0.0.0.0 --port $PORT`
+- Persistent Disk mount path: `/var/data`
+- Environment: `SCORD_DATA_DIR=/var/data`
+
+`SCORD_DATA_DIR` yerelde zorunlu değildir; verilmezse veritabanı proje kökünde
+oluşur. Render'da yeniden deploy sonrası hesap/sunucu verisinin kalması için
+persistent disk ve yukarıdaki environment değeri gereklidir. Ayrıca
+`SCORD_TURN_URLS` / `SCORD_TURN_USERNAME` / `SCORD_TURN_CREDENTIAL` değerlerini
+set edersen kendi TURN sunucunu devreye sokabilirsin.
 
 ## Bilinen sınırlar
 

@@ -25,6 +25,52 @@
   --scord-ease: cubic-bezier(.2,.8,.2,1);
 }
 
+#setup-overlay .auth-password-field {
+  position: relative;
+}
+
+#setup-overlay .auth-password-field > input {
+  width: 100%;
+  padding-right: 52px !important;
+}
+
+#setup-overlay .auth-password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  display: grid;
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  min-height: 40px;
+  padding: 0;
+  transform: translateY(-50%);
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  background: transparent;
+  color: var(--scord-text-3);
+  cursor: pointer;
+}
+
+#setup-overlay .auth-password-toggle:hover,
+#setup-overlay .auth-password-toggle:focus-visible,
+#setup-overlay .auth-password-toggle[aria-pressed="true"] {
+  border-color: var(--scord-border);
+  background: rgba(139, 167, 226, .09);
+  color: var(--scord-text-1);
+}
+
+#setup-overlay .auth-password-toggle svg {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
 html,
 body {
   background: var(--scord-canvas) !important;
@@ -133,10 +179,10 @@ html body #app #sidebar-server-name {
 html body #app .sidebar-header-actions { gap: 4px; }
 html body #app .sidebar-header-btn,
 html body #app .header-btn {
-  width: 38px !important;
-  min-width: 38px !important;
-  height: 38px !important;
-  min-height: 38px !important;
+  width: 40px !important;
+  min-width: 40px !important;
+  height: 40px !important;
+  min-height: 40px !important;
   padding: 0 !important;
   border: 1px solid transparent !important;
   border-radius: 10px !important;
@@ -221,13 +267,13 @@ html body #app .user-bar-avatar {
 html body #app .user-bar-name { color: var(--scord-text-1) !important; font-size: 12px !important; font-weight: 750 !important; }
 html body #app .status-text { color: var(--scord-text-2) !important; font-size: 10px !important; }
 html body #app .status-dot { background: var(--scord-online) !important; }
-html body #app .user-bar-controls { grid-template-columns: repeat(3, 34px) !important; gap: 3px !important; }
+html body #app .user-bar-controls { grid-template-columns: repeat(3, 40px) !important; gap: 4px !important; }
 
 html body #app .user-bar .user-ctrl-btn {
-  width: 34px !important;
-  min-width: 34px !important;
-  height: 34px !important;
-  min-height: 34px !important;
+  width: 40px !important;
+  min-width: 40px !important;
+  height: 40px !important;
+  min-height: 40px !important;
   border: 1px solid rgba(139,167,226,.1) !important;
   border-radius: 10px !important;
   background: rgba(139,167,226,.055) !important;
@@ -400,15 +446,15 @@ html body #app .chat-input-wrapper {
 }
 
 html body #app .chat-input-wrapper:focus-within { border-color: rgba(129,112,255,.46) !important; box-shadow: 0 0 0 3px rgba(117,103,255,.1), 0 16px 38px rgba(0,0,0,.26) !important; }
-html body #app #chat-input { min-height: 38px !important; padding: 8px 10px !important; color: var(--scord-text-1) !important; font-size: 14px !important; }
+html body #app #chat-input { min-height: 40px !important; padding: 8px 10px !important; color: var(--scord-text-1) !important; font-size: 14px !important; }
 html body #app #chat-input::placeholder { color: #71809f !important; }
 
 html body #app .input-action-btn,
 html body #app .input-send-btn {
-  width: 38px !important;
-  min-width: 38px !important;
-  height: 38px !important;
-  min-height: 38px !important;
+  width: 40px !important;
+  min-width: 40px !important;
+  height: 40px !important;
+  min-height: 40px !important;
   padding: 0 !important;
   border: 1px solid transparent !important;
   border-radius: 11px !important;
@@ -522,6 +568,8 @@ html body #app .scord-friends-directory__aside { margin: 12px; border: 1px solid
 
 @media (max-width: 980px) {
   html body #app .members-panel { position: absolute !important; inset: 76px 12px 78px auto; z-index: 50; width: min(300px, calc(100vw - 32px)) !important; min-width: 0 !important; flex-basis: auto !important; margin: 0 !important; box-shadow: 0 28px 80px rgba(0,0,0,.5); }
+  html body #app .members-panel:not(.mobile-active) { visibility: hidden !important; pointer-events: none !important; }
+  html body #app .members-panel.mobile-active { visibility: visible !important; pointer-events: auto !important; transform: none !important; }
   html body #app .members-panel.collapsed { display: none !important; }
   html body #app .chat-input-area { width: 100%; }
   html body #app .scord-friends-directory__layout { grid-template-columns: 1fr !important; }
@@ -545,7 +593,11 @@ html body #app .scord-friends-directory__aside { margin: 12px; border: 1px solid
   html body #app #gif-btn,
   html body #app #translate-toggle-btn { display: none !important; }
   html body #app .input-action-btn,
-  html body #app .input-send-btn { width: 40px !important; min-width: 40px !important; height: 40px !important; min-height: 40px !important; }
+  html body #app .input-send-btn,
+  html body #app .sidebar-header-btn,
+  html body #app .header-btn,
+  html body #app .mobile-only-btn,
+  html body #app .user-bar .user-ctrl-btn { width: 44px !important; min-width: 44px !important; height: 44px !important; min-height: 44px !important; }
   html body #app .scord-friends-directory__topbar { padding: 18px 16px !important; }
   html body #app .mobile-tabbar button > span { display: grid; width: 22px; height: 22px; place-items: center; }
   html body #app .mobile-tabbar button > span svg { width: 20px; height: 20px; }
@@ -562,4 +614,112 @@ html body #app .scord-friends-directory__aside { margin: 12px; border: 1px solid
   html body #app *,
   html body #app *::before,
   html body #app *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}
+
+/* Product polish: discovery, message actions and durable-server settings. */
+html body #app #discover-btn { color: #8fa6d8; }
+html body #app #discover-btn.active,
+html body #app #discover-btn:hover { border-color: rgba(80,181,255,.38) !important; background: linear-gradient(145deg, rgba(117,103,255,.28), rgba(56,189,248,.16)) !important; color: white !important; }
+
+html body #app .scord-friends-directory__head-actions { display: flex; align-items: center; gap: 8px; }
+html body #app .scord-friends-directory__discover,
+html body #app .scord-discovery-secondary,
+html body #app .scord-discovery-primary {
+  min-height: 42px;
+  padding: 0 16px;
+  border: 1px solid var(--scord-border);
+  border-radius: 11px;
+  background: rgba(139,167,226,.07);
+  color: var(--scord-text-1);
+  cursor: pointer;
+  font: 750 12px/1 Inter, sans-serif;
+}
+html body #app .scord-friends-directory__discover:hover,
+html body #app .scord-discovery-secondary:hover { border-color: var(--scord-border-strong); background: rgba(117,103,255,.12); }
+html body #app .scord-discovery-primary { border-color: rgba(117,103,255,.5); background: linear-gradient(135deg, #7567ff, #4f8cff); box-shadow: 0 12px 30px rgba(79,140,255,.18); color: white; }
+
+html body #app .scord-server-discovery {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 17px;
+  background: var(--scord-panel-gradient);
+}
+html body #app .scord-server-discovery.hidden { display: none !important; }
+html body #app .scord-discovery-head {
+  display: flex;
+  min-height: 118px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 22px 28px;
+  border-bottom: 1px solid var(--scord-border);
+  background: radial-gradient(circle at 78% -20%, rgba(79,140,255,.22), transparent 42%), rgba(15,29,55,.62);
+}
+html body #app .scord-discovery-head h1 { margin: 5px 0 5px; color: var(--scord-text-1); font: 750 clamp(24px,2.3vw,32px)/1 Space Grotesk,sans-serif; letter-spacing: -.03em; }
+html body #app .scord-discovery-head p { max-width: 620px; margin: 0; color: var(--scord-text-2); font-size: 13px; line-height: 1.5; }
+html body #app .scord-discovery-head-actions { display: flex; gap: 8px; }
+html body #app .scord-discovery-toolbar { display: flex; align-items: center; gap: 16px; padding: 20px 28px 8px; }
+html body #app .scord-discovery-search { display: flex; min-width: 0; min-height: 44px; flex: 1; align-items: center; gap: 10px; padding: 0 14px; border: 1px solid var(--scord-border); border-radius: 12px; background: rgba(5,12,26,.55); color: #8293b6; }
+html body #app .scord-discovery-search:focus-within { border-color: var(--scord-border-strong); box-shadow: 0 0 0 3px rgba(117,103,255,.1); }
+html body #app .scord-discovery-search input { width: 100%; min-width: 0; min-height: 42px; border: 0; outline: 0; background: transparent; color: var(--scord-text-1); font: 14px/1 Inter,sans-serif; }
+html body #app .scord-discovery-count { color: var(--scord-text-3); font-size: 11px; white-space: nowrap; }
+html body #app .scord-discovery-grid { display: grid; min-height: 0; padding: 14px 28px 34px; grid-template-columns: repeat(3,minmax(220px,1fr)); gap: 12px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(117,103,255,.38) transparent; }
+html body #app .scord-discovery-card { display: flex; min-height: 238px; flex-direction: column; padding: 18px; border: 1px solid rgba(139,167,226,.13); border-radius: 16px; background: linear-gradient(155deg, rgba(22,39,70,.65), rgba(8,18,37,.82)); box-shadow: inset 0 1px rgba(255,255,255,.035); transition: border-color 170ms var(--scord-ease), transform 170ms var(--scord-ease), background 170ms var(--scord-ease); }
+html body #app .scord-discovery-card:hover { border-color: rgba(117,103,255,.4); background: linear-gradient(155deg, rgba(33,48,85,.72), rgba(10,20,42,.88)); transform: translateY(-2px); }
+html body #app .scord-discovery-card-top { display: flex; align-items: flex-start; justify-content: space-between; }
+html body #app .scord-discovery-icon { position: relative; display: grid; width: 50px; height: 50px; place-items: center; overflow: hidden; border: 1px solid rgba(129,112,255,.35); border-radius: 15px; background: linear-gradient(135deg,#7567ff,#398fdc); color: white; font: 800 18px/1 Space Grotesk,sans-serif; }
+html body #app .scord-discovery-icon img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+html body #app .scord-discovery-live { display: inline-flex; min-height: 26px; align-items: center; gap: 6px; padding: 0 9px; border: 1px solid rgba(53,212,154,.18); border-radius: 99px; background: rgba(53,212,154,.07); color: #78e5bd; font-size: 10px; font-weight: 750; }
+html body #app .scord-discovery-live i { width: 6px; height: 6px; border-radius: 50%; background: var(--scord-online); box-shadow: 0 0 10px rgba(53,212,154,.5); }
+html body #app .scord-discovery-copy { flex: 1; padding: 16px 0 14px; }
+html body #app .scord-discovery-copy h2 { margin: 0 0 6px; color: var(--scord-text-1); font: 750 17px/1.2 Space Grotesk,sans-serif; }
+html body #app .scord-discovery-copy p { display: -webkit-box; margin: 0; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; color: var(--scord-text-2); font-size: 12px; line-height: 1.55; }
+html body #app .scord-discovery-meta { display: flex; min-height: 40px; flex-wrap: wrap; align-content: center; gap: 4px 12px; padding: 9px 0; border-top: 1px solid rgba(139,167,226,.09); color: var(--scord-text-3); font-size: 10px; }
+html body #app .scord-discovery-join { display: flex; min-height: 40px; align-items: center; justify-content: center; gap: 8px; margin-top: 10px; border: 1px solid rgba(117,103,255,.3); border-radius: 11px; background: rgba(117,103,255,.12); color: #d9e2ff; cursor: pointer; font: 750 12px/1 Inter,sans-serif; }
+html body #app .scord-discovery-join:hover { border-color: rgba(117,103,255,.58); background: rgba(117,103,255,.22); color: white; }
+html body #app .scord-discovery-empty { display: flex; min-height: 260px; grid-column: 1/-1; align-items: center; justify-content: center; flex-direction: column; gap: 8px; color: var(--scord-text-2); text-align: center; }
+html body #app .scord-discovery-empty strong { color: var(--scord-text-1); font-size: 15px; }
+html body #app .scord-discovery-empty button { min-height: 40px; margin-top: 8px; padding: 0 14px; border: 1px solid var(--scord-border-strong); border-radius: 10px; background: rgba(117,103,255,.14); color: white; cursor: pointer; }
+html body #app .scord-discovery-skeleton { height: 238px; border: 1px solid var(--scord-border); border-radius: 16px; background: linear-gradient(110deg,rgba(139,167,226,.04) 30%,rgba(139,167,226,.1) 45%,rgba(139,167,226,.04) 60%); background-size: 240% 100%; animation: scord-discovery-loading 1.3s ease infinite; }
+@keyframes scord-discovery-loading { to { background-position-x: -220%; } }
+
+html body #app .msg-row-inner { position: relative; }
+html body #app .msg-quick-actions { position: absolute; top: -14px; right: 8px; z-index: 2; display: flex; gap: 2px; padding: 3px; border: 1px solid var(--scord-border); border-radius: 10px; background: rgba(9,19,38,.94); box-shadow: 0 10px 28px rgba(0,0,0,.3); opacity: 0; pointer-events: none; transform: translateY(3px); transition: opacity 140ms var(--scord-ease), transform 140ms var(--scord-ease); }
+html body #app .msg-row:hover .msg-quick-actions,
+html body #app .msg-row:focus-within .msg-quick-actions { opacity: 1; pointer-events: auto; transform: translateY(0); }
+html body #app .msg-quick-action { display: grid; width: 30px; height: 30px; place-items: center; padding: 0; border: 0; border-radius: 7px; background: transparent; color: #91a3c6; cursor: pointer; }
+html body #app .msg-quick-action:hover { background: rgba(139,167,226,.1); color: white; }
+html body #app .msg-quick-action.danger:hover { background: rgba(240,98,126,.13); color: #ff8da3; }
+
+html body .scord-public-toggle { display: flex !important; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid rgba(139,167,226,.13); border-radius: 12px; background: rgba(139,167,226,.045); cursor: pointer; }
+html body .scord-public-toggle input { width: 18px; height: 18px; accent-color: #7567ff; }
+html body .scord-public-toggle span { display: grid; gap: 3px; }
+html body .scord-public-toggle strong { color: var(--scord-text-1); font-size: 12px; }
+html body .scord-public-toggle small { color: var(--scord-text-3); font-size: 10px; font-weight: 500; }
+
+@media (max-width: 1120px) {
+  html body #app .scord-discovery-grid { grid-template-columns: repeat(2,minmax(220px,1fr)); }
+}
+@media (max-width: 768px) {
+  html body #app .scord-friends-directory__head-actions { width: 100%; }
+  html body #app .scord-friends-directory__discover,
+  html body #app .scord-friends-directory__add { min-height: 44px; flex: 1; }
+  html body #app .scord-friends-directory__tabs button { min-height: 44px; }
+  html body #app .scord-discovery-head { min-height: 0; align-items: stretch; flex-direction: column; padding: 20px 16px; }
+  html body #app .scord-discovery-head-actions { width: 100%; }
+  html body #app .scord-discovery-head-actions button { min-height: 44px; flex: 1; }
+  html body #app .scord-discovery-toolbar { align-items: stretch; flex-direction: column; gap: 8px; padding: 14px 14px 6px; }
+  html body #app .scord-discovery-count { align-self: flex-end; }
+  html body #app .scord-discovery-grid { padding: 10px 14px calc(82px + env(safe-area-inset-bottom)); grid-template-columns: 1fr; }
+  html body #app .scord-discovery-card { min-height: 218px; }
+  html body #app .scord-discovery-join { min-height: 44px; }
+  html body #app .msg-quick-actions { top: 0; right: 0; opacity: 1; pointer-events: auto; transform: none; background: transparent; box-shadow: none; }
+  html body #app .msg-quick-action:not(.danger) { display: none; }
+  html body #app .msg-quick-action { width: 44px; height: 44px; }
+  html body #toast-container { top: auto !important; right: 12px !important; bottom: calc(72px + env(safe-area-inset-bottom)) !important; left: 12px !important; align-items: stretch; }
+  html body #toast-container .toast { width: 100%; max-width: none; }
 }

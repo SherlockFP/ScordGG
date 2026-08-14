@@ -38,6 +38,11 @@ class FrontendContractTests(unittest.TestCase):
         self.assertIn("@media (max-width: 768px)", css)
         self.assertIn("function setupMemberDirectorySearch", app)
         self.assertIn('.member-status-dot, .member-avatar .status-dot', app)
+        self.assertIn("function showServerDiscoveryView", app)
+        self.assertIn('addQuickAction("Mesajı sil"', app)
+        self.assertIn('id="discover-btn"', html)
+        self.assertIn('data-password-target="scord-pass-input"', html)
+        self.assertIn(".scord-discovery-grid", css)
         self.assertIn("Message backgrounds are transparent", bible)
 
     def test_legacy_identity_store_is_migrated(self):
@@ -64,6 +69,9 @@ class FrontendContractTests(unittest.TestCase):
         self.assertIn("administrator_snapshot", server)
         self.assertIn("loadPersistentFriends", app)
         self.assertIn("/friends/confirm", app)
+        self.assertIn("CREATE TABLE IF NOT EXISTS servers", server)
+        self.assertIn("CREATE TABLE IF NOT EXISTS server_members", server)
+        self.assertIn("to_discovery_dict", server)
 
 
 class ServerTemplateTests(unittest.TestCase):
