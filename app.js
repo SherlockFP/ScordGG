@@ -24199,6 +24199,8 @@ console.log("[App] Nick ID click + DM paste + DM emoji + Music hide loaded");
 
 // 2. Message hover buttons (copy/reply/edit)
 (function() {
+    // The current toolbar owns these actions; the legacy loop duplicates it.
+    return;
     if (window._msgHoverLoaded) return;
     window._msgHoverLoaded = true;
     var style = document.createElement("style");

@@ -45,6 +45,15 @@ class FrontendContractTests(unittest.TestCase):
         self.assertIn(".scord-discovery-grid", css)
         self.assertIn("Message backgrounds are transparent", bible)
 
+    def test_message_action_toolbar_has_one_non_overlapping_owner(self):
+        html = (ROOT / "index.html").read_text(encoding="utf-8")
+        app = (ROOT / "app.js").read_text(encoding="utf-8")
+        css = (ROOT / "static" / "scord-design.css").read_text(encoding="utf-8")
+        self.assertIn("legacy loop duplicates it", app)
+        self.assertIn(".msg-row-inner { padding-right: 156px; }", css)
+        self.assertNotIn("top: -14px", css)
+        self.assertIn('src="app.js?v=13"', html)
+
     def test_legacy_identity_store_is_migrated(self):
         source = (ROOT / "app.js").read_text(encoding="utf-8")
         self.assertIn("function migrateLegacyIdentityStore", source)

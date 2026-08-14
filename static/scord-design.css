@@ -696,9 +696,9 @@ html body #app .user-bar-controls { display: flex; flex: 0 0 auto; gap: 4px !imp
 html body #app .user-bar .user-ctrl-btn { width: 38px !important; height: 38px !important; min-width: 38px !important; min-height: 38px !important; border-radius: 11px !important; }
 
 /* Message actions sit beside content instead of nesting into the text bubble. */
-html body #app .msg-row-inner { padding-right: 148px; }
+html body #app .msg-row-inner { padding-right: 156px; }
 html body #app .msg-quick-actions {
-  top: 4px;
+  top: 6px;
   right: 8px;
   gap: 3px;
   padding: 4px;
@@ -807,7 +807,7 @@ html body #server-settings-panel footer { position: absolute; right: 0; bottom: 
 }
 @media (max-width: 768px) {
   :root { --sidebar-width: 284px; }
-  html body #app .msg-row-inner { padding-right: 48px; }
+  html body #app .msg-row-inner { padding-right: 52px; }
   html body #app .msg-tombstone { margin-left: 8px; }
   html body .modal.modal--wide-settings { width: 100vw !important; height: 100dvh !important; border-radius: 0 !important; }
   html body .modal.modal--wide-settings .scord-settings-shell { grid-template-columns: 1fr; grid-template-rows: auto minmax(0,1fr); }
@@ -912,7 +912,7 @@ html body #app .scord-discovery-skeleton { height: 238px; border: 1px solid var(
 @keyframes scord-discovery-loading { to { background-position-x: -220%; } }
 
 html body #app .msg-row-inner { position: relative; }
-html body #app .msg-quick-actions { position: absolute; top: -14px; right: 8px; z-index: 2; display: flex; gap: 2px; padding: 3px; border: 1px solid var(--scord-border); border-radius: 10px; background: rgba(9,19,38,.94); box-shadow: 0 10px 28px rgba(0,0,0,.3); opacity: 0; pointer-events: none; transform: translateY(3px); transition: opacity 140ms var(--scord-ease), transform 140ms var(--scord-ease); }
+html body #app .msg-quick-actions { position: absolute; top: 6px; right: 8px; z-index: 2; display: flex; gap: 2px; padding: 3px; border: 1px solid var(--scord-border); border-radius: 10px; background: rgba(9,19,38,.94); box-shadow: 0 10px 28px rgba(0,0,0,.3); opacity: 0; pointer-events: none; transform: translateY(3px); transition: opacity 140ms var(--scord-ease), transform 140ms var(--scord-ease); }
 html body #app .msg-row:hover .msg-quick-actions,
 html body #app .msg-row:focus-within .msg-quick-actions { opacity: 1; pointer-events: auto; transform: translateY(0); }
 html body #app .msg-quick-action { display: grid; width: 30px; height: 30px; place-items: center; padding: 0; border: 0; border-radius: 7px; background: transparent; color: #91a3c6; cursor: pointer; }
