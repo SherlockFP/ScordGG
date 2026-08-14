@@ -8,10 +8,12 @@ Canlısı burada: `https://scord.onrender.com` gibi bir Render adresinde host'la
 
 Üç katman var:
 
-1. **Kalıcı SCORD veritabanı** (SQLite, `scord_accounts.db`) — hesaplar, oturumlar,
+1. **Kalıcı SCORD veritabanı** (SQLite cache + opsiyonel Supabase mirror) — hesaplar, oturumlar,
    arkadaşlıklar, sunucular, üyelikler, roller, kanallar ve mesaj geçmişi aynı
-   transactional veritabanında tutulur. Gerçek üyelik: kayıt ol /
-   giriş yap. Şifreler pbkdf2 ile hash'lenip saklanıyor, girişte oturum token'ı
+   transactional veritabanında tutulur. Supabase ayarlandığında her yazma atomik
+   bir uzak snapshot'a aktarılır ve boş Render instance'ı açılışta buradan geri
+   yüklenir. Gerçek üyelik: e-posta ile kayıt ol / giriş yap. Görünen adlar aynı
+   olabilir; hesaplar `kullanici#1234` etiketiyle ayrılır. Şifreler pbkdf2 ile hash'lenip saklanıyor, girişte oturum token'ı
    veriliyor. Avatar, biyografi ve banner hesaba bağlı — başka tarayıcıdan
    girsen de profilin seninle gelir. (Peer ID hâlâ eski deterministik formülle
    üretiliyor ki mevcut sunucu sahiplikleri kırılmasın.)
@@ -45,12 +47,29 @@ Windows'ta `run.bat` aynısını yapıyor. `http://localhost:8000` açılınca g
 - Start Command: `uvicorn app:app --host 0.0.0.0 --port $PORT`
 - Persistent Disk mount path: `/var/data`
 - Environment: `SCORD_DATA_DIR=/var/data`
+- Environment: `SCORD_BOOTSTRAP_ADMIN_USERNAME=sherlock`
+- Secret: `SCORD_BOOTSTRAP_ADMIN_PASSWORD=<yalnız Render'a yazacağın parola>`
+- Environment: `SCORD_BOOTSTRAP_ADMIN_EMAIL=<kendi e-posta adresin>`
 
 `SCORD_DATA_DIR` yerelde zorunlu değildir; verilmezse veritabanı proje kökünde
 oluşur. Render'da yeniden deploy sonrası hesap/sunucu verisinin kalması için
 persistent disk ve yukarıdaki environment değeri gereklidir. Ayrıca
 `SCORD_TURN_URLS` / `SCORD_TURN_USERNAME` / `SCORD_TURN_CREDENTIAL` değerlerini
 set edersen kendi TURN sunucunu devreye sokabilirsin.
+
+### Supabase kalıcı yedek
+
+Supabase projesinde `create_scord_persistence_v2` ve
+`add_scord_atomic_snapshot` migration'ları uygulanmıştır. Render'da şu iki
+değeri eklediğinde uzak kalıcılık otomatik açılır:
+
+- `SCORD_SUPABASE_URL=https://wmvahbyjyahpqkffisbt.supabase.co`
+- `SCORD_SUPABASE_SERVICE_ROLE_KEY=<Supabase service_role secret>`
+
+`service_role` anahtarını frontend'e, GitHub'a veya normal environment çıktısına
+yazma; Render'da **Secret** olarak ekle. Anahtar yoksa uygulama güvenli biçimde
+yalnız SQLite ile çalışmaya devam eder. Supabase tablolarında RLS açık ve public
+policy yoktur; hesap hash/salt verisine yalnız backend servis anahtarı erişir.
 
 ## Bilinen sınırlar
 

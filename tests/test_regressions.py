@@ -73,6 +73,35 @@ class FrontendContractTests(unittest.TestCase):
         self.assertIn("CREATE TABLE IF NOT EXISTS server_members", server)
         self.assertIn("to_discovery_dict", server)
 
+    def test_email_tag_message_lifecycle_and_supabase_contract(self):
+        html = (ROOT / "index.html").read_text(encoding="utf-8")
+        app = (ROOT / "app.js").read_text(encoding="utf-8")
+        server = (ROOT / "static" / "server.py").read_text(encoding="utf-8")
+        supabase = (ROOT / "static" / "supabase_store.py").read_text(encoding="utf-8")
+        self.assertIn('id="scord-email-input"', html)
+        self.assertIn('id="auth-email-group"', html)
+        self.assertIn("_allocate_discriminator", server)
+        self.assertIn('@app.post("/api/friends/by-tag")', server)
+        self.assertIn('@app.patch("/api/rooms/{room_id}/messages/{message_id}")', server)
+        self.assertIn('className = "msg-edited-badge"', app)
+        self.assertIn('className = "msg-tombstone"', app)
+        self.assertNotIn("window.deleteChatMessage = deleteChatMessage", app)
+        self.assertIn("SCORD_SUPABASE_SERVICE_ROLE_KEY", supabase)
+        self.assertIn("scord_state_snapshots", supabase)
+
+    def test_layout_scroll_owners_and_voice_card_contract(self):
+        html = (ROOT / "index.html").read_text(encoding="utf-8")
+        css = (ROOT / "static" / "scord-design.css").read_text(encoding="utf-8")
+        sidebar_start = html.index('<aside class="channel-sidebar"')
+        sidebar_end = html.index("</aside>", sidebar_start)
+        voice_index = html.index('id="voice-status-bar"')
+        self.assertGreater(voice_index, sidebar_start)
+        self.assertLess(voice_index, sidebar_end)
+        self.assertIn(".home-view.home-discovery-active .scord-discovery-grid", css)
+        self.assertIn("overflow-y: auto", css)
+        self.assertIn(".gif-results", css)
+        self.assertIn(".server-quick-stats", css)
+
 
 class ServerTemplateTests(unittest.TestCase):
     def test_default_room_labels_are_valid_utf8(self):

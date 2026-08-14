@@ -11,7 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="static/style.css" />
   <link rel="stylesheet" href="static/scord-shell.css?v=6" />
-  <link rel="stylesheet" href="static/scord-design.css?v=6" />
+  <link rel="stylesheet" href="static/scord-design.css?v=9" />
   <script src="https://www.youtube.com/iframe_api"></script>
 </head>
 
@@ -71,6 +71,11 @@
         <div class="form-group">
           <label for="username-input">Kullanıcı Adı</label>
           <input id="username-input" type="text" placeholder="Kullanıcı adın..." maxlength="32" autocomplete="username" />
+        </div>
+
+        <div class="form-group hidden" id="auth-email-group" style="margin-top:12px;">
+          <label for="scord-email-input">E-posta</label>
+          <input id="scord-email-input" type="email" placeholder="sen@ornek.com" maxlength="254" autocomplete="email" />
         </div>
 
         <div class="form-group" style="margin-top:12px;">
@@ -151,6 +156,24 @@
 
       <div class="channel-list" id="channel-list">
         <!-- Populated by JS -->
+      </div>
+
+      <!-- Voice connection card: lives in the sidebar flow so it never overlaps the user card. -->
+      <div id="voice-status-bar" class="voice-status-bar hidden" role="status" aria-live="polite">
+        <div class="vsb-left">
+          <span class="vsb-dot" aria-hidden="true"></span>
+          <span class="vsb-copy">
+            <span class="vsb-kicker">SES BAĞLANTISI</span>
+            <strong id="vsb-channel-name">Sesli Kanal</strong>
+          </span>
+        </div>
+        <div class="vsb-right">
+          <button class="vsb-btn" id="vsb-disconnect-btn" title="Bağlantıyı kes" aria-label="Sesli bağlantıyı kes">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.956.956 0 0 1-.29-.7c0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.1-.7-.28a11.27 11.27 0 0 0-2.67-1.85.996.996 0 0 1-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z" />
+            </svg>
+          </button>
+        </div>
       </div>
 
       <!-- User Profile Bar -->
@@ -299,6 +322,45 @@
                 <p>Bu kanalın ilk mesajı olmak için hazır mısın?</p>
               </div>
             </div>
+
+            <!-- Typing and composer belong to the message column. This keeps the
+                 directory panel full-height and gives each column one scroll owner. -->
+            <div id="typing-indicator" class="typing-indicator hidden">
+              <span class="typing-dots">
+                <span></span><span></span><span></span>
+              </span>
+              <span id="typing-text">Birisi yazıyor...</span>
+            </div>
+
+            <div class="chat-input-area">
+              <div id="reply-preview-bar" class="reply-preview-bar hidden" aria-live="polite">
+                <div class="reply-preview-inner">
+                  <span class="reply-preview-label">Yanıt</span>
+                  <span id="reply-preview-author" class="reply-preview-author"></span>
+                  <span id="reply-preview-snippet" class="reply-preview-snippet"></span>
+                </div>
+                <button type="button" id="reply-preview-close" class="reply-preview-close" title="Yanıtı iptal">✕</button>
+              </div>
+              <div class="chat-input-wrapper">
+                <div id="gif-search-popover" class="gif-popover hidden">
+                  <input type="text" id="gif-input" placeholder="GIF Ara...">
+                  <div id="gif-results" class="gif-results"></div>
+                </div>
+                <!-- Mention Popup -->
+                <div id="mention-popup" class="mention-popup hidden"></div>
+                <button class="input-action-btn" id="gif-btn" title="GIF Gönder" aria-label="GIF gönder">GIF</button>
+                <button class="input-action-btn" id="emoji-btn" title="Emoji" aria-label="Emoji seç"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M8.5 14.5s1.2 2 3.5 2 3.5-2 3.5-2M9 9h.01M15 9h.01"/></svg></button>
+                <textarea id="chat-input" placeholder="#genel kanalına mesaj gönder" rows="1"></textarea>
+                <button class="input-action-btn" id="translate-toggle-btn" title="Yazarken Çevir" aria-label="Çeviri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg></button>
+                <button class="input-action-btn" id="chat-attach-btn" title="Dosya ekle" aria-label="Dosya ekle"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m20.5 11.5-8.6 8.6a5 5 0 0 1-7.1-7.1l9.2-9.2a3.5 3.5 0 0 1 5 5l-9.3 9.3a2 2 0 0 1-2.8-2.8l8.6-8.6"/></svg></button>
+                <input type="file" id="chat-file-upload" class="hidden" accept="image/*, .txt, .pdf, .zip, .rar" />
+                <button class="input-send-btn" id="send-btn" title="Gönder" aria-label="Mesajı gönder">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+                  </svg>
+                </button>
+              </div>
+            </div>
           </div>
 
           <div class="members-split-handle" id="members-split-handle" title="Sürükleyerek üye panelini genişlet"></div>
@@ -317,43 +379,6 @@
           </aside>
         </div>
 
-        <!-- Typing Indicator -->
-        <div id="typing-indicator" class="typing-indicator hidden">
-          <span class="typing-dots">
-            <span></span><span></span><span></span>
-          </span>
-          <span id="typing-text">Birisi yazıyor...</span>
-        </div>
-
-        <div class="chat-input-area">
-          <div id="reply-preview-bar" class="reply-preview-bar hidden" aria-live="polite">
-            <div class="reply-preview-inner">
-              <span class="reply-preview-label">Yanıt</span>
-              <span id="reply-preview-author" class="reply-preview-author"></span>
-              <span id="reply-preview-snippet" class="reply-preview-snippet"></span>
-            </div>
-            <button type="button" id="reply-preview-close" class="reply-preview-close" title="Yanıtı iptal">✕</button>
-          </div>
-          <div class="chat-input-wrapper">
-            <div id="gif-search-popover" class="gif-popover hidden">
-              <input type="text" id="gif-input" placeholder="GIF Ara...">
-              <div id="gif-results" class="gif-results"></div>
-            </div>
-            <!-- Mention Popup -->
-            <div id="mention-popup" class="mention-popup hidden"></div>
-            <button class="input-action-btn" id="gif-btn" title="GIF Gönder" aria-label="GIF gönder">GIF</button>
-            <button class="input-action-btn" id="emoji-btn" title="Emoji" aria-label="Emoji seç"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M8.5 14.5s1.2 2 3.5 2 3.5-2 3.5-2M9 9h.01M15 9h.01"/></svg></button>
-            <textarea id="chat-input" placeholder="#genel kanalına mesaj gönder" rows="1"></textarea>
-            <button class="input-action-btn" id="translate-toggle-btn" title="Yazarken Çevir" aria-label="Çeviri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg></button>
-            <button class="input-action-btn" id="chat-attach-btn" title="Dosya ekle" aria-label="Dosya ekle"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m20.5 11.5-8.6 8.6a5 5 0 0 1-7.1-7.1l9.2-9.2a3.5 3.5 0 0 1 5 5l-9.3 9.3a2 2 0 0 1-2.8-2.8l8.6-8.6"/></svg></button>
-            <input type="file" id="chat-file-upload" class="hidden" accept="image/*, .txt, .pdf, .zip, .rar" />
-            <button class="input-send-btn" id="send-btn" title="Gönder">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
-              </svg>
-            </button>
-          </div>
-        </div>
       </div>
 
       <!-- Voice Channel View -->
@@ -418,22 +443,6 @@
       </div>
       <div class="modal-body" id="modal-body"></div>
       <div class="modal-footer" id="modal-footer"></div>
-    </div>
-  </div>
-
-  <!-- ── Voice status bar (fixed bottom) ────────────────────────────────────── -->
-  <div id="voice-status-bar" class="voice-status-bar hidden">
-    <div class="vsb-left">
-      <span class="vsb-dot"></span>
-      <span id="vsb-channel-name">Sesli Kanal</span>
-    </div>
-    <div class="vsb-right">
-      <button class="vsb-btn" id="vsb-disconnect-btn" aria-label="Sesli bağlantıyı kes">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-          <path
-            d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.956.956 0 0 1-.29-.7c0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.1-.7-.28a11.27 11.27 0 0 0-2.67-1.85.996.996 0 0 1-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z" />
-        </svg>
-      </button>
     </div>
   </div>
 

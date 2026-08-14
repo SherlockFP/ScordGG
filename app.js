@@ -2072,6 +2072,7 @@ function switchAuthTab(mode) {
     registerTab?.classList.toggle("active", mode === "register");
     loginTab?.setAttribute("aria-pressed", String(mode === "login"));
     registerTab?.setAttribute("aria-pressed", String(mode === "register"));
+    document.getElementById("auth-email-group")?.classList.toggle("hidden", mode !== "register");
     document.getElementById("auth-confirm-group")?.classList.toggle("hidden", mode !== "register");
     const hint = document.getElementById("auth-hint");
     if (hint) hint.textContent = mode === "register"
@@ -2119,13 +2120,16 @@ function applyAccountToState(acc) {
     state.peerId = acc.peer_id;
     if (acc.token) state.authToken = acc.token;
     state.username = acc.username;
-    state.isPlatformAdmin = acc.platform_admin === true || String(acc.username || "").trim().toLowerCase() === "sherlock";
+    state.isPlatformAdmin = acc.platform_admin === true;
+    state._discriminator = acc.discriminator || state._discriminator || "0000";
+    state.email = acc.email || state.email || "";
     state.avatarImage = acc.avatar_image || "";
     state.avatarColor = acc.avatar_color || state.avatarColor;
     state.bio = acc.bio || "";
     state.bannerUrl = acc.banner_url || "";
     state.bannerColor = acc.banner_color || "";
     localStorage.setItem("scord_username", acc.username);
+    localStorage.setItem("scord_discriminator", state._discriminator);
     localStorage.setItem("scord_peer_id", acc.peer_id);
     localStorage.setItem("scord_color", state.avatarColor);
     localStorage.setItem("scord_avatar_image", state.avatarImage);
@@ -2196,7 +2200,8 @@ async function initSetup() {
         state.username = savedNick;
         state.peerId = savedId;
         state.authToken = token;
-        state.isPlatformAdmin = String(savedNick || "").trim().toLowerCase() === "sherlock";
+        state.isPlatformAdmin = false;
+        state._discriminator = localStorage.getItem("scord_discriminator") || "0000";
         state.avatarColor = localStorage.getItem("scord_color") || state.avatarColor;
         state.avatarImage = localStorage.getItem("scord_avatar_image") || "";
         state.bio = localStorage.getItem("scord_bio") || "";
@@ -2238,12 +2243,14 @@ async function initSetup() {
     const enterBtn = document.getElementById("enter-btn");
     const passInput = document.getElementById("scord-pass-input");
     const confirmInput = document.getElementById("scord-pass-confirm-input");
+    const emailInput = document.getElementById("scord-email-input");
 
     function updateBtnState() {
         var nick = nameInput ? nameInput.value.trim() : "";
         var pass = passInput ? passInput.value : "";
         if (enterBtn) {
-            enterBtn.disabled = nick.length < 2 || pass.length < 1;
+            const emailReady = _authMode !== "register" || !!emailInput?.validity.valid && !!emailInput?.value.trim();
+            enterBtn.disabled = nick.length < 2 || pass.length < 1 || !emailReady;
             enterBtn.style.opacity = enterBtn.disabled ? "0.5" : "1";
         }
     }
@@ -2251,17 +2258,20 @@ async function initSetup() {
     if (nameInput) nameInput.addEventListener("input", updateBtnState);
     if (passInput) passInput.addEventListener("input", updateBtnState);
     if (confirmInput) confirmInput.addEventListener("input", updateBtnState);
+    if (emailInput) emailInput.addEventListener("input", updateBtnState);
     if (nameInput) nameInput.addEventListener("keydown", e => { if (e.key === "Enter" && enterBtn && !enterBtn.disabled) enterBtn.click(); });
     if (passInput) passInput.addEventListener("keydown", e => { if (e.key === "Enter" && enterBtn && !enterBtn.disabled) enterBtn.click(); });
             
     async function submitAuth() {
         var nick = nameInput.value.trim();
         var pass = passInput ? passInput.value : "";
+        var email = emailInput ? emailInput.value.trim() : "";
         if (!nick || !pass) { showAuthError("Kullanıcı adı ve şifre gerekli."); return; }
         if (_authMode === "register") {
             var confirmPass = confirmInput ? confirmInput.value : "";
             if (pass !== confirmPass) { showAuthError("Şifreler eşleşmiyor."); return; }
             if (pass.length < 4) { showAuthError("Şifre en az 4 karakter olmalı."); return; }
+            if (!emailInput?.validity.valid || !email) { showAuthError("Geçerli bir e-posta adresi gir."); return; }
         }
         hideAuthError();
         enterBtn.disabled = true;
@@ -2271,7 +2281,7 @@ async function initSetup() {
             var res = await fetch(`${API_BASE}/auth/${_authMode}`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ username: nick, password: pass }),
+                body: JSON.stringify({ username: nick, password: pass, email: _authMode === "register" ? email : undefined }),
             });
             var data = await res.json();
             // Sunucu diski sıfırlanmışsa (Render restart) kayıtlı hesap "yok"
@@ -2292,12 +2302,15 @@ async function initSetup() {
             }
             if (!data || !data.success) {
                 var messages = {
-                    username_taken: "Bu kullanıcı adı zaten alınmış. Giriş yapmayı dene.",
+                    username_taken: "Bu kullanıcı adıyla kayıt açılamadı. Tekrar dene.",
+                    ambiguous_username: "Bu görünen adı kullanan birden fazla hesap var. ad#1234 ile giriş yap.",
                     already_registered: "Bu hesap zaten kayıtlı. Giriş yapmayı dene.",
                     not_found: "Böyle bir hesap yok. Önce kayıt ol.",
                     wrong_password: "Şifre yanlış.",
                     invalid_username: "Kullanıcı adı 2-32 karakter olmalı.",
                     invalid_password: "Geçerli bir şifre gir.",
+                    invalid_email: "Geçerli bir e-posta adresi gir.",
+                    email_taken: "Bu e-posta zaten başka bir hesapta kullanılıyor.",
                 };
                 showAuthError((data && messages[data.error]) || "Bir şeyler ters gitti, tekrar dene.");
                 enterBtn.disabled = false;
@@ -2514,7 +2527,7 @@ function initMobileNav() {
     if (settingsBtn) {
         settingsBtn.onclick = (e) => {
             console.log("[App] Settings icon clicked");
-            openServerSettingsModal();
+            (window.openServerSettingsPanel || openServerSettingsPanel)();
         };
     }
 }
@@ -2540,7 +2553,9 @@ function showHomeView() {
         persistChatDraftFor(state.activeServerId, state.activeChannelId);
     }
     refreshConnectionBadge();
-    document.getElementById("home-view").classList.remove("hidden");
+    const homeView = document.getElementById("home-view");
+    homeView.classList.remove("hidden", "home-discovery-active");
+    document.getElementById("scord-server-discovery")?.classList.add("hidden");
     document.getElementById("chat-view").classList.add("hidden");
     document.getElementById("voice-view").classList.add("hidden");
     hideDMMainView(true);
@@ -2567,6 +2582,7 @@ function showChatView(serverId, channelId) {
 
     closeMobileNav();
     hideDMMainView(false);
+    document.getElementById("home-view")?.classList.remove("home-discovery-active");
 
     const server = state.servers.find(s => s.id === serverId);
     if (!server) {
@@ -2946,7 +2962,7 @@ function _updateChannelSidebarImpl(serverId) {
         cat.style.alignItems = "center";
         cat.innerHTML = `<span><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg> METİN KANALLARI</span>`;
 
-        const isAdmin = server.ownerId === state.peerId || server.peer_roles?.[state.peerId] === "admin";
+        const isAdmin = isSuperAdmin() || server.ownerId === state.peerId || server.peer_roles?.[state.peerId] === "admin";
         if (isAdmin) {
             const addBtn = document.createElement("span");
             addBtn.className = "add-ch-btn";
@@ -2972,7 +2988,7 @@ function _updateChannelSidebarImpl(serverId) {
         cat.style.alignItems = "center";
         cat.innerHTML = `<span><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg> SESLİ KANALLAR</span>`;
 
-        const isAdmin = server.ownerId === state.peerId || server.peer_roles?.[state.peerId] === "admin";
+        const isAdmin = isSuperAdmin() || server.ownerId === state.peerId || server.peer_roles?.[state.peerId] === "admin";
         if (isAdmin) {
             const addBtn = document.createElement("span");
             addBtn.className = "add-ch-btn";
@@ -3410,6 +3426,18 @@ function appendMessageDOM(msg, grouped = false, serverId = null, opts = {}) {
     el.dataset.msgId = msg.id;
     el.style.position = "relative";
 
+    if (msg.deleted) {
+        el.classList.add("msg-row--deleted");
+        const tombstone = document.createElement("div");
+        tombstone.className = "msg-tombstone";
+        tombstone.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true"><path d="M5 7h14M9 7V4.8h6V7m-8 0 .7 12h8.6L17 7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Mesaj silindi</span>';
+        tombstone.title = msg.deletedAt ? `Silinme: ${new Date(msg.deletedAt).toLocaleString("tr-TR")}` : "Mesaj silindi";
+        el.appendChild(tombstone);
+        area.appendChild(el);
+        if (forceBottom) area.scrollTop = area.scrollHeight;
+        return;
+    }
+
     const inner = document.createElement("div");
     inner.className = "msg-row-inner";
 
@@ -3462,6 +3490,13 @@ function appendMessageDOM(msg, grouped = false, serverId = null, opts = {}) {
     const textDiv = document.createElement("div");
     textDiv.className = "msg-text";
     textDiv.innerHTML = parseMessageText(msg.text, sid);
+    if (msg.edited) {
+        const edited = document.createElement("span");
+        edited.className = "msg-edited-badge";
+        edited.textContent = "düzenlendi";
+        edited.title = msg.editedAt ? `Düzenlenme: ${new Date(msg.editedAt).toLocaleString("tr-TR")}` : "Mesaj düzenlendi";
+        textDiv.appendChild(edited);
+    }
     bubble.appendChild(textDiv);
 
     // Add reactions if they exist
@@ -3524,6 +3559,9 @@ function appendMessageDOM(msg, grouped = false, serverId = null, opts = {}) {
         messageActions.appendChild(button);
     };
     addQuickAction("Yanıtla", '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true"><path d="m10 8-5 4 5 4v-2.5h3.5c2.5 0 4.2 1.1 5.5 3.5-.2-5-2.8-7.5-7.2-7.5H10V8Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>', () => setReplyTarget(msg));
+    if (isSelf) {
+        addQuickAction("Mesajı düzenle", '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true"><path d="m14.5 5.5 4 4M4 20l3.8-.8L19 8a1.8 1.8 0 0 0 0-2.5l-.5-.5A1.8 1.8 0 0 0 16 5L4.8 16.2 4 20Z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>', () => startMessageEdit(msg));
+    }
     addQuickAction("Diğer mesaj işlemleri", '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>', (button) => {
         const rect = button.getBoundingClientRect();
         showMsgContextMenu(msg, rect.right - 8, rect.bottom + 6);
@@ -4514,10 +4552,21 @@ function handleIncomingP2P(fromPeerId, data, roomId) {
             }
         }
     } else if (data.type === "msg_delete") {
-        const { channelId: delCh, msgId } = data.payload || {};
+        const { channelId: delCh, msgId, tombstone } = data.payload || {};
         const server = state.servers.find(s => s.id === roomId);
         if (server && delCh && msgId && server.messages?.[delCh]) {
-            server.messages[delCh] = server.messages[delCh].filter(m => m.id !== msgId);
+            server.messages[delCh] = server.messages[delCh].map(message => {
+                if (message.id !== msgId) return message;
+                return tombstone || {
+                    id: message.id,
+                    channelId: delCh,
+                    author: message.author,
+                    authorId: message.authorId,
+                    time: message.time,
+                    deleted: true,
+                    deletedAt: Date.now(),
+                };
+            });
             server.pinned_messages = (server.pinned_messages || []).filter(m => m.id !== msgId);
             if (state.activeServerId === roomId && state.activeChannelId === delCh) {
                 renderMessages(roomId, delCh);
@@ -6597,7 +6646,18 @@ async function deleteChatMessage(msg) {
 
     const previousMessages = [...server.messages[channelId]];
     const previousPins = [...(server.pinned_messages || [])];
-    server.messages[channelId] = server.messages[channelId].filter(m => m.id !== msg.id);
+    const deleteOpId = genId();
+    const tombstone = {
+        id: msg.id,
+        channelId,
+        author: msg.author,
+        authorId: msg.authorId,
+        time: msg.time,
+        deleted: true,
+        deletedAt: Date.now(),
+        _localDeleteOp: deleteOpId,
+    };
+    server.messages[channelId] = server.messages[channelId].map(m => m.id === msg.id ? tombstone : m);
     server.pinned_messages = (server.pinned_messages || []).filter(m => m.id !== msg.id);
     renderMessages(state.activeServerId, state.activeChannelId);
     try {
@@ -6605,13 +6665,21 @@ async function deleteChatMessage(msg) {
             method: "DELETE",
         });
         if (!response.ok) throw new Error(`delete failed: ${response.status}`);
-        meshBroadcastReliable({ type: "msg_delete", payload: { channelId, msgId: msg.id } });
+        const body = await response.json().catch(() => ({}));
+        const persisted = body.message || tombstone;
+        server.messages[channelId] = server.messages[channelId].map(m => m.id === msg.id ? persisted : m);
+        meshBroadcastReliable({ type: "msg_delete", payload: { channelId, msgId: msg.id, tombstone: persisted } });
+        renderMessages(state.activeServerId, state.activeChannelId);
         toast("Mesaj silindi.", "info");
     } catch (error) {
-        server.messages[channelId] = previousMessages;
-        server.pinned_messages = previousPins;
-        renderMessages(state.activeServerId, state.activeChannelId);
-        toast("Mesaj silinemedi; içerik geri yüklendi.", "error");
+        const current = server.messages[channelId].find(m => m.id === msg.id);
+        if (current?._localDeleteOp === deleteOpId) {
+            const original = previousMessages.find(m => m.id === msg.id);
+            server.messages[channelId] = server.messages[channelId].map(m => m.id === msg.id ? original : m);
+            server.pinned_messages = previousPins;
+            renderMessages(state.activeServerId, state.activeChannelId);
+            toast("Mesaj silinemedi; içerik geri yüklendi.", "error");
+        }
         console.warn("[Chat] server delete failed:", error);
     }
 }
@@ -6637,7 +6705,7 @@ function addMessageToHistory(serverId, channelId, message, action) {
     saveMessageHistoryToStorage(serverId);
 }
 
-function editMessage(serverId, channelId, messageId, newText) {
+async function editMessage(serverId, channelId, messageId, newText) {
     const server = state.servers.find(s => s.id === serverId);
     if (!server?.messages?.[channelId]) return;
 
@@ -6645,6 +6713,7 @@ function editMessage(serverId, channelId, messageId, newText) {
     if (messageIndex === -1) return;
 
     const originalMessage = server.messages[channelId][messageIndex];
+    const editOpId = genId();
 
     // Add to history
     addMessageToHistory(serverId, channelId, originalMessage, 'edit');
@@ -6654,25 +6723,46 @@ function editMessage(serverId, channelId, messageId, newText) {
         ...originalMessage,
         text: newText,
         edited: true,
-        editedAt: Date.now()
+        editedAt: Date.now(),
+        _localEditOp: editOpId,
     };
 
-    // Broadcast edit
-    if (state.mesh) {
-        state.mesh.broadcast({
+    renderMessages(serverId, channelId);
+    try {
+        const response = await scordFetch(`${API_BASE}/rooms/${encodeURIComponent(serverId)}/messages/${encodeURIComponent(messageId)}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ channel_id: channelId, text: newText }),
+        });
+        if (!response.ok) throw new Error(`edit failed: ${response.status}`);
+        const body = await response.json();
+        const persisted = body.message || server.messages[channelId][messageIndex];
+        const currentIndex = server.messages[channelId].findIndex(m => m.id === messageId);
+        const current = currentIndex >= 0 ? server.messages[channelId][currentIndex] : null;
+        if (!current || current.deleted || current._localEditOp !== editOpId) return;
+        server.messages[channelId][currentIndex] = persisted;
+        meshBroadcastReliable({
             type: "msg_edit",
             serverId,
             channelId,
             messageId,
-            newText,
-            timestamp: Date.now()
+            newText: persisted.text,
+            message: persisted,
+            timestamp: persisted.editedAt || Date.now()
         });
+        renderMessages(serverId, channelId);
+        saveMessageHistoryToStorage(serverId);
+        toast("Mesaj düzenlendi.", "info");
+    } catch (error) {
+        const currentIndex = server.messages[channelId].findIndex(m => m.id === messageId);
+        const current = currentIndex >= 0 ? server.messages[channelId][currentIndex] : null;
+        if (current?._localEditOp === editOpId && !current.deleted) {
+            server.messages[channelId][currentIndex] = originalMessage;
+            renderMessages(serverId, channelId);
+            toast("Mesaj düzenlenemedi; değişiklik geri alındı.", "error");
+        }
+        console.warn("[Chat] server edit failed:", error);
     }
-
-    // Update UI
-    renderMessages(serverId, channelId);
-    saveMessageHistoryToStorage(serverId);
-    toast("Mesaj düzenlendi.", "info");
 }
 
 function handleMessageEdit(data) {
@@ -6689,11 +6779,11 @@ function handleMessageEdit(data) {
     addMessageToHistory(serverId, channelId, originalMessage, 'edit');
 
     // Update message
-    server.messages[channelId][messageIndex] = {
+    server.messages[channelId][messageIndex] = data.message || {
         ...originalMessage,
         text: newText,
         edited: true,
-        editedAt: Date.now()
+        editedAt: data.timestamp || Date.now()
     };
 
     // Update UI if this channel is active
@@ -6782,7 +6872,10 @@ function startMessageEdit(msg) {
     editInput.select();
 
     // Save on Enter, cancel on Escape
+    let settled = false;
     const saveEdit = () => {
+        if (settled) return;
+        settled = true;
         const newText = editInput.value.trim();
         if (newText && newText !== msg.text) {
             editMessage(state.activeServerId, msg.channelId, msg.id, newText);
@@ -6793,6 +6886,8 @@ function startMessageEdit(msg) {
     };
 
     const cancelEdit = () => {
+        if (settled) return;
+        settled = true;
         textEl.innerHTML = parseMessageText(msg.text, state.activeServerId);
     };
 
@@ -7830,6 +7925,7 @@ async function loadPersistentFriends() {
             name: friend.username,
             avatarColor: friend.avatar_color,
             avatarImage: friend.avatar_image,
+            tag: friend.discriminator || merged.get(friend.peer_id)?.tag || "",
         }));
         state.friends = Array.from(merged.values());
         localStorage.setItem("scord_friends", JSON.stringify(state.friends));
@@ -8162,7 +8258,7 @@ document.addEventListener("DOMContentLoaded", () => {
     initSetup();
     initMembersPanelResize();
     const sSettingsBtn = document.getElementById("server-settings-btn");
-    if (sSettingsBtn) sSettingsBtn.onclick = openServerSettingsModal;
+    if (sSettingsBtn) sSettingsBtn.onclick = () => (window.openServerSettingsPanel || openServerSettingsPanel)();
 
     const sInviteBtn = document.getElementById("server-invite-btn");
     if (sInviteBtn) sInviteBtn.onclick = () => showInviteModal(state.activeServerId);
@@ -8985,10 +9081,8 @@ function openUserProfile(peerId, username, avatarImage, avatarColor) {
         }
     }
 
-    // Calculate unique discriminator
-    var dH = 0;
-    for (var dI = 0; dI < peerId.length; dI++) { dH = ((dH << 5) - dH) + peerId.charCodeAt(dI); dH |= 0; }
-    var discrim = String(Math.abs(dH) % 9999).padStart(4, "0");
+    const knownFriend = state.friends?.find(friend => friend.peerId === peerId);
+    var discrim = isSelf ? (state._discriminator || "0000") : (knownFriend?.tag || "0000");
 
     // Create Profile HTML
     const body = `
@@ -9633,6 +9727,7 @@ function showServerDiscoveryView() {
     const home = document.getElementById("home-view");
     if (!home) return;
     home.classList.remove("hidden", "home-dm-active");
+    home.classList.add("home-discovery-active");
     document.getElementById("chat-view")?.classList.add("hidden");
     document.getElementById("voice-view")?.classList.add("hidden");
     document.getElementById("dm-main-view")?.classList.add("hidden");
@@ -12001,7 +12096,7 @@ updateConnectionStatus = window.updateConnectionStatus = function (status) {
 document.addEventListener("DOMContentLoaded", () => {
     setTimeout(() => {
         const btn = document.getElementById("server-settings-btn");
-        if (btn) btn.onclick = openServerSettingsPanel;
+        if (btn) btn.onclick = () => (window.openServerSettingsPanel || openServerSettingsPanel)();
     }, 0);
 });
 
@@ -19565,31 +19660,6 @@ console.log("[App] Performance + Mobile optimization loaded");
   };
 
   /* ══════════════════════════════════════════════════════════
-     2. MESAJ SİLME FİXİ
-  ══════════════════════════════════════════════════════════ */
-
-  window.deleteChatMessage = function deleteChatMessage(msg) {
-    var server = window.state?.servers?.find(function (s) { return s.id === window.state.activeServerId; });
-    if (!server) return;
-    var channelId = msg.channelId || window.state.activeChannelId;
-    if (!channelId) return;
-    if (!server.messages) server.messages = {};
-    if (!server.messages[channelId]) server.messages[channelId] = [];
-    server.messages[channelId] = server.messages[channelId].filter(function (m) { return m.id !== msg.id; });
-    server.pinned_messages = (server.pinned_messages || []).filter(function (m) { return m.id !== msg.id; });
-    if (typeof meshBroadcastReliable === "function") {
-      meshBroadcastReliable({ type: "msg_delete", payload: { channelId: channelId, msgId: msg.id } });
-    } else if (window.state?.mesh) {
-      window.state.mesh.broadcast({ type: "msg_delete", payload: { channelId: channelId, msgId: msg.id } });
-    }
-    if (_API && window.state.activeServerId) {
-      scordFetch(_API + "/rooms/" + window.state.activeServerId + "/messages/" + msg.id + "?channel_id=" + encodeURIComponent(channelId), { method: "DELETE" }).catch(function () {});
-    }
-    if (typeof renderMessages === "function") renderMessages(window.state.activeServerId, window.state.activeChannelId);
-    if (typeof toast === "function") toast("Mesaj silindi.", "info");
-  };
-
-  /* ══════════════════════════════════════════════════════════
      3. SESLİ ODADAN AYRILMA BUĞU
   ══════════════════════════════════════════════════════════ */
 
@@ -20437,28 +20507,6 @@ console.log("[App] Performance + Mobile optimization loaded");
       }
     };
 
-    // Mesaj context menu - daha fazla seçenek
-    var _origMSGC = window.showMsgContextMenu;
-    if (_origMSGC) {
-      window.showMsgContextMenu = function (msg, x, y) {
-        _origMSGC.apply(this, arguments);
-        var menu = document.getElementById("ctx-menu");
-        if (!menu) return;
-
-        // Mesaj ID kopyala (yoksa ekle)
-        if (!menu.querySelector('[data-action="copy-msg-id"]')) {
-          var idItem = document.createElement("div");
-          idItem.className = "ctx-item";
-          idItem.dataset.action = "copy-msg-id";
-          idItem.innerHTML = '<span class="ctx-icon">🆔</span>Mesaj ID Kopyala';
-          idItem.onclick = function () {
-            var m = document.getElementById("ctx-menu"); if (m) m.remove();
-            if (navigator.clipboard?.writeText) { navigator.clipboard.writeText(msg.id || "").then(function () { if (typeof toast === "function") toast("Mesaj ID kopyalandı.", "info"); }).catch(function () {}); }
-          };
-          menu.appendChild(idItem);
-        }
-      };
-    }
   }
 
   function patchThreadBug() {
@@ -21480,6 +21528,10 @@ console.log("[App] Performance + Mobile optimization loaded");
     var _profileCheck = setInterval(function () {
       var nameEl = document.getElementById("user-bar-name");
       if (nameEl) {
+        if (nameEl.dataset.v25Bound) {
+          clearInterval(_profileCheck);
+          return;
+        }
         if (!nameEl.dataset.profilePatched) {
           nameEl.dataset.profilePatched = "1";
           nameEl.style.cursor = "pointer";
@@ -21612,7 +21664,6 @@ function init() {
       hookSounds();
       enhanceDMOverlay();
       patchMusicBot();
-      patchMessageDeletePermission();
       patchDMCloseButton();
       patchOpenDM();
       patchContextMenu();
@@ -22207,7 +22258,7 @@ init();
     
     // Also try user-bar-name
     var nameEl = userBar.querySelector(".user-bar-name");
-    if (nameEl && !nameEl._scordClickFixed) {
+    if (nameEl && !nameEl.dataset.v25Bound && !nameEl._scordClickFixed) {
       nameEl._scordClickFixed = true;
       nameEl.style.cursor = "pointer";
       nameEl.onclick = function(e) {
@@ -22936,12 +22987,7 @@ function logoutAccount() {
 window.logoutAccount = logoutAccount;
 
 function _settingsUniqueTag() {
-    var discrim = "0000";
-    if (state.peerId) {
-        var h = 0;
-        for (var i = 0; i < state.peerId.length; i++) { h = ((h << 5) - h) + state.peerId.charCodeAt(i); h |= 0; }
-        discrim = String(Math.abs(h) % 9999).padStart(4, "0");
-    }
+    var discrim = state._discriminator || "0000";
     return (state.username || "Kullanici") + "#" + discrim;
 }
 
@@ -22951,11 +22997,13 @@ function showUserSettingsModal() {
     var tag = _settingsUniqueTag();
 
     var html = '<div class="scord-settings-shell">';
-    html += '  <nav class="scord-settings-nav">';
+    html += '  <nav class="scord-settings-nav" data-user="' + escapeHtml(state.username || '') + '">';
     html += '    <button class="active" data-tab="account">Hesabım</button>';
     html += '    <button data-tab="voice">Ses ve Görüntü</button>';
     html += '    <button data-tab="appearance">Görünüm</button>';
     html += '    <button data-tab="notifications">Bildirimler</button>';
+    html += '    <button data-tab="privacy">Gizlilik</button>';
+    html += '    <button data-tab="accessibility">Erişilebilirlik</button>';
     html += '    <button data-tab="advanced">Diğer</button>';
     html += '    <button class="danger" onclick="logoutAccount()">Çıkış Yap</button>';
     html += '  </nav>';
@@ -22970,6 +23018,7 @@ function showUserSettingsModal() {
     html += '      </div>';
     html += '      <input type="file" id="settings-avatar-file" accept="image/*" class="hidden" style="display:none">';
     html += '      <p class="settings-hint">Avatarına tıklayıp bilgisayarından resim yükleyebilirsin. Profil bilgileri hesabına kayıtlı — tarayıcı değiştirsen de seninle gelir. Kullanıcı adı değiştirilemez (sunucu sahiplikleri buna bağlı).</p>';
+    html += '      <label>E-posta<input class="modal-input" type="email" value="' + escapeHtml(state.email || '') + '" readonly aria-readonly="true"></label>';
     html += '      <label>Biyografi<textarea class="modal-input" id="settings-bio" rows="3" onchange="syncProfileField({bio:this.value})">' + escapeHtml(state.bio || '') + '</textarea></label>';
     html += '      <label>Avatar URL<input class="modal-input" id="settings-avatar-url" value="' + escapeHtml((state.avatarImage || '').startsWith('data:') ? '' : (state.avatarImage || '')) + '" placeholder="https://... (veya yukarıdan dosya yükle)" onchange="syncProfileField({avatarImage:this.value});applyAvatarToElement(document.getElementById(\'user-bar-avatar\'),state.avatarColor,state.avatarImage,state.username)"></label>';
     html += '      <label>Avatar Rengi<input class="modal-input" type="color" id="settings-avatar-color" value="' + (state.avatarColor || '#7c3aed') + '" onchange="syncProfileField({avatarColor:this.value});applyAvatarToElement(document.getElementById(\'user-bar-avatar\'),state.avatarColor,state.avatarImage,state.username)" style="height:40px;padding:2px;"></label>';
@@ -23045,6 +23094,23 @@ function showUserSettingsModal() {
     html += '      <h3>Bildirimler</h3>';
     html += '      <label>Bildirim Sesi <span id="val-notif-vol">' + (vols.notificationVolume || 50) + '%</span><input type="range" min="0" max="100" value="' + (vols.notificationVolume || 50) + '" oninput="updateSetting(\'notificationVolume\',this.value);document.getElementById(\'val-notif-vol\').textContent=this.value+\'%\'"></label>';
     html += '      <label class="scord-check"><input type="checkbox" ' + (state.settings?.soundEffects !== false ? 'checked' : '') + ' onchange="setUserSetting(\'soundEffects\',this.checked)"> Ses Efektleri (join/leave/mesaj)</label>';
+    html += '    </div>';
+
+    // ── Gizlilik ──────────────────────────────────────────
+    html += '    <div class="scord-settings-page hidden" id="set-privacy">';
+    html += '      <h3>Gizlilik</h3>';
+    html += '      <label class="scord-check"><input type="checkbox" ' + (state.settings?.allowFriendRequests !== false ? 'checked' : '') + ' onchange="setUserSetting(\'allowFriendRequests\',this.checked)"> Arkadaşlık isteklerine izin ver</label>';
+    html += '      <label class="scord-check"><input type="checkbox" ' + (state.settings?.showOnlineStatus !== false ? 'checked' : '') + ' onchange="setUserSetting(\'showOnlineStatus\',this.checked)"> Çevrimiçi durumumu göster</label>';
+    html += '      <label class="scord-check"><input type="checkbox" ' + (state.settings?.allowDirectMessages !== false ? 'checked' : '') + ' onchange="setUserSetting(\'allowDirectMessages\',this.checked)"> Ortak sunuculardan direkt mesajlara izin ver</label>';
+    html += '      <p class="settings-hint">Engellediğin hesaplar sana mesaj gönderemez ve profil hareketlerini göremez.</p>';
+    html += '    </div>';
+
+    // ── Erişilebilirlik ───────────────────────────────────
+    html += '    <div class="scord-settings-page hidden" id="set-accessibility">';
+    html += '      <h3>Erişilebilirlik</h3>';
+    html += '      <label class="scord-check"><input type="checkbox" ' + (state.settings?.animations === false ? 'checked' : '') + ' onchange="setUserSetting(\'animations\',!this.checked);updateAnimations(!this.checked)"> Hareketi azalt</label>';
+    html += '      <label class="scord-check"><input type="checkbox" ' + (state.settings?.highContrast ? 'checked' : '') + ' onchange="setUserSetting(\'highContrast\',this.checked);document.documentElement.classList.toggle(\'scord-high-contrast\',this.checked)"> Yüksek kontrast</label>';
+    html += '      <label>Arayüz ölçeği<select class="modal-input" onchange="setUserSetting(\'uiScale\',parseInt(this.value));document.documentElement.style.fontSize=this.value+\'%\'"><option value="90">%90</option><option value="100" selected>%100</option><option value="110">%110</option></select></label>';
     html += '    </div>';
 
     // ── Diğer ────────────────────────────────────────────
@@ -23156,8 +23222,7 @@ function updateSetting(key, val) {
 }
 
 function copyUniqueId() {
-    var _discrim = "0000";
-    if (state.peerId) { var _h = 0; for (var _i = 0; _i < state.peerId.length; _i++) { _h = ((_h << 5) - _h) + state.peerId.charCodeAt(_i); _h |= 0; } _discrim = String(Math.abs(_h) % 9999).padStart(4, "0"); }
+    var _discrim = state._discriminator || "0000";
     var tag = (state.username || "Kullanici") + "#" + _discrim;
     if (navigator.clipboard?.writeText) { navigator.clipboard.writeText(tag).then(function() { toast("Unique ID kopyalandi: " + tag, "success"); }); }
 }
@@ -23167,19 +23232,37 @@ function showAddFriendModal() {
     showModal("👥 Arkadaş Ekle", body, '<button class="btn-primary" onclick="addFriendByTag(document.getElementById(\'friend-tag-input\').value)">Ekle</button><button class="btn-secondary" onclick="hideModal()">İptal</button>');
 }
 
-function addFriendByTag(tag) {
+async function addFriendByTag(tag) {
     if (!tag || !tag.includes("#")) { toast("Geçersiz format. Örnek: Kullanici#1234", "error"); return; }
-    var parts = tag.split("#"); var name = parts[0]; var discrim = parts[1];
-    var found = null;
-    for (var pid in state.peers) {
-        var p = state.peers[pid]; if (!p || !p.username) continue;
-        if (p.username === name) {
-            var _h = 0; for (var _i = 0; _i < pid.length; _i++) { _h = ((_h << 5) - _h) + pid.charCodeAt(_i); _h |= 0; }
-            var pDiscrim = String(Math.abs(_h) % 9999).padStart(4, "0");
-            if (pDiscrim === discrim) { found = { peerId: pid, username: p.username }; break; }
-        }
+    try {
+        const response = await scordFetch(`${API_BASE}/friends/by-tag`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ identifier: tag.trim() }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.success || !data.friend) throw new Error(data.detail || "not_found");
+        const friend = data.friend;
+        if (!state.friends) state.friends = [];
+        const entry = {
+            peerId: friend.peer_id,
+            name: friend.username,
+            avatarColor: friend.avatar_color,
+            avatarImage: friend.avatar_image,
+            tag: friend.discriminator,
+        };
+        const index = state.friends.findIndex(item => item.peerId === entry.peerId);
+        if (index >= 0) state.friends[index] = entry;
+        else state.friends.push(entry);
+        localStorage.setItem("scord_friends", JSON.stringify(state.friends));
+        hideModal();
+        renderHomeSidebar();
+        if (typeof showScordFriendsDirectory === "function" && !state.activeServerId) showScordFriendsDirectory();
+        toast(`${friend.username}#${friend.discriminator} arkadaşlara eklendi.`, "success");
+    } catch (error) {
+        toast("Kullanıcı bulunamadı veya arkadaş eklenemedi.", "error");
+        console.warn("[Friends] tag lookup failed:", error);
     }
-    if (found) { addFriend(found.peerId, found.username); } else { toast("Kullanici bulunamadi. Cevrimici degil veya ID yanlis.", "error"); }
 }
 
 function updateAnimations(enabled) {
@@ -23956,6 +24039,17 @@ console.log("[App] Final Phase: Bug fixes, Search, Role colors, CSP");
         for (var i = 0; i < keys.length; i++) { t = t.replace(new RegExp(keys[i].replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'g'), EMOJI_MAP[keys[i]]); }
         return t;
     };
+    window._replaceEmojiTextNodes = function(el) {
+        if (!el || !window._emojiReplacer) return;
+        var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+        var nodes = [], node;
+        while ((node = walker.nextNode())) {
+            if (!node.parentElement?.closest('.msg-edited-badge, code, pre')) nodes.push(node);
+        }
+        nodes.forEach(function(textNode) {
+            textNode.nodeValue = window._emojiReplacer(textNode.nodeValue || '');
+        });
+    };
     // Hook renderMessages to scan .msg-text elements
     if (typeof window.renderMessages === "function") {
         var _origRender = window.renderMessages;
@@ -23965,7 +24059,7 @@ console.log("[App] Final Phase: Bug fixes, Search, Role colors, CSP");
                 document.querySelectorAll(".msg-text,.dm-msg-row span").forEach(function(el) {
                     if (el.dataset.emojiDone) return;
                     el.dataset.emojiDone = "1";
-                    el.textContent = window._emojiReplacer(el.textContent);
+                    window._replaceEmojiTextNodes(el);
                 });
             }, 50);
             return result;
@@ -24291,16 +24385,6 @@ setTimeout(function() {
             }
         }
     });
-    // Also scan already rendered messages
-    setInterval(function() {
-        if (typeof window._emojiReplacer !== "function") return;
-        document.querySelectorAll(".msg-text,.dm-msg-row span").forEach(function(el) {
-            if (el.dataset.emojiDone2) return;
-            el.dataset.emojiDone2 = "1";
-            var txt = el.textContent || "";
-            if (txt.length < 500) el.textContent = window._emojiReplacer(txt);
-        });
-    }, 2000);
 }, 1000);
 
 
@@ -24459,14 +24543,6 @@ console.log("[App] Theme 12 + Profile sync + updateTheme fix loaded");
             if (r !== v) { var s = inp.selectionStart; inp.value = r; inp.selectionStart = inp.selectionEnd = s; }
         }
     });
-    // DOM scan every second
-    setInterval(function() {
-        if (!window._emojiReplacer) return;
-        document.querySelectorAll(".msg-text,.dm-body span,.dm-msg-row span").forEach(function(el) {
-            if (el.dataset.edone) return; el.dataset.edone = "1";
-            var t = el.textContent || ""; if (t.length < 500) el.textContent = window._emojiReplacer(t);
-        });
-    }, 1000);
 })();
 
 // 3. Also force animations off on load
@@ -24795,7 +24871,7 @@ window.openServerSettingsPanel = function () {
     if (!state.activeServerId) return toast("Önce bir sunucu seç.", "info");
     const server = currentServer();
     if (!server) return;
-    const isOwner = server.ownerId === state.peerId;
+    const isOwner = server.ownerId === state.peerId || isSuperAdmin();
     const canManage = isOwner || roleAllows(server, "manage_server") || roleAllows(server, "manage_roles");
     if (!canManage) return toast("Sunucu ayarları için yetkin yok.", "warning");
 
@@ -24821,6 +24897,8 @@ window.openServerSettingsPanel = function () {
         `<label class="permission-item"><input type="checkbox" id="perm-member-${p}" ${roles.member?.permissions?.[p] !== false ? "checked" : ""}> ${p.replaceAll("_", " ")}</label>`
     ).join("");
     const invite = server.inviteCode || server.invite_code || "";
+    const memberTotal = Math.max(server.members?.length || 0, server.peer_count || 0, 1);
+    const adminTotal = Math.max((server.administrators || []).length, 1);
 
     panel.className = "scord-server-settings v25-server";
     panel.innerHTML = `
@@ -24832,6 +24910,7 @@ window.openServerSettingsPanel = function () {
         <button data-page="perms">İzinler</button>
         <button data-page="voice">Ses & Moderasyon</button>
         <button data-page="background">Arka Plan</button>
+        <button data-page="data">Yedek & Veri</button>
         ${!isOwner ? `<button data-page="leave">Ayrıl</button>` : ""}
         ${isOwner ? `<button data-page="danger">Sunucuyu Sil</button>` : ""}
         <button class="danger" onclick="closeServerSettingsPanel()">Kapat</button>
@@ -24852,6 +24931,12 @@ window.openServerSettingsPanel = function () {
               <button class="v25-mini" data-copy-code="${escapeHtml(invite)}" type="button">📋 Kopyala</button>
               ${isOwner ? `<button class="v25-mini" data-rotate-invite="${server.id}" type="button">🔄 Yenile</button>` : ""}
             </div>
+          </div>
+          <div class="server-quick-stats" aria-label="Sunucu özeti">
+            <article><span>Üyeler</span><strong>${memberTotal}</strong></article>
+            <article><span>Kanallar</span><strong>${channels.length}</strong></article>
+            <article><span>Yöneticiler</span><strong>${adminTotal}</strong></article>
+            <article><span>Durum</span><strong class="is-live">Aktif</strong></article>
           </div>
         </section>
         <section id="srv-channels" class="srv-page hidden">
@@ -24881,6 +24966,11 @@ window.openServerSettingsPanel = function () {
           <h2>Chat Arka Planı</h2>
           <label>Kanal arka planı URL<input class="modal-input" id="settings-channel-bg-url" value="${escapeHtml((server.channel_backgrounds || {})[state.activeChannelId] || "")}" placeholder="https://..."></label>
           <button class="btn-secondary" onclick="saveServerChannelBackground()">Uygula</button>
+        </section>
+        <section id="srv-data" class="srv-page hidden">
+          <h2>Yedek & Veri</h2>
+          <div class="v25-invite-box"><span class="v25-invite-label">Kalıcı veri</span><p class="modal-info">Kanallar, roller, yöneticiler ve mesaj geçmişi sunucu veritabanına kaydedilir. İstersen bu sunucunun taşınabilir bir JSON yedeğini indirebilirsin.</p></div>
+          <button class="btn-secondary" type="button" onclick="exportCurrentServerBackup()">Sunucu yedeğini indir</button>
         </section>
         ${!isOwner ? `<section id="srv-leave" class="srv-page hidden"><h2>Sunucudan Ayrıl</h2><div class="srv-danger-zone"><p>Bu sunucu sol listenden kaldırılır. Davet koduyla tekrar katılabilirsin.</p><button class="btn-primary" style="background:var(--red);border:none;width:max-content" onclick="leaveCurrentServerSelf()">Ayrıl</button></div></section>` : ""}
         ${isOwner ? `<section id="srv-danger" class="srv-page hidden"><h2>Tehlikeli Bölge</h2><div class="srv-danger-zone"><h3>Sunucuyu Sil</h3><p>Kalıcı olarak silinir, geri alınamaz. Sadece sahip kapatabilir.</p><button class="btn-primary" style="background:var(--red);border:none;width:max-content" onclick="deleteServer('${server.id}')">Sunucuyu Sil</button></div></section>` : ""}
@@ -24935,7 +25025,7 @@ window.openServerSettingsPanel = function () {
 
 window._v25RotateInvite = async function (serverId) {
     const server = currentServer();
-    if (!server || server.ownerId !== state.peerId) return toast("Sadece sahip davet kodunu yenileyebilir.", "warning");
+    if (!server || (server.ownerId !== state.peerId && !isSuperAdmin())) return toast("Sadece sahip davet kodunu yenileyebilir.", "warning");
     try {
         const keys = JSON.parse(localStorage.getItem("scordOwnerKeys") || "{}");
         const res = await scordFetch(`${API_BASE}/rooms/${serverId}/invite_rotate`, {
@@ -24959,46 +25049,61 @@ window._v25RotateInvite = async function (serverId) {
 // startApp'i sarmalayıp bağlamayı tek seferde ele geçiriyoruz;
 // ayarlar ve avatar yükleme hesabım sayfasında kalır.
 const _v25OrigStartApp = window.startApp || startApp;
+function bindScordUserMenuAnchors() {
+    const av = document.getElementById("user-bar-avatar");
+    const name = document.getElementById("user-bar-name");
+    const bind = (element, anchor) => {
+        if (!element || element.dataset.v25Bound) return;
+        element.dataset.v25Bound = "1";
+        element.style.cursor = "pointer";
+        element.title = "Profil, etiket ve durum";
+        element.setAttribute("role", "button");
+        element.setAttribute("tabindex", "0");
+        element.setAttribute("aria-haspopup", "menu");
+        element.onclick = e => {
+            e.stopPropagation();
+            if (typeof window.openScordUserMenu === "function") window.openScordUserMenu(anchor || element);
+        };
+        element.onkeydown = e => {
+            if (e.key !== "Enter" && e.key !== " ") return;
+            e.preventDefault();
+            if (typeof window.openScordUserMenu === "function") window.openScordUserMenu(anchor || element);
+        };
+    };
+    bind(av, av);
+    bind(name, av || name);
+}
 window.startApp = function () {
     const r = _v25OrigStartApp.apply(this, arguments);
-    setTimeout(() => {
-        const av = document.getElementById("user-bar-avatar");
-        const name = document.getElementById("user-bar-name");
-        if (av && !av.dataset.v25Bound) {
-            av.dataset.v25Bound = "1";
-            av.style.cursor = "pointer";
-            av.title = "Profil ve durum";
-            av.setAttribute("role", "button");
-            av.setAttribute("tabindex", "0");
-            av.setAttribute("aria-haspopup", "menu");
-            av.onclick = e => {
-                e.stopPropagation();
-                if (typeof window.openScordUserMenu === "function") window.openScordUserMenu(av);
-            };
-            av.onkeydown = e => {
-                if (e.key !== "Enter" && e.key !== " ") return;
-                e.preventDefault();
-                if (typeof window.openScordUserMenu === "function") window.openScordUserMenu(av);
-            };
-        }
-        if (name && !name.dataset.v25Bound) {
-            name.dataset.v25Bound = "1";
-            name.style.cursor = "pointer";
-            name.title = "Profil ve durum";
-            name.setAttribute("role", "button");
-            name.setAttribute("tabindex", "0");
-            name.onclick = e => {
-                e.stopPropagation();
-                if (typeof window.openScordUserMenu === "function") window.openScordUserMenu(av || name);
-            };
-            name.onkeydown = e => {
-                if (e.key !== "Enter" && e.key !== " ") return;
-                e.preventDefault();
-                if (typeof window.openScordUserMenu === "function") window.openScordUserMenu(av || name);
-            };
-        }
-    }, 120);
+    setTimeout(bindScordUserMenuAnchors, 120);
     return r;
+};
+
+window.exportCurrentServerBackup = function () {
+    const server = currentServer();
+    if (!server) return toast("Sunucu bulunamadı.", "error");
+    const safe = {
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        server: {
+            id: server.id,
+            name: server.name,
+            description: server.description || "",
+            channels: server.channels || [],
+            roles: server.roles || {},
+            peer_roles: server.peer_roles || {},
+            channel_permissions: server.channel_permissions || {},
+            messages: server.messages || {},
+        },
+    };
+    const blob = new Blob([JSON.stringify(safe, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${String(server.name || "scord-server").replace(/[^a-z0-9_-]+/gi, "-")}-backup.json`;
+    anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast("Sunucu yedeği hazırlandı.", "success");
 };
 
 window.openScordUserMenu = function (anchor) {
@@ -25025,12 +25130,13 @@ window.openScordUserMenu = function (anchor) {
     menu.innerHTML = `
       <div class="scord-user-menu-head">
         <div class="scord-user-menu-avatar" style="background-color:${safe(state.avatarColor || "#7c3aed")}">${safe((state.username || "?").slice(0, 1).toUpperCase())}</div>
-        <div><strong>${safe(state.username || "Kullanıcı")}</strong><span>${safe(state.customStatus || labels[active])}</span></div>
+        <div><strong>${safe(state.username || "Kullanıcı")}</strong><span class="scord-user-menu-tag">${safe(state.username || "Kullanıcı")}#${safe(state._discriminator || "0000")}</span><span>${safe(state.customStatus || labels[active])}</span></div>
       </div>
       <div class="scord-user-menu-statuses" role="group" aria-label="Durum seçimi">
         ${Object.entries(labels).map(([key, label]) => `<button type="button" data-status="${key}" class="${key === active ? "active" : ""}" role="menuitemradio" aria-checked="${key === active}"><span class="status-dot status-dot--${key}"></span>${label}</button>`).join("")}
       </div>
       <div class="scord-user-menu-actions">
+        <button type="button" data-action="copy-tag" role="menuitem">Etiketi kopyala</button>
         <button type="button" data-action="custom" role="menuitem">Durum mesajını düzenle</button>
         <button type="button" data-action="profile" role="menuitem">Profilimi aç</button>
         <button type="button" data-action="settings" role="menuitem">Kullanıcı ayarları</button>
@@ -25066,6 +25172,16 @@ window.openScordUserMenu = function (anchor) {
         close();
         if (typeof showStatusPicker === "function") showStatusPicker();
     });
+    menu.querySelector('[data-action="copy-tag"]')?.addEventListener("click", async () => {
+        const tag = `${state.username || "Kullanıcı"}#${state._discriminator || "0000"}`;
+        try {
+            await navigator.clipboard.writeText(tag);
+            toast("Kullanıcı etiketi kopyalandı.", "success");
+        } catch {
+            toast(tag, "info");
+        }
+        close();
+    });
     menu.querySelector('[data-action="profile"]')?.addEventListener("click", () => {
         close();
         if (typeof openUserProfile === "function") openUserProfile(state.peerId, state.username, state.avatarImage, state.avatarColor);
@@ -25079,6 +25195,10 @@ window.openScordUserMenu = function (anchor) {
         document.addEventListener("keydown", onKeyDown, true);
     }, 0);
 };
+
+// Legacy builds finish their original bootstrap before this final layer loads.
+// Bind once immediately as well as through the wrapped startApp path.
+setTimeout(bindScordUserMenuAnchors, 180);
 
 // Eski MEGA PATCH hookScreenBtn'in atadığı onclick'i nötralize et:
 // yeni picker her zaman kazanır (capture listener maskesi gerekmeden).

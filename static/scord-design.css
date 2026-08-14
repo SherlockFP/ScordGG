@@ -603,6 +603,230 @@ html body #app .scord-friends-directory__aside { margin: 12px; border: 1px solid
   html body #app .mobile-tabbar button > span svg { width: 20px; height: 20px; }
 }
 
+/* ========================================================================== */
+/* 2026-08 flawless pass — one geometry system, one scroll owner per surface. */
+/* ========================================================================== */
+
+:root { --sidebar-width: 284px; }
+
+html body #app .messages-column {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+html body #app .messages-area { min-height: 0; flex: 1 1 auto; }
+html body #app .chat-input-area {
+  width: 100% !important;
+  flex: 0 0 auto;
+  padding: 8px 14px 12px !important;
+}
+html body #app .chat-input-wrapper { max-width: none; }
+html body #app .members-panel { align-self: stretch; }
+
+html body #app .home-view.home-discovery-active {
+  min-height: 0;
+  align-items: stretch !important;
+  justify-content: stretch !important;
+  overflow: hidden !important;
+}
+html body #app .home-view.home-discovery-active .scord-server-discovery {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  flex: 1 1 0;
+}
+html body #app .home-view.home-discovery-active .scord-discovery-grid {
+  min-height: 0;
+  flex: 1 1 0;
+  align-content: start;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+/* Bottom-left identity and voice cards follow the sidebar flow. */
+html body #app .channel-sidebar { min-width: var(--sidebar-width); }
+html body #app .voice-status-bar {
+  position: static !important;
+  inset: auto !important;
+  display: flex;
+  width: auto !important;
+  min-height: 62px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 8px 6px;
+  padding: 9px 10px 9px 12px;
+  border: 1px solid rgba(63,213,162,.22);
+  border-radius: 15px;
+  background: linear-gradient(135deg,rgba(20,55,68,.9),rgba(12,27,51,.94));
+  box-shadow: inset 0 1px rgba(255,255,255,.05),0 10px 26px rgba(0,0,0,.18);
+  backdrop-filter: blur(18px) saturate(135%);
+}
+html body #app .voice-status-bar.hidden { display: none !important; }
+html body #app .voice-status-bar .vsb-left { display: flex; min-width: 0; align-items: center; gap: 10px; }
+html body #app .voice-status-bar .vsb-dot { width: 10px; height: 10px; flex: 0 0 auto; border-radius: 50%; background: #35d49a; box-shadow: 0 0 14px rgba(53,212,154,.7); }
+html body #app .voice-status-bar .vsb-copy { display: grid; min-width: 0; gap: 3px; }
+html body #app .voice-status-bar .vsb-kicker { color: #70dcb6; font-size: 9px; font-weight: 800; letter-spacing: .13em; }
+html body #app .voice-status-bar #vsb-channel-name { overflow: hidden; color: #effff8; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+html body #app .voice-status-bar .vsb-btn { display: grid; width: 38px; height: 38px; place-items: center; border: 1px solid rgba(255,110,132,.22); border-radius: 11px; background: rgba(239,68,91,.12); color: #ff879b; cursor: pointer; }
+html body #app .voice-status-bar .vsb-btn:hover { border-color: rgba(255,110,132,.5); background: rgba(239,68,91,.24); color: #fff; }
+
+html body #app .user-bar {
+  min-height: 76px !important;
+  height: 76px !important;
+  margin: 0 8px 8px !important;
+  padding: 9px 10px !important;
+  gap: 8px !important;
+  border: 1px solid rgba(139,167,226,.18) !important;
+  border-radius: 15px !important;
+  background: linear-gradient(135deg,rgba(23,43,76,.92),rgba(12,25,49,.96)) !important;
+  box-shadow: inset 0 1px rgba(255,255,255,.05),0 12px 30px rgba(0,0,0,.2) !important;
+}
+html body #app .user-bar-avatar { width: 42px !important; height: 42px !important; min-width: 42px !important; }
+html body #app .vsb-controls { min-width: 0 !important; flex: 1 1 auto !important; overflow: hidden; }
+html body #app .user-bar-name { display: block; max-width: 100%; overflow: hidden; color: #f6f8ff; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+html body #app .status-bar { max-width: 100%; }
+html body #app .status-indicator { min-width: 0; }
+html body #app .status-text { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+html body #app .status-custom { display: none !important; }
+html body #app .user-bar-controls { display: flex; flex: 0 0 auto; gap: 4px !important; margin-left: auto; }
+html body #app .user-bar .user-ctrl-btn { width: 38px !important; height: 38px !important; min-width: 38px !important; min-height: 38px !important; border-radius: 11px !important; }
+
+/* Message actions sit beside content instead of nesting into the text bubble. */
+html body #app .msg-row-inner { padding-right: 148px; }
+html body #app .msg-quick-actions {
+  top: 4px;
+  right: 8px;
+  gap: 3px;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(8,18,36,.92);
+  box-shadow: 0 12px 30px rgba(0,0,0,.28),inset 0 1px rgba(255,255,255,.04);
+}
+html body #app .msg-quick-action { width: 32px; height: 32px; border-radius: 8px; }
+html body #app .msg-edited-badge { display: inline-flex; margin-left: 7px; color: #8495b7; font-size: 10px; font-style: italic; vertical-align: baseline; }
+html body #app .msg-row--deleted { min-height: 42px; padding-block: 4px !important; }
+html body #app .msg-tombstone { display: inline-flex; min-height: 36px; align-items: center; gap: 8px; margin-left: 48px; padding: 0 12px; border: 1px dashed rgba(139,167,226,.18); border-radius: 11px; background: rgba(139,167,226,.035); color: #8392af; font-size: 12px; font-style: italic; }
+
+/* GIF picker: its result grid owns scroll and never escapes the composer. */
+html body #app .gif-popover {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  display: grid;
+  width: min(430px,calc(100vw - 32px));
+  max-height: min(520px,64vh);
+  grid-template-rows: auto minmax(0,1fr);
+  gap: 10px;
+  padding: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(139,167,226,.2);
+  border-radius: 16px;
+  background: linear-gradient(155deg,rgba(18,34,64,.98),rgba(7,16,33,.99));
+  box-shadow: 0 24px 70px rgba(0,0,0,.48),inset 0 1px rgba(255,255,255,.05);
+  backdrop-filter: blur(22px) saturate(140%);
+}
+html body #app .gif-popover.hidden { display: none !important; }
+html body #app .gif-popover #gif-input { min-height: 42px; padding: 0 12px; border: 1px solid rgba(139,167,226,.17); border-radius: 11px; outline: 0; background: rgba(4,11,24,.62); color: #f4f7ff; }
+html body #app .gif-popover #gif-input:focus { border-color: rgba(117,103,255,.62); box-shadow: 0 0 0 3px rgba(117,103,255,.12); }
+html body #app .gif-results { min-height: 0; max-height: none !important; overflow-x: hidden !important; overflow-y: auto !important; overscroll-behavior: contain; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: rgba(117,103,255,.58) transparent; }
+html body #app .gif-results::-webkit-scrollbar { width: 7px; }
+html body #app .gif-results::-webkit-scrollbar-track { background: transparent; }
+html body #app .gif-results::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 99px; background: linear-gradient(#6078b7,#8068f7) padding-box; }
+html body .scord-user-menu .scord-user-menu-tag { color: #8fb8ff; font: 700 11px/1.25 "Space Grotesk", sans-serif; letter-spacing: .02em; }
+
+/* User settings — ImageGen v2 translated into native, responsive UI. */
+html body .modal.modal--wide-settings { width: min(1240px,calc(100vw - 40px)) !important; height: min(700px,calc(100vh - 40px)) !important; max-width: none !important; max-height: none !important; overflow: hidden !important; border-color: rgba(117,103,255,.42) !important; border-radius: 20px !important; background: linear-gradient(145deg,rgba(13,26,51,.985),rgba(6,14,29,.99)) !important; box-shadow: 0 38px 110px rgba(0,0,0,.62),inset 0 1px rgba(255,255,255,.055) !important; }
+html body .modal.modal--wide-settings .modal-header { min-height: 70px; padding: 0 26px; border-bottom: 1px solid rgba(139,167,226,.12); background: rgba(13,28,55,.72); }
+html body .modal.modal--wide-settings .modal-title { font: 750 20px/1 Space Grotesk,sans-serif; }
+html body .modal.modal--wide-settings .modal-body { height: calc(100% - 70px) !important; max-height: none !important; padding: 0 !important; overflow: hidden !important; }
+html body .modal.modal--wide-settings .modal-footer { display: none !important; }
+html body .modal.modal--wide-settings .scord-settings-shell { display: grid !important; width: 100%; height: 100% !important; max-height: none !important; grid-template-columns: 260px minmax(0,1fr); overflow: hidden !important; background: transparent; }
+html body .modal.modal--wide-settings .scord-settings-nav { display: flex; min-height: 0; flex-direction: column; gap: 7px; padding: 24px 18px; overflow: hidden; border-right: 1px solid rgba(139,167,226,.12); background: linear-gradient(180deg,rgba(23,38,70,.58),rgba(7,16,34,.78)); }
+html body .modal.modal--wide-settings .scord-settings-nav::before { content: "SH  " attr(data-user); display: grid; min-height: 86px; place-items: center; margin-bottom: 10px; border: 1px solid rgba(139,167,226,.15); border-radius: 15px; background: radial-gradient(circle at 50% 15%,rgba(117,103,255,.22),transparent 64%),rgba(139,167,226,.04); color: #e8edff; font: 750 15px/1.2 Space Grotesk,sans-serif; }
+html body .modal.modal--wide-settings .scord-settings-nav button { display: flex; min-height: 45px; align-items: center; padding: 0 13px; border: 1px solid transparent; border-radius: 11px; background: transparent; color: #aab7d1; font-size: 12px; font-weight: 680; }
+html body .modal.modal--wide-settings .scord-settings-nav button:hover { border-color: rgba(139,167,226,.14); background: rgba(139,167,226,.06); color: #edf2ff; }
+html body .modal.modal--wide-settings .scord-settings-nav button.active { border-color: rgba(139,112,255,.48); background: linear-gradient(90deg,rgba(117,82,255,.34),rgba(88,69,181,.22)); color: #fff; box-shadow: inset 3px 0 #8b74ff,0 8px 25px rgba(72,50,173,.16); }
+html body .modal.modal--wide-settings .scord-settings-nav button.danger { margin-top: auto; color: #ff8299; }
+html body .modal.modal--wide-settings .scord-settings-content { min-width: 0; min-height: 0; padding: 26px 30px !important; overflow: hidden !important; }
+html body .modal.modal--wide-settings .scord-settings-page:not(.hidden) { display: grid !important; min-height: 0; grid-template-columns: repeat(2,minmax(0,1fr)); align-content: start; gap: 14px 18px; }
+html body .modal.modal--wide-settings .scord-settings-page > h3,
+html body .modal.modal--wide-settings .settings-account-card,
+html body .modal.modal--wide-settings .settings-hint,
+html body .modal.modal--wide-settings .settings-unique-id { grid-column: 1/-1; }
+html body .modal.modal--wide-settings .scord-settings-page > h3 { margin: 0 0 4px; color: #f6f8ff; font: 750 26px/1.1 Space Grotesk,sans-serif; letter-spacing: -.025em; }
+html body .modal.modal--wide-settings .scord-settings-page > label { display: grid; gap: 7px; margin: 0; color: #aebbd3; font-size: 11px; font-weight: 700; }
+html body .modal.modal--wide-settings .modal-input { min-height: 42px; padding: 9px 11px; border-color: rgba(139,167,226,.16); border-radius: 10px; background: rgba(5,13,29,.52); }
+html body .modal.modal--wide-settings textarea.modal-input { min-height: 70px; resize: vertical; }
+html body .modal.modal--wide-settings .settings-account-card { min-height: 112px; margin: 0 0 2px; border: 1px solid rgba(117,103,255,.25); border-radius: 16px; background: radial-gradient(circle at 86% 12%,rgba(117,80,255,.26),transparent 40%),linear-gradient(135deg,rgba(31,50,90,.72),rgba(11,24,48,.86)); }
+html body .modal.modal--wide-settings .settings-hint { margin: -5px 0 0; color: #7f8da9; font-size: 10px; line-height: 1.45; }
+html body .modal.modal--wide-settings .scord-check { min-height: 46px; display: flex !important; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid rgba(139,167,226,.12); border-radius: 11px; background: rgba(139,167,226,.035); }
+@media (min-width: 861px) and (min-height: 700px) {
+  html body #modal.modal--wide-settings { width: min(1240px,calc(100vw - 40px)) !important; }
+  html body #modal.modal--wide-settings .modal-body { height: calc(100% - 70px) !important; overflow: hidden !important; }
+  html body #modal.modal--wide-settings .scord-settings-shell { height: 100% !important; min-height: 0 !important; margin: 0 !important; }
+  html body #modal.modal--wide-settings .scord-settings-content { overflow: hidden !important; padding: 26px 30px !important; }
+}
+
+/* Server settings — wide native sheet based on the dedicated mockup. */
+html body #server-settings-panel.scord-server-settings.v25-server { position: fixed !important; inset: 22px !important; z-index: 6000; display: grid !important; width: auto !important; height: auto !important; max-width: 1680px; margin: auto; grid-template-columns: 280px minmax(0,1fr); overflow: hidden; border: 1px solid rgba(85,171,255,.36); border-radius: 20px; background: linear-gradient(145deg,rgba(10,24,50,.985),rgba(5,13,29,.995)); box-shadow: 0 42px 130px rgba(0,0,0,.68),inset 0 1px rgba(255,255,255,.055); }
+html body #server-settings-panel .scord-server-settings-nav { display: flex; min-height: 0; flex-direction: column; gap: 6px; padding: 30px 20px; overflow: hidden; border-right: 1px solid rgba(139,167,226,.12); background: radial-gradient(circle at 0 0,rgba(117,82,255,.17),transparent 34%),rgba(8,20,43,.76); }
+html body #server-settings-panel .scord-server-settings-nav strong { display: flex; min-height: 72px; align-items: center; margin-bottom: 14px; padding: 0 14px; border: 1px solid rgba(139,167,226,.14); border-radius: 14px; background: rgba(139,167,226,.04); color: #f2f5ff; font: 750 15px/1.2 Space Grotesk,sans-serif; }
+html body #server-settings-panel .scord-server-settings-nav button { min-height: 44px; padding: 0 14px; border: 1px solid transparent; border-radius: 11px; background: transparent; color: #a7b5d0; text-align: left; }
+html body #server-settings-panel .scord-server-settings-nav button:hover { border-color: rgba(139,167,226,.14); background: rgba(139,167,226,.06); color: white; }
+html body #server-settings-panel .scord-server-settings-nav button.active { border-color: rgba(139,112,255,.52); background: linear-gradient(90deg,rgba(117,82,255,.4),rgba(68,57,150,.22)); color: white; box-shadow: inset 3px 0 #8c78ff; }
+html body #server-settings-panel .scord-server-settings-nav button.danger { margin-top: auto; color: #ff8095; }
+html body #server-settings-panel .scord-server-settings-main { display: grid; min-width: 0; min-height: 0; padding: 30px 34px 82px !important; overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: rgba(117,103,255,.54) transparent; }
+html body #server-settings-panel .srv-page:not(.hidden) { display: grid !important; grid-template-columns: repeat(2,minmax(0,1fr)); align-content: start; gap: 15px 20px; }
+html body #server-settings-panel .srv-page > h2,
+html body #server-settings-panel .srv-page > .modal-info,
+html body #server-settings-panel .srv-page > .v25-invite-box,
+html body #server-settings-panel .srv-page > .permission-grid,
+html body #server-settings-panel .srv-page > .srv-danger-zone { grid-column: 1/-1; }
+html body #server-settings-panel .server-quick-stats { display: grid; grid-column: 1/-1; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; margin-top: 4px; }
+html body #server-settings-panel .server-quick-stats article { display: grid; min-height: 86px; align-content: center; gap: 7px; padding: 14px 16px; border: 1px solid rgba(139,167,226,.13); border-radius: 13px; background: linear-gradient(145deg,rgba(22,41,75,.56),rgba(9,20,42,.76)); box-shadow: inset 0 1px rgba(255,255,255,.035); }
+html body #server-settings-panel .server-quick-stats span { color: #8292b2; font-size: 10px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+html body #server-settings-panel .server-quick-stats strong { color: #f4f7ff; font: 750 20px/1 Space Grotesk,sans-serif; }
+html body #server-settings-panel .server-quick-stats .is-live { color: #52dda9; }
+html body #server-settings-panel .srv-page > h2 { margin: 0 0 8px; color: #f7f9ff; font: 760 28px/1.1 Space Grotesk,sans-serif; letter-spacing: -.03em; }
+html body #server-settings-panel .srv-page > label { display: grid; gap: 7px; margin: 0; color: #aab8d2; font-size: 11px; font-weight: 700; }
+html body #server-settings-panel footer { position: absolute; right: 0; bottom: 0; left: 280px; display: flex; min-height: 68px; align-items: center; justify-content: flex-end; gap: 10px; padding: 0 34px; border-top: 1px solid rgba(139,167,226,.13); background: rgba(7,17,36,.92); backdrop-filter: blur(18px); }
+
+@media (max-height: 720px) {
+  html body .modal.modal--wide-settings .scord-settings-content { overflow-y: auto !important; }
+}
+@media (max-width: 1100px) {
+  html body #server-settings-panel.scord-server-settings.v25-server { grid-template-columns: 230px minmax(0,1fr); }
+  html body #server-settings-panel footer { left: 230px; }
+  html body #server-settings-panel .srv-page:not(.hidden) { grid-template-columns: 1fr; }
+  html body #server-settings-panel .srv-page > * { grid-column: 1 !important; }
+  html body #server-settings-panel .server-quick-stats { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
+@media (max-width: 768px) {
+  :root { --sidebar-width: 284px; }
+  html body #app .msg-row-inner { padding-right: 48px; }
+  html body #app .msg-tombstone { margin-left: 8px; }
+  html body .modal.modal--wide-settings { width: 100vw !important; height: 100dvh !important; border-radius: 0 !important; }
+  html body .modal.modal--wide-settings .scord-settings-shell { grid-template-columns: 1fr; grid-template-rows: auto minmax(0,1fr); }
+  html body .modal.modal--wide-settings .scord-settings-nav { flex-direction: row; padding: 8px 12px; overflow-x: auto; border-right: 0; border-bottom: 1px solid rgba(139,167,226,.12); }
+  html body .modal.modal--wide-settings .scord-settings-nav::before,
+  html body .modal.modal--wide-settings .scord-settings-nav button.danger { display: none; }
+  html body .modal.modal--wide-settings .scord-settings-nav button { min-width: max-content; min-height: 44px; }
+  html body .modal.modal--wide-settings .scord-settings-content { padding: 18px 14px !important; overflow-y: auto !important; }
+  html body .modal.modal--wide-settings .scord-settings-page:not(.hidden) { grid-template-columns: 1fr; }
+  html body .modal.modal--wide-settings .scord-settings-page > * { grid-column: 1 !important; }
+  html body #server-settings-panel.scord-server-settings.v25-server { inset: 0 !important; grid-template-columns: 1fr; grid-template-rows: auto minmax(0,1fr); border: 0; border-radius: 0; }
+  html body #server-settings-panel .scord-server-settings-nav { flex-direction: row; padding: 9px 12px; overflow-x: auto; border-right: 0; border-bottom: 1px solid rgba(139,167,226,.12); }
+  html body #server-settings-panel .scord-server-settings-nav strong,
+  html body #server-settings-panel .scord-server-settings-nav button.danger { display: none; }
+  html body #server-settings-panel .scord-server-settings-nav button { min-width: max-content; }
+  html body #server-settings-panel .scord-server-settings-main { padding: 18px 14px 84px !important; }
+  html body #server-settings-panel footer { left: 0; padding: 0 14px; }
+}
+
 @media (max-width: 480px) {
   html body #app .chat-header-right .peer-badge,
   html body #app .chat-header-right #pins-toggle-btn { display: none !important; }
@@ -715,7 +939,7 @@ html body .scord-public-toggle small { color: var(--scord-text-3); font-size: 10
   html body #app .scord-discovery-toolbar { align-items: stretch; flex-direction: column; gap: 8px; padding: 14px 14px 6px; }
   html body #app .scord-discovery-count { align-self: flex-end; }
   html body #app .scord-discovery-grid { padding: 10px 14px calc(82px + env(safe-area-inset-bottom)); grid-template-columns: 1fr; }
-  html body #app .scord-discovery-card { min-height: 218px; }
+  html body #app .scord-discovery-card { min-height: 280px; }
   html body #app .scord-discovery-join { min-height: 44px; }
   html body #app .msg-quick-actions { top: 0; right: 0; opacity: 1; pointer-events: auto; transform: none; background: transparent; box-shadow: none; }
   html body #app .msg-quick-action:not(.danger) { display: none; }

@@ -19,6 +19,7 @@ import re
 import sqlite3
 import hashlib
 import secrets
+import importlib.util
 from contextlib import contextmanager
 from typing import Dict, Set, Optional, Any
 from pathlib import Path
@@ -29,8 +30,23 @@ from fastapi.responses import FileResponse
 from fastapi import Response
 from starlette.websockets import WebSocketState
 
+try:
+    from supabase_store import restore_if_empty as restore_supabase_if_empty, schedule_push as schedule_supabase_push
+except ImportError:  # package-style imports in some runners
+    _supabase_spec = importlib.util.spec_from_file_location("scord_supabase_store", Path(__file__).with_name("supabase_store.py"))
+    if _supabase_spec is None or _supabase_spec.loader is None:
+        raise
+    _supabase_module = importlib.util.module_from_spec(_supabase_spec)
+    _supabase_spec.loader.exec_module(_supabase_module)
+    restore_supabase_if_empty = _supabase_module.restore_if_empty
+    schedule_supabase_push = _supabase_module.schedule_push
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 log = logging.getLogger("shercord")
+
+# Do not upload a newly-created empty SQLite file before startup has had a
+# chance to restore the last durable Supabase snapshot.
+_SUPABASE_SYNC_READY = False
 
 app = FastAPI(title="SCORD Signaling Server")
 
@@ -93,14 +109,42 @@ def _db():
     conn = sqlite3.connect(ACCOUNTS_DB_FILE)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    changed = False
+    starting_changes = conn.total_changes
     try:
         yield conn
         conn.commit()
+        changed = conn.total_changes > starting_changes
     except Exception:
         conn.rollback()
         raise
     finally:
         conn.close()
+        if changed and _SUPABASE_SYNC_READY:
+            schedule_supabase_push(ACCOUNTS_DB_FILE)
+
+
+def _account_name(row: sqlite3.Row | dict | None) -> str:
+    if not row:
+        return ""
+    keys = row.keys() if hasattr(row, "keys") else row
+    display = row["display_name"] if "display_name" in keys else ""
+    return (display or row["username"] or "").strip()
+
+
+def _allocate_discriminator(conn: sqlite3.Connection, display_name: str) -> str:
+    """Return an unused four-digit tag for a display name."""
+    start = secrets.randbelow(9999) + 1
+    for offset in range(9999):
+        tag = f"{((start + offset - 1) % 9999) + 1:04d}"
+        exists = conn.execute(
+            "SELECT 1 FROM accounts WHERE lower(COALESCE(NULLIF(display_name, ''), username)) = lower(?) AND discriminator = ?",
+            (display_name, tag),
+        ).fetchone()
+        if not exists:
+            return tag
+    raise RuntimeError("No discriminator available for display name")
+
 
 def init_accounts_db():
     with _db() as conn:
@@ -125,11 +169,23 @@ def init_accounts_db():
             conn.execute("ALTER TABLE accounts ADD COLUMN banner_color TEXT NOT NULL DEFAULT '#5865f2'")
         if "platform_admin" not in cols:
             conn.execute("ALTER TABLE accounts ADD COLUMN platform_admin INTEGER NOT NULL DEFAULT 0")
+        if "display_name" not in cols:
+            conn.execute("ALTER TABLE accounts ADD COLUMN display_name TEXT NOT NULL DEFAULT ''")
+        if "discriminator" not in cols:
+            conn.execute("ALTER TABLE accounts ADD COLUMN discriminator TEXT NOT NULL DEFAULT ''")
+        if "email" not in cols:
+            conn.execute("ALTER TABLE accounts ADD COLUMN email TEXT NOT NULL DEFAULT ''")
+        conn.execute("UPDATE accounts SET display_name = username WHERE display_name = ''")
+        for account in conn.execute("SELECT peer_id, username, display_name, discriminator FROM accounts").fetchall():
+            if not account["discriminator"]:
+                conn.execute(
+                    "UPDATE accounts SET discriminator = ? WHERE peer_id = ?",
+                    (_allocate_discriminator(conn, account["display_name"] or account["username"]), account["peer_id"]),
+                )
         conn.execute(
-            "UPDATE accounts SET platform_admin = 1 WHERE lower(username) IN ({})".format(
-                ",".join("?" for _ in PLATFORM_ADMIN_USERNAMES) or "''"
-            ), tuple(PLATFORM_ADMIN_USERNAMES)
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_display_tag ON accounts(lower(display_name), discriminator)"
         )
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_email ON accounts(lower(email)) WHERE email <> ''")
         PLATFORM_ADMIN_IDS.update(
             row[0] for row in conn.execute("SELECT peer_id FROM accounts WHERE platform_admin = 1").fetchall()
         )
@@ -226,10 +282,47 @@ def _hash_password(password: str, salt: str) -> str:
     return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 100_000).hex()
 
 
+def ensure_bootstrap_platform_admin() -> None:
+    """Create the first Scord operator account without storing a plaintext password.
+
+    The password is required from the deployment secret. If the named account
+    already exists, its hash is synchronized to that secret and it is promoted.
+    """
+    username = (os.environ.get("SCORD_BOOTSTRAP_ADMIN_USERNAME") or "sherlock").strip()
+    password = (os.environ.get("SCORD_BOOTSTRAP_ADMIN_PASSWORD") or "").strip()
+    email = (os.environ.get("SCORD_BOOTSTRAP_ADMIN_EMAIL") or "sherlock@scord.local").strip().lower()
+    if not username or len(password) < 4:
+        log.info("Bootstrap platform admin skipped: SCORD_BOOTSTRAP_ADMIN_PASSWORD is not configured")
+        return
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT * FROM accounts WHERE lower(COALESCE(NULLIF(display_name, ''), username)) = lower(?) ORDER BY created_at LIMIT 1",
+            (username,),
+        ).fetchone()
+        if row:
+            salt = secrets.token_hex(16)
+            conn.execute(
+                "UPDATE accounts SET password_hash = ?, salt = ?, platform_admin = 1 WHERE peer_id = ?",
+                (_hash_password(password, salt), salt, row["peer_id"]),
+            )
+            PLATFORM_ADMIN_IDS.add(row["peer_id"])
+            return
+        peer_id = legacy_peer_id(username, password)
+        salt = secrets.token_hex(16)
+        tag = _allocate_discriminator(conn, username)
+        conn.execute(
+            "INSERT INTO accounts (peer_id, username, display_name, discriminator, email, password_hash, salt, platform_admin, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)",
+            (peer_id, username, username, tag, email, _hash_password(password, salt), salt, time.time()),
+        )
+        PLATFORM_ADMIN_IDS.add(peer_id)
+        log.info("Bootstrap platform admin account created: %s", username)
+
+
 def _account_public(row: sqlite3.Row) -> dict:
     return {
         "peer_id": row["peer_id"],
-        "username": row["username"],
+        "username": _account_name(row),
+        "discriminator": row["discriminator"] if "discriminator" in row.keys() else "",
         "avatar_image": row["avatar_image"],
         "avatar_color": row["avatar_color"],
         "bio": row["bio"],
@@ -237,6 +330,10 @@ def _account_public(row: sqlite3.Row) -> dict:
         "banner_color": row["banner_color"],
         "platform_admin": bool(row["platform_admin"]),
     }
+
+
+def _account_private(row: sqlite3.Row) -> dict:
+    return {**_account_public(row), "email": row["email"] if "email" in row.keys() else ""}
 
 
 def _is_platform_admin(peer_id: str) -> bool:
@@ -896,24 +993,27 @@ def register_account(body: dict, request: Request):
     _check_login_rate_limit(request)
     username = (body.get("username") or "").strip()
     password = body.get("password") or ""
-    if len(username) < 2 or len(username) > 32:
+    email = (body.get("email") or "").strip().lower()
+    if len(username) < 2 or len(username) > 32 or "#" in username:
         return {"error": "invalid_username"}
     if len(password) < 4:
         return {"error": "invalid_password"}
-    peer_id = legacy_peer_id(username, password)
-    platform_admin = int(username.lower() in PLATFORM_ADMIN_USERNAMES)
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email) or len(email) > 254:
+        return {"error": "invalid_email"}
     salt = secrets.token_hex(16)
     pw_hash = _hash_password(password, salt)
     with _db() as conn:
-        existing = conn.execute(
-            "SELECT 1 FROM accounts WHERE lower(username) = lower(?)", (username,)
-        ).fetchone()
-        if existing:
-            return {"error": "username_taken"}
+        if conn.execute("SELECT 1 FROM accounts WHERE lower(email) = lower(?)", (email,)).fetchone():
+            return {"error": "email_taken"}
+        discriminator = _allocate_discriminator(conn, username)
+        internal_username = username
+        if conn.execute("SELECT 1 FROM accounts WHERE lower(username) = lower(?)", (internal_username,)).fetchone():
+            internal_username = f"{username}#{discriminator}"
+        peer_id = legacy_peer_id(internal_username, password)
         try:
             conn.execute(
-                "INSERT INTO accounts (peer_id, username, password_hash, salt, platform_admin, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (peer_id, username, pw_hash, salt, platform_admin, time.time()),
+                "INSERT INTO accounts (peer_id, username, display_name, discriminator, email, password_hash, salt, platform_admin, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)",
+                (peer_id, internal_username, username, discriminator, email, pw_hash, salt, time.time()),
             )
         except sqlite3.IntegrityError:
             return {"error": "already_registered"}
@@ -924,9 +1024,7 @@ def register_account(body: dict, request: Request):
         )
         row = conn.execute("SELECT * FROM accounts WHERE peer_id = ?", (peer_id,)).fetchone()
     log.info(f"Account registered: {username!r} ({peer_id})")
-    if platform_admin:
-        PLATFORM_ADMIN_IDS.add(peer_id)
-    return {"success": True, "token": token, **_account_public(row)}
+    return {"success": True, "token": token, **_account_private(row)}
 
 
 @app.post("/api/auth/login")
@@ -935,9 +1033,20 @@ def login_account(body: dict, request: Request):
     username = (body.get("username") or "").strip()
     password = body.get("password") or ""
     with _db() as conn:
-        row = conn.execute(
-            "SELECT * FROM accounts WHERE lower(username) = lower(?)", (username,)
-        ).fetchone()
+        match = re.fullmatch(r"(.+)#(\d{4})", username)
+        if match:
+            row = conn.execute(
+                "SELECT * FROM accounts WHERE lower(COALESCE(NULLIF(display_name, ''), username)) = lower(?) AND discriminator = ?",
+                (match.group(1).strip(), match.group(2)),
+            ).fetchone()
+        else:
+            matches = conn.execute(
+                "SELECT * FROM accounts WHERE lower(COALESCE(NULLIF(display_name, ''), username)) = lower(?) ORDER BY created_at",
+                (username,),
+            ).fetchall()
+            if len(matches) > 1:
+                return {"error": "ambiguous_username"}
+            row = matches[0] if matches else None
         if not row:
             return {"error": "not_found"}
         if _hash_password(password, row["salt"]) != row["password_hash"]:
@@ -948,7 +1057,7 @@ def login_account(body: dict, request: Request):
             (token, row["peer_id"], time.time()),
         )
     _clear_login_attempts(request)
-    return {"success": True, "token": token, **_account_public(row)}
+    return {"success": True, "token": token, **_account_private(row)}
 
 
 @app.post("/api/auth/logout")
@@ -969,7 +1078,7 @@ def get_account_me(request: Request, token: str = ""):
     row = _account_by_token(token)
     if not row:
         return {"error": "unauthorized"}
-    return {"success": True, **_account_public(row)}
+    return {"success": True, **_account_private(row)}
 
 
 @app.post("/api/account/update")
@@ -986,7 +1095,7 @@ def update_account(body: dict):
         if key in body:
             fields[key] = str(body[key])[:limits.get(key, 8000)]
     if not fields:
-        return {"success": True, **_account_public(row)}
+        return {"success": True, **_account_private(row)}
     with _db() as conn:
         set_clause = ", ".join(f"{k} = ?" for k in fields)
         conn.execute(
@@ -1029,6 +1138,35 @@ def confirm_friend(body: dict, request: Request):
         conn.execute(
             "INSERT OR REPLACE INTO friendships (peer_id, friend_peer_id, status, created_at) VALUES (?, ?, 'accepted', ?)",
             (target_id, account["peer_id"], now),
+        )
+    return {"success": True, "friend": _account_public(target)}
+
+
+@app.post("/api/friends/by-tag")
+def add_friend_by_tag(body: dict, request: Request):
+    account = _request_account(request, body)
+    identifier = str(body.get("identifier") or "").strip()
+    match = re.fullmatch(r"(.{2,32})#(\d{4})", identifier)
+    if not account or not match:
+        raise HTTPException(status_code=400, detail="invalid_friend_tag")
+    display_name, discriminator = match.group(1).strip(), match.group(2)
+    with _db() as conn:
+        target = conn.execute(
+            "SELECT * FROM accounts WHERE lower(COALESCE(NULLIF(display_name, ''), username)) = lower(?) AND discriminator = ?",
+            (display_name, discriminator),
+        ).fetchone()
+        if not target:
+            raise HTTPException(status_code=404, detail="account_not_found")
+        if target["peer_id"] == account["peer_id"]:
+            raise HTTPException(status_code=400, detail="cannot_friend_self")
+        now = time.time()
+        conn.execute(
+            "INSERT OR REPLACE INTO friendships (peer_id, friend_peer_id, status, created_at) VALUES (?, ?, 'accepted', ?)",
+            (account["peer_id"], target["peer_id"], now),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO friendships (peer_id, friend_peer_id, status, created_at) VALUES (?, ?, 'accepted', ?)",
+            (target["peer_id"], account["peer_id"], now),
         )
     return {"success": True, "friend": _account_public(target)}
 
@@ -1083,11 +1221,11 @@ def create_room(body: dict, request: Request):
     room_id = str(uuid.uuid4())
     name = body.get("name", "Unnamed Server")
     owner_id = account["peer_id"]
-    room = Room(room_id, name, owner_id, account["username"])
+    room = Room(room_id, name, owner_id, _account_name(account))
     room.owner_key = secrets.token_urlsafe(32)
     rooms[room_id] = room
     save_db()
-    _upsert_server_member(room_id, owner_id, account["username"], "owner")
+    _upsert_server_member(room_id, owner_id, _account_name(account), "owner")
     log.info(f"Room created: {name!r} ({room_id}) by {owner_id}")
     return {"room_id": room_id, "invite_code": room.invite_code, "owner_key": room.owner_key}
 
@@ -1189,13 +1327,57 @@ async def delete_message(room_id: str, message_id: str, request: Request, channe
     role = room.role_for(account["peer_id"])
     if target.get("authorId") != account["peer_id"] and role not in ("owner", "admin", "mod"):
         raise HTTPException(status_code=403, detail="forbidden")
-    if channel_id and channel_id in room.messages:
-        room.messages[channel_id] = [m for m in room.messages[channel_id] if m.get("id") != message_id]
-    else:
-        for ch in list(room.messages.keys()):
-            room.messages[ch] = [m for m in room.messages[ch] if m.get("id") != message_id]
+    target_channel = channel_id or next(
+        (ch for ch, values in room.messages.items() if any(m.get("id") == message_id for m in values)),
+        "",
+    )
+    tombstone = {
+        "id": message_id,
+        "channelId": target_channel or target.get("channelId", ""),
+        "author": target.get("author", ""),
+        "authorId": target.get("authorId", ""),
+        "time": target.get("time", ""),
+        "deleted": True,
+        "deletedAt": int(time.time() * 1000),
+    }
+    if target_channel in room.messages:
+        room.messages[target_channel] = [tombstone if m.get("id") == message_id else m for m in room.messages[target_channel]]
+    room.pinned_messages = [m for m in room.pinned_messages if m.get("id") != message_id]
     schedule_save_db()
-    return {"success": True}
+    return {"success": True, "message": tombstone}
+
+
+@app.patch("/api/rooms/{room_id}/messages/{message_id}")
+async def edit_message(room_id: str, message_id: str, body: dict, request: Request):
+    if room_id not in rooms:
+        raise HTTPException(status_code=404, detail="not_found")
+    room = rooms[room_id]
+    account = _request_account(request, body)
+    if not account:
+        raise HTTPException(status_code=401, detail="unauthorized")
+    channel_id = (body.get("channel_id") or "").strip()
+    text = (body.get("text") or "").strip()
+    if not channel_id or not text or len(text) > 4000:
+        raise HTTPException(status_code=400, detail="invalid_message")
+    messages = room.messages.get(channel_id, [])
+    index = next((i for i, message in enumerate(messages) if message.get("id") == message_id), -1)
+    if index < 0:
+        raise HTTPException(status_code=404, detail="not_found")
+    target = messages[index]
+    if target.get("deleted"):
+        raise HTTPException(status_code=409, detail="message_deleted")
+    role = room.role_for(account["peer_id"])
+    if target.get("authorId") != account["peer_id"] and role not in ("owner", "admin", "mod"):
+        raise HTTPException(status_code=403, detail="forbidden")
+    updated = {
+        **target,
+        "text": text,
+        "edited": True,
+        "editedAt": int(time.time() * 1000),
+    }
+    messages[index] = updated
+    schedule_save_db()
+    return {"success": True, "message": updated}
 
 
 @app.post("/api/rooms/{room_id}/channel_background")
@@ -1287,7 +1469,7 @@ def get_room_by_code(invite_code: str, request: Request):
                 _upsert_server_member(
                     room.room_id,
                     account["peer_id"],
-                    account["username"],
+            _account_name(account),
                     room.role_for(account["peer_id"]),
                 )
             return room.to_dict()
@@ -1363,7 +1545,7 @@ def restore_room(room_id: str, body: dict, request: Request):
     owner_id = body.get("owner_id") or account["peer_id"]
     if owner_id != account["peer_id"] and not _is_platform_admin(account["peer_id"]):
         raise HTTPException(status_code=403, detail="forbidden")
-    room = Room(room_id, name, owner_id, account["username"] if owner_id == account["peer_id"] else body.get("owner_username", ""))
+    room = Room(room_id, name, owner_id, _account_name(account) if owner_id == account["peer_id"] else body.get("owner_username", ""))
     if body.get("owner_key"):
         room.owner_key = body["owner_key"]  # restore sonrası güvenlik korunur
     if body.get("channels"):
@@ -1585,7 +1767,7 @@ async def signaling_ws(websocket: WebSocket, room_id: str, peer_id: str):
     room.peers[peer_id] = websocket
     room.peer_info[peer_id] = {"username": username, "avatar_color": avatar_color}
     room.last_seen[peer_id] = time.time()
-    _upsert_server_member(room_id, peer_id, account["username"], room.role_for(peer_id))
+    _upsert_server_member(room_id, peer_id, _account_name(account), room.role_for(peer_id))
     log.info(f"Peer {peer_id} ({username}) joined room {room_id}")
 
     # Tell the new peer who else is here
@@ -1867,9 +2049,15 @@ def health_root():
 
 @app.on_event("startup")
 def startup_event():
+    global _SUPABASE_SYNC_READY
     init_accounts_db()
+    restore_supabase_if_empty(ACCOUNTS_DB_FILE)
+    init_accounts_db()
+    ensure_bootstrap_platform_admin()
     load_db()
     ensure_template_rooms()
+    _SUPABASE_SYNC_READY = True
+    schedule_supabase_push(ACCOUNTS_DB_FILE)
 
 if __name__ == "__main__":
     import uvicorn
