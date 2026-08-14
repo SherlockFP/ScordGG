@@ -43,6 +43,7 @@ const EMOJIS = ["😀", "😃", "😄", "😁", "😆", "😅", "🤣", "😂", 
 /* ── Local state (Store-backed Proxy) ────────────────────── */
 var __rawState = {
     peerId: null,
+    authToken: "",
     username: "",
     avatarColor: "#7c3aed",
     _appliedTheme: null,
@@ -2115,6 +2116,7 @@ function migrateLegacyIdentityStore(username, password, peerId) {
 /** Hesap verisini (sunucudan gelen) state + localStorage'a uygula. */
 function applyAccountToState(acc) {
     state.peerId = acc.peer_id;
+    if (acc.token) state.authToken = acc.token;
     state.username = acc.username;
     state.avatarImage = acc.avatar_image || "";
     state.avatarColor = acc.avatar_color || state.avatarColor;
@@ -2176,6 +2178,7 @@ async function initSetup() {
         // Hızlı yol: yerelden hemen başla, arka planda hesabı doğrula/tazele.
         state.username = savedNick;
         state.peerId = savedId;
+        state.authToken = token;
         state.avatarColor = localStorage.getItem("scord_color") || state.avatarColor;
         state.avatarImage = localStorage.getItem("scord_avatar_image") || "";
         state.bio = localStorage.getItem("scord_bio") || "";
@@ -2185,17 +2188,27 @@ async function initSetup() {
         if (savedTheme) { state.theme = savedTheme; document.documentElement.setAttribute("data-theme", savedTheme); if (typeof applyTheme === "function") applyTheme(savedTheme); }
         if (typeof startApp === "function") {
             startApp();
-            fetch(`${API_BASE}/account/me?token=${encodeURIComponent(token)}`)
+            // Bir kullanıcı yeni giriş/kayıt yaparken önceki oturumun doğrulama
+            // isteği geç dönebilir. O eski yanıt yeni token'ı silmemeli veya
+            // yeni hesabın state'ini geri almamalı.
+            const verificationToken = token;
+            fetch(`${API_BASE}/account/me?token=${encodeURIComponent(verificationToken)}`)
                 .then(r => r.json())
                 .then(data => {
+                    if (localStorage.getItem("scord_token") !== verificationToken) return;
                     if (data && data.success) {
                         applyAccountToState(data);
                         const ua = document.getElementById("user-bar-avatar");
                         if (ua && typeof applyAvatarToElement === "function") applyAvatarToElement(ua, state.avatarColor, state.avatarImage, state.username);
                     } else {
-                        // Token artık geçersiz (örn. başka yerden çıkış yapıldı) — sadece
-                        // token'ı temizle, yeniden açılışta login ekranı gösterilir.
+                        // Token artık geçersiz (örn. başka yerden çıkış yapıldı).
+                        // Hızlı başlangıç form listener'larını bu dalda kurmadığı
+                        // için temiz bir açılış yapıp giriş ekranına dönüyoruz.
                         localStorage.removeItem("scord_token");
+                        localStorage.removeItem("scord_peer_id");
+                        localStorage.removeItem("scord_username");
+                        state.mesh?.disconnect();
+                        location.reload();
                     }
                 })
                 .catch(() => { });
@@ -2275,6 +2288,7 @@ async function initSetup() {
             }
             applyAccountToState(data);
             localStorage.setItem("scord_token", data.token);
+            state.authToken = data.token;
             migrateLegacyIdentityStore(nick, pass, data.peer_id);
             startApp();
         } catch (e) {
@@ -2573,9 +2587,11 @@ function showChatView(serverId, channelId) {
     // Update channel name in header
     const channelNameEl = document.getElementById("active-channel-name");
     if (channelNameEl) channelNameEl.textContent = channel.name;
+    const chatInput = document.getElementById("chat-input");
+    if (chatInput) chatInput.placeholder = `#${channel.name} kanalına mesaj gönder`;
 
     // Auto-focus chat input
-    setTimeout(() => document.getElementById("chat-input")?.focus(), 100);
+    setTimeout(() => chatInput?.focus(), 100);
 
     // If we were in voice and this is a voice channel, show voice view instead
     if (wasInVoice && channel.type === "voice") {
@@ -4098,7 +4114,12 @@ function connectToRoom(roomId) {
     });
 
     attachMeshBroadcastSync(state.mesh, roomId);
-    state.mesh.connect(state.username, state.avatarColor, state.avatarImage);
+    state.mesh.connect(
+        state.username,
+        state.avatarColor,
+        state.avatarImage,
+        state.authToken || localStorage.getItem("scord_token") || ""
+    );
     startRttPingTimer();
     startMeshHealthPoll();
     refreshConnectionBadge();
@@ -11512,6 +11533,13 @@ handleMusicCommand = window.handleMusicCommand = function (text) {
 renderMusicBotPanel = window.renderMusicBotPanel = function () {
     const voiceView = document.getElementById("voice-view");
     if (!voiceView || voiceView.classList.contains("hidden")) return;
+    const server = currentServer();
+    const session = server?.musicSession || state.musicBot?.serverSession || null;
+    const hasLocalPlayer = !!state.musicBot?.player;
+    if (!session && !hasLocalPlayer) {
+        document.getElementById("music-bot-panel")?.remove();
+        return;
+    }
     let panel = document.getElementById("music-bot-panel");
     if (!panel) {
         panel = document.createElement("div");
@@ -11522,12 +11550,9 @@ renderMusicBotPanel = window.renderMusicBotPanel = function () {
         else voiceView.appendChild(panel);
     }
     panel.className = "music-bot-panel music-bot-panel--compact";
-    const server = currentServer();
-    const session = server?.musicSession || state.musicBot?.serverSession || null;
     const inSameVoice = !!session && session.voiceChannelId === state.voiceChannelId;
     const canControl = session && isMusicController(session);
     const joined = !!state.voiceChannelId;
-    const hasLocalPlayer = !!state.musicBot?.player;
     const title = session?.videoId ? `YouTube: ${session.videoId}` : "Senkron dinleme";
     panel.innerHTML = `
       <div class="mbot-compact-left">
@@ -22346,28 +22371,6 @@ function requestNotificationPermission() {
 }
 window.requestNotificationPermission = requestNotificationPermission;
 
-// Add notification toggle to user bar
-setInterval(() => {
-    const userBar = document.querySelector(".user-bar-controls");
-    if (userBar && !document.getElementById("notif-toggle-btn")) {
-        const btn = document.createElement("button");
-        btn.id = "notif-toggle-btn";
-        btn.className = "user-ctrl-btn";
-        btn.innerHTML = "🔔";
-        btn.title = "Bildirim Ayarları";
-        btn.onclick = () => {
-            const current = localStorage.getItem("scord_notifications");
-            if (current === "true") {
-                localStorage.setItem("scord_notifications", "false");
-                toast("Bildirimler kapatıldı", "info");
-            } else {
-                requestNotificationPermission();
-            }
-        };
-        userBar.appendChild(btn);
-    }
-}, 2000);
-
 console.log("[App] New features loaded: Stats, Moderation, Roles, Notifications");
 
 /* ── PERFORMANCE OPTIMIZATION ───────────────────────────────────── */
@@ -23281,9 +23284,6 @@ console.log("[App] Final Override watchdog active");
         ".channel-item{padding:6px 12px;margin:2px 8px;border-radius:8px;transition:background 0.1s}.channel-item:hover{background:rgba(255,255,255,0.06)}.channel-item.active{background:rgba(99,102,241,0.25);color:#fff}",
         ".server-rail-item{border-radius:12px;transition:border-radius 0.1s,background 0.1s}.server-rail-item:hover{border-radius:16px;background:rgba(99,102,241,0.3)}",
         ".member-item{padding:6px 12px;margin:2px 8px;border-radius:8px;transition:background 0.1s}.member-item:hover{background:rgba(255,255,255,0.05)}",
-        "/* Voice card */",
-        ".voice-participant-card{border-radius:12px;padding:12px;transition:border-color 0.1s,box-shadow 0.1s;border:1px solid transparent;overflow:hidden;display:flex;flex-direction:column;align-items:center;justify-content:center}",
-        ".voice-participant-card:hover{border-color:rgba(255,255,255,0.08)}.voice-participant-card.speaking{border-color:rgba(99,102,241,0.4);box-shadow:0 0 20px rgba(99,102,241,0.1)}",
         "/* Voice thumb */",
         ".vpc-thumb{width:100%;height:100%;object-fit:contain;background:#000;border-radius:8px;flex-shrink:0}",
         "/* User bar */",
@@ -23294,11 +23294,6 @@ console.log("[App] Final Override watchdog active");
         ".chat-header{background:rgba(0,0,0,0.2);border-bottom:1px solid rgba(255,255,255,0.06);padding:12px 16px}",
         "#chat-input{border-radius:10px;border:1px solid rgba(255,255,255,0.08);background:rgba(0,0,0,0.3);padding:14px 18px;font-size:15px;transition:border-color 0.15s}",
         "#chat-input:focus{border-color:rgba(99,102,241,0.5);outline:none}",
-        ".msg-bubble{font-size:17px!important;line-height:1.7!important;padding:14px 20px!important;border-radius:16px!important}",
-        ".msg-row{padding:8px 16px!important;margin:3px 4px!important}",
-        ".msg-author{font-size:15px!important;font-weight:600!important}",
-        ".msg-text{font-size:16px!important;line-height:1.6!important}",
-        ".msg-time{font-size:12px!important}",
         "/* Buttons */",
         ".btn-primary{background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;padding:10px 20px;border-radius:8px;font-weight:600}.btn-primary:hover{transform:translateY(-1px);box-shadow:0 4px 16px rgba(99,102,241,0.4)}",
         ".btn-secondary{background:rgba(255,255,255,0.08);color:#dcddde;padding:10px 20px;border-radius:8px;font-weight:600}.btn-secondary:hover{background:rgba(255,255,255,0.12)}",
@@ -23674,26 +23669,10 @@ setTimeout(function() {
 console.log("[App] Phase Final: Emoji DOM scan, Screen FPS, Auto settings loaded");
 
 // ══════════════════════════════════════════════════════════
-// NICK CLICK → COPY ID + DM ID PASTE + DM EMOJI + MUSIC HIDE
+// DM ID PASTE + DM EMOJI + MUSIC HIDE
 // ══════════════════════════════════════════════════════════
-
-// 1. Click on user-bar-name → copy unique ID
-setTimeout(function hookNameClick() {
-    var nameEl = document.querySelector(".user-bar-name, #user-bar-name");
-    if (!nameEl) { setTimeout(hookNameClick, 500); return; }
-    if (nameEl.dataset.idHooked) return;
-    nameEl.dataset.idHooked = "1";
-    nameEl.style.cursor = "pointer";
-    nameEl.title = "Tıkla - Unique ID'ni kopyala";
-    nameEl.onclick = function(e) {
-        if (typeof copyUniqueId === "function") copyUniqueId();
-        else {
-            var d = "0000"; if (state.peerId) { var h = 0; for (var i = 0; i < state.peerId.length; i++) { h = ((h << 5) - h) + state.peerId.charCodeAt(i); h |= 0; } d = String(Math.abs(h) % 9999).padStart(4, "0"); }
-            var tag = (state.username || "?") + "#" + d;
-            if (navigator.clipboard?.writeText) { navigator.clipboard.writeText(tag).then(function() { toast("Kopyalandi: " + tag, "success"); }); }
-        }
-    };
-}, 500);
+// Unique ID kopyalama Kullanıcı Ayarları > Diğer'e taşındı. Sol alt isim,
+// durum seçimi ve profil hızlı menüsü için ayrılmıştır.
 
 // 2. Paste ID in DM input → auto-friend + open DM
 setTimeout(function() {
@@ -23946,24 +23925,6 @@ console.log("[App] Volume CSS + Block enforcement loaded");
 // ══════════════════════════════════════════════════════════
 
 
-// 2. Connect notification settings modal (Ctrl+Shift+I)
-(function() {
-    // Add notification settings button to settings sidebar
-    setTimeout(function() {
-        var userBar = document.querySelector(".user-bar, .user-bar-controls");
-        if (!userBar) return;
-        if (document.getElementById("scord-notif-btn")) return;
-        var btn = document.createElement("button");
-        btn.id = "scord-notif-btn";
-        btn.className = "user-ctrl-btn";
-        btn.innerHTML = "🔔";
-        btn.title = "Bildirim Ayarları";
-        btn.onclick = function() { if (typeof showNotificationSettingsModal === "function") showNotificationSettingsModal(); else toast("Yakında...", "info"); };
-        userBar.appendChild(btn);
-    }, 3000);
-})();
-
-
 // 4. Interval cleanup: clear known pollers after timeout
 setTimeout(function() {
     var killList = ["_profileCheck", "_safeChatInterval", "soundBtnInterval", "mbInterval"];
@@ -24145,7 +24106,7 @@ console.log("[App] Theme 12 + Profile sync + updateTheme fix loaded");
     s.id = "scord-theme-force";
     s.textContent = [
         "body,.app,.channel-sidebar,.chat-view,#chat-view,.home-view,#home-view,.voice-view,#voice-view{background:var(--bg-primary,#0f172a)!important}",
-        ".channel-item,.member-item,.msg-row,.voice-participant-card,.server-rail-item{background:var(--bg-surface,transparent)!important}",
+        ".channel-item,.member-item,.server-rail-item{background:var(--bg-surface,transparent)!important}",
         ".sidebar-header,.chat-header,.modal-content,.user-bar,.voice-status-bar{background:var(--bg-elevated,#1e293b)!important}",
         ".btn-primary{background:var(--accent,#6366f1)!important}",
         "*{color:var(--text-primary,inherit)}",
@@ -24666,25 +24627,129 @@ window._v25RotateInvite = async function (serverId) {
     }
 };
 
-// ── Avatar'a tıklayınca birleşik ayarlar (profil sekmesi) açılsın ──
-// startApp'i sarmalayıp avatar bağlamasını tek seferde ele geçiriyoruz;
-// sonsuz poll döngüsü yok, quick-upload binding'i ile yarış yok.
+// ── Sol alt kullanıcı alanı: profil + durum hızlı menüsü ──────────
+// startApp'i sarmalayıp bağlamayı tek seferde ele geçiriyoruz;
+// ayarlar ve avatar yükleme hesabım sayfasında kalır.
 const _v25OrigStartApp = window.startApp || startApp;
 window.startApp = function () {
     const r = _v25OrigStartApp.apply(this, arguments);
     setTimeout(() => {
         const av = document.getElementById("user-bar-avatar");
+        const name = document.getElementById("user-bar-name");
         if (av && !av.dataset.v25Bound) {
             av.dataset.v25Bound = "1";
             av.style.cursor = "pointer";
-            av.title = "Profil ve Ayarlar";
+            av.title = "Profil ve durum";
+            av.setAttribute("role", "button");
+            av.setAttribute("tabindex", "0");
+            av.setAttribute("aria-haspopup", "menu");
             av.onclick = e => {
                 e.stopPropagation();
-                if (typeof window.showUserSettingsModal === "function") window.showUserSettingsModal();
+                if (typeof window.openScordUserMenu === "function") window.openScordUserMenu(av);
+            };
+            av.onkeydown = e => {
+                if (e.key !== "Enter" && e.key !== " ") return;
+                e.preventDefault();
+                if (typeof window.openScordUserMenu === "function") window.openScordUserMenu(av);
+            };
+        }
+        if (name && !name.dataset.v25Bound) {
+            name.dataset.v25Bound = "1";
+            name.style.cursor = "pointer";
+            name.title = "Profil ve durum";
+            name.setAttribute("role", "button");
+            name.setAttribute("tabindex", "0");
+            name.onclick = e => {
+                e.stopPropagation();
+                if (typeof window.openScordUserMenu === "function") window.openScordUserMenu(av || name);
+            };
+            name.onkeydown = e => {
+                if (e.key !== "Enter" && e.key !== " ") return;
+                e.preventDefault();
+                if (typeof window.openScordUserMenu === "function") window.openScordUserMenu(av || name);
             };
         }
     }, 120);
     return r;
+};
+
+window.openScordUserMenu = function (anchor) {
+    const existing = document.getElementById("scord-user-menu");
+    if (existing) {
+        existing.remove();
+        anchor?.setAttribute("aria-expanded", "false");
+        return;
+    }
+    if (!anchor || typeof state === "undefined") return;
+
+    const labels = {
+        online: "Çevrimiçi",
+        idle: "Boşta",
+        dnd: "Rahatsız Etmeyin",
+        invisible: "Görünmez",
+    };
+    const safe = value => typeof escapeHtml === "function" ? escapeHtml(String(value || "")) : String(value || "");
+    const active = state.status || "online";
+    const menu = document.createElement("div");
+    menu.id = "scord-user-menu";
+    menu.className = "scord-user-menu";
+    menu.setAttribute("role", "menu");
+    menu.innerHTML = `
+      <div class="scord-user-menu-head">
+        <div class="scord-user-menu-avatar" style="background-color:${safe(state.avatarColor || "#7c3aed")}">${safe((state.username || "?").slice(0, 1).toUpperCase())}</div>
+        <div><strong>${safe(state.username || "Kullanıcı")}</strong><span>${safe(state.customStatus || labels[active])}</span></div>
+      </div>
+      <div class="scord-user-menu-statuses" role="group" aria-label="Durum seçimi">
+        ${Object.entries(labels).map(([key, label]) => `<button type="button" data-status="${key}" class="${key === active ? "active" : ""}" role="menuitemradio" aria-checked="${key === active}"><span class="status-dot status-dot--${key}"></span>${label}</button>`).join("")}
+      </div>
+      <div class="scord-user-menu-actions">
+        <button type="button" data-action="custom" role="menuitem">Durum mesajını düzenle</button>
+        <button type="button" data-action="profile" role="menuitem">Profilimi aç</button>
+        <button type="button" data-action="settings" role="menuitem">Kullanıcı ayarları</button>
+      </div>`;
+
+    const rect = anchor.getBoundingClientRect();
+    const menuWidth = 272;
+    menu.style.left = `${Math.max(12, Math.min(rect.left, window.innerWidth - menuWidth - 12))}px`;
+    menu.style.bottom = `${Math.max(12, window.innerHeight - rect.top + 10)}px`;
+    document.body.appendChild(menu);
+    anchor.setAttribute("aria-expanded", "true");
+
+    const close = () => {
+        menu.remove();
+        anchor.setAttribute("aria-expanded", "false");
+        document.removeEventListener("pointerdown", onPointerDown, true);
+        document.removeEventListener("keydown", onKeyDown, true);
+    };
+    const onPointerDown = event => {
+        if (!menu.contains(event.target) && event.target !== anchor) close();
+    };
+    const onKeyDown = event => {
+        if (event.key === "Escape") close();
+    };
+
+    menu.querySelectorAll("[data-status]").forEach(button => {
+        button.addEventListener("click", () => {
+            if (typeof setStatus === "function") setStatus(button.dataset.status, state.customStatus || "", state.statusEmoji || "");
+            close();
+        });
+    });
+    menu.querySelector('[data-action="custom"]')?.addEventListener("click", () => {
+        close();
+        if (typeof showStatusPicker === "function") showStatusPicker();
+    });
+    menu.querySelector('[data-action="profile"]')?.addEventListener("click", () => {
+        close();
+        if (typeof openUserProfile === "function") openUserProfile(state.peerId, state.username, state.avatarImage, state.avatarColor);
+    });
+    menu.querySelector('[data-action="settings"]')?.addEventListener("click", () => {
+        close();
+        if (typeof window.showUserSettingsModal === "function") window.showUserSettingsModal();
+    });
+    setTimeout(() => {
+        document.addEventListener("pointerdown", onPointerDown, true);
+        document.addEventListener("keydown", onKeyDown, true);
+    }, 0);
 };
 
 // Eski MEGA PATCH hookScreenBtn'in atadığı onclick'i nötralize et:

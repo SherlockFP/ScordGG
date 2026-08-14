@@ -54,18 +54,24 @@ class P2PMesh {
         this._reconnectTimer = null;
         this._dead = false;
         this.cameraStream = null;
+        this.authToken = "";
     }
 
     /* ── Connect to signaling server ─────────────────────────── */
-    connect(username, avatarColor, avatarImage = null) {
+    connect(username, avatarColor, avatarImage = null, authToken = "") {
         this._dead = false;
         this.username = username;
         this.avatarColor = avatarColor;
         this.avatarImage = avatarImage;
-        const token = localStorage.getItem("scord_token") || "";
+        this.authToken = authToken || this.authToken || localStorage.getItem("scord_token") || "";
+        const token = this.authToken;
         const url = `${this.signalingUrl}/${this.roomId}/${this.peerId}?token=${encodeURIComponent(token)}&username=${encodeURIComponent(username)}&color=${encodeURIComponent(avatarColor)}`;
         this._setStatus("connecting");
-        console.log("[P2P] Signaling URL:", url);
+        console.log("[P2P] Connecting signaling", {
+            roomId: this.roomId,
+            peerId: this.peerId,
+            tokenPresent: Boolean(token),
+        });
         this.ws = new WebSocket(url);
 
         this.ws.onopen = () => {
@@ -85,7 +91,7 @@ class P2PMesh {
             this._setStatus("disconnected");
             clearTimeout(this._reconnectTimer);
             this._reconnectTimer = setTimeout(
-                () => this.connect(this.username, this.avatarColor, this.avatarImage),
+                () => this.connect(this.username, this.avatarColor, this.avatarImage, this.authToken),
                 _scordTiming().P2P_WS_RECONNECT_MS ?? 3000
             );
         };

@@ -12,7 +12,7 @@ class FrontendContractTests(unittest.TestCase):
 
     def test_mesh_identity_and_accessibility_hooks_exist(self):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
-        self.assertIn('href="static/scord-shell.css"', html)
+        self.assertRegex(html, r'href="static/scord-shell\.css(?:\?[^\"]*)?"')
         self.assertIn('id="mesh-pulse"', html)
         self.assertIn('aria-label="Ana sayfa"', html)
         self.assertIn('role="group" aria-label="Hesap işlemi"', html)

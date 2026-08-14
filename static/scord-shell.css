@@ -638,3 +638,358 @@
     transition: none !important;
   }
 }
+
+/* ── Conversation & controls refinement ─────────────────────────── */
+/* The application has a few legacy runtime theme patches. These late,
+   scoped rules keep the dense SCORD shell readable without styling every
+   message row as a card. */
+#app .user-bar {
+  min-height: 64px !important;
+  height: 64px;
+  gap: 8px;
+  padding: 8px 10px !important;
+}
+
+#app .user-bar-avatar {
+  width: 38px !important;
+  height: 38px !important;
+  flex: 0 0 38px;
+  border-radius: 13px !important;
+}
+
+#app .user-bar .vsb-controls {
+  flex: 1 1 0 !important;
+  min-width: 0 !important;
+}
+
+#app .user-bar-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#app .user-bar-controls {
+  display: grid !important;
+  grid-template-columns: repeat(3, 40px);
+  flex: 0 0 auto !important;
+  gap: 4px !important;
+  margin-left: auto;
+}
+
+#app .user-bar .user-ctrl-btn {
+  width: 40px !important;
+  min-width: 40px !important;
+  height: 40px !important;
+  min-height: 40px !important;
+  padding: 0 !important;
+  border: 1px solid rgba(155, 176, 224, 0.10) !important;
+  border-radius: 12px !important;
+  background: rgba(255, 255, 255, 0.045) !important;
+}
+
+#app .user-bar .user-ctrl-btn:hover,
+#app .user-bar .user-ctrl-btn:focus-visible {
+  border-color: rgba(56, 189, 248, 0.38) !important;
+  background: rgba(56, 189, 248, 0.12) !important;
+}
+
+#app .voice-status-bar {
+  bottom: 64px !important;
+}
+
+/* Chat: messages only use their own compact bubbles. Full-width rows remain
+   transparent, which removes the oversized gray slabs from the timeline. */
+#app .messages-area {
+  padding: 16px clamp(16px, 2.4vw, 40px) 12px !important;
+}
+
+#app .message.msg-row {
+  margin: 0 !important;
+  padding: 3px 0 !important;
+  background: transparent !important;
+  border-radius: 0 !important;
+}
+
+#app .message.msg-row:hover {
+  background: transparent !important;
+}
+
+#app .msg-row-inner {
+  max-width: min(640px, 76%) !important;
+  gap: 9px;
+}
+
+#app .msg-bubble {
+  padding: 9px 12px 10px !important;
+  border-radius: 15px 15px 15px 6px !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16) !important;
+}
+
+#app .msg-bubble--other {
+  border-color: rgba(155, 176, 224, 0.18) !important;
+  background: linear-gradient(135deg, rgba(26, 37, 63, 0.76), rgba(14, 21, 38, 0.86)) !important;
+}
+
+#app .msg-bubble--self {
+  border-color: rgba(225, 239, 255, 0.20) !important;
+  background: linear-gradient(130deg, rgba(124, 92, 246, 0.88), rgba(45, 157, 234, 0.82)) !important;
+}
+
+#app .msg-row--self .msg-bubble {
+  border-radius: 15px 15px 6px 15px !important;
+}
+
+#app .msg-text {
+  font-size: 14px !important;
+  line-height: 1.5 !important;
+}
+
+#app .msg-author {
+  font-size: 13px !important;
+}
+
+#app .msg-time {
+  font-size: 11px !important;
+}
+
+#app .chat-input-area {
+  padding: 10px clamp(16px, 2.4vw, 40px) 14px !important;
+  background: linear-gradient(180deg, transparent, rgba(9, 13, 26, 0.82) 32%) !important;
+}
+
+#app #chat-input {
+  min-height: 42px;
+  padding: 10px 12px !important;
+  font-size: 15px !important;
+  line-height: 1.45 !important;
+}
+
+/* Voice: one participant becomes a focused, bounded stage instead of a
+   nearly empty full-screen card. */
+#app #voice-participants.voice-grid-1 {
+  grid-template-columns: minmax(300px, 560px) !important;
+  grid-template-rows: minmax(240px, 360px) !important;
+  place-content: center !important;
+  align-content: center !important;
+  padding: 28px !important;
+}
+
+#app #voice-participants.voice-grid-1 .voice-participant-card {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border: 1px solid rgba(155, 176, 224, 0.16) !important;
+  border-radius: 22px !important;
+  background:
+    radial-gradient(circle at 50% 38%, rgba(139, 92, 246, 0.14), transparent 38%),
+    linear-gradient(145deg, rgba(24, 34, 57, 0.86), rgba(13, 19, 34, 0.96)) !important;
+}
+
+#app .voice-ephemeral-chat.collapsed {
+  align-self: center;
+  width: auto;
+  margin: 0 0 10px !important;
+  border: 0 !important;
+  background: transparent !important;
+}
+
+#app .voice-ephemeral-chat.collapsed .voice-chat-head {
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+}
+
+#app .voice-ephemeral-chat.collapsed .voice-chat-title-wrap {
+  display: none;
+}
+
+#app .voice-ephemeral-chat.collapsed .voice-chat-toggle {
+  min-width: 118px;
+  height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--scord-line) !important;
+  border-radius: 999px !important;
+  background: rgba(20, 28, 50, 0.72) !important;
+}
+
+#app .voice-ephemeral-chat:not(.collapsed) {
+  align-self: center;
+  width: min(620px, calc(100% - 40px));
+  max-height: 240px;
+  margin: 0 0 12px !important;
+  border-radius: 16px !important;
+}
+
+/* User menu: keeps presence controls one click away while keeping the tray
+   uncluttered. */
+.scord-user-menu {
+  position: fixed;
+  z-index: 1300;
+  width: 272px;
+  padding: 8px;
+  border: 1px solid rgba(155, 176, 224, 0.18);
+  border-radius: 16px;
+  background: rgba(13, 19, 34, 0.97);
+  box-shadow: 0 20px 56px rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(20px);
+}
+
+.scord-user-menu-head {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 8px 8px 12px;
+}
+
+.scord-user-menu-avatar {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 12px;
+  color: white;
+  font-weight: 800;
+}
+
+.scord-user-menu-head strong,
+.scord-user-menu-head span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scord-user-menu-head strong { color: var(--scord-text); font-size: 14px; }
+.scord-user-menu-head span { color: var(--scord-muted); font-size: 12px; margin-top: 2px; }
+
+.scord-user-menu-statuses,
+.scord-user-menu-actions {
+  display: grid;
+  gap: 2px;
+  padding: 5px 0;
+  border-top: 1px solid rgba(155, 176, 224, 0.11);
+}
+
+.scord-user-menu button {
+  display: flex;
+  width: 100%;
+  min-height: 36px;
+  align-items: center;
+  gap: 9px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 10px;
+  color: var(--scord-text);
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.scord-user-menu button:hover,
+.scord-user-menu button.active {
+  background: rgba(56, 189, 248, 0.12);
+}
+
+.status-dot--online { background: #34d399; }
+.status-dot--idle { background: #fbbf24; }
+.status-dot--dnd { background: #fb7185; }
+.status-dot--invisible { background: #7b879f; }
+
+#modal.modal--wide-settings .modal-footer {
+  display: none;
+}
+
+@media (min-width: 861px) and (min-height: 700px) {
+  #modal.modal--wide-settings {
+    width: min(980px, 94vw) !important;
+  }
+
+  #modal.modal--wide-settings .modal-body {
+    max-height: none !important;
+    overflow: visible !important;
+    padding: 0 !important;
+  }
+
+  #modal.modal--wide-settings .scord-settings-shell {
+    min-height: 590px !important;
+    max-height: 590px !important;
+    margin: 0 !important;
+  }
+
+  #modal.modal--wide-settings .scord-settings-content {
+    overflow: hidden !important;
+    padding: 22px 24px !important;
+  }
+
+  #modal.modal--wide-settings #set-account:not(.hidden) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 18px;
+    row-gap: 12px;
+    align-content: start;
+  }
+
+  #modal.modal--wide-settings #set-account > h3,
+  #modal.modal--wide-settings #set-account > .settings-account-card,
+  #modal.modal--wide-settings #set-account > .settings-hint {
+    grid-column: 1 / -1;
+  }
+
+  #modal.modal--wide-settings #set-account .settings-account-card {
+    padding: 12px 14px;
+  }
+
+  #modal.modal--wide-settings #set-account .settings-account-avatar {
+    width: 54px;
+    height: 54px;
+    font-size: 22px;
+  }
+
+  #modal.modal--wide-settings #set-account .settings-hint {
+    display: none;
+  }
+
+  #modal.modal--wide-settings .scord-settings-page {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 18px;
+    gap: 12px;
+  }
+
+  #modal.modal--wide-settings .scord-settings-page h3 {
+    grid-column: 1 / -1;
+    margin-bottom: 2px;
+  }
+
+  #modal.modal--wide-settings .scord-settings-page > .settings-unique-id,
+  #modal.modal--wide-settings .scord-settings-page > .btn-secondary {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 860px), (max-height: 699px) {
+  #modal.modal--wide-settings .modal-footer {
+    display: none;
+  }
+
+  #modal.modal--wide-settings .scord-settings-shell,
+  #modal.modal--wide-settings .scord-settings-content {
+    overflow: auto;
+  }
+}
+
+@media (max-width: 768px) {
+  #app .user-bar {
+    height: auto;
+    min-height: 60px !important;
+  }
+
+  #app #voice-participants.voice-grid-1 {
+    grid-template-columns: minmax(0, 1fr) !important;
+    grid-template-rows: minmax(210px, 46vh) !important;
+    padding: 16px !important;
+  }
+
+  #app .msg-row-inner {
+    max-width: min(640px, 92%) !important;
+  }
+}
