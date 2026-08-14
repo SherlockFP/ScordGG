@@ -1078,6 +1078,200 @@
   background: linear-gradient(135deg, rgba(96, 58, 190, 0.40), rgba(31, 52, 91, 0.78)) !important;
 }
 
+/* ── Friends hub + theme picker ─────────────────────────────────────── */
+.scord-friends-modal {
+  width: min(620px, 100%);
+  color: #dfe8fb;
+}
+.scord-friends-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 4px 2px 18px;
+}
+.scord-eyebrow {
+  display: block;
+  margin-bottom: 7px;
+  color: #8494b6;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .16em;
+}
+.scord-friends-hero h3 {
+  margin: 0;
+  color: #f5f7ff;
+  font-size: 24px;
+  letter-spacing: -.02em;
+}
+.scord-friends-hero p {
+  margin: 6px 0 0;
+  color: #8e9dbc;
+  font-size: 13px;
+}
+.scord-friends-orbit {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  flex: 0 0 48px;
+  place-items: center;
+  border: 1px solid rgba(139, 167, 226, .22);
+  border-radius: 16px;
+  background: linear-gradient(145deg, rgba(139, 92, 246, .32), rgba(56, 189, 248, .12));
+  color: #d8ceff;
+  font-size: 22px;
+  box-shadow: 0 12px 28px rgba(60, 43, 150, .2);
+}
+.scord-friends-tabs {
+  display: flex;
+  gap: 8px;
+  padding: 5px;
+  border: 1px solid rgba(155, 176, 224, .12);
+  border-radius: 14px;
+  background: rgba(8, 13, 27, .42);
+}
+.scord-friends-tab {
+  min-height: 38px;
+  flex: 1;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: #8f9ebb;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  transition: background 160ms ease, color 160ms ease, border-color 160ms ease;
+}
+.scord-friends-tab span {
+  display: inline-grid;
+  min-width: 20px;
+  height: 20px;
+  margin-left: 5px;
+  padding: 0 5px;
+  place-items: center;
+  border-radius: 999px;
+  background: rgba(139, 92, 246, .22);
+  color: #c9bcff;
+  font-size: 11px;
+}
+.scord-friends-tab.is-active,
+.scord-friends-tab:hover {
+  border-color: rgba(139, 167, 226, .18);
+  background: linear-gradient(90deg, rgba(139, 92, 246, .2), rgba(56, 189, 248, .08));
+  color: #f4f6ff;
+}
+.scord-friends-pane {
+  display: none;
+  padding-top: 18px;
+}
+.scord-friends-pane.is-visible { display: block; }
+.scord-friends-pane > label {
+  display: block;
+  margin-bottom: 8px;
+  color: #aebbd3;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.scord-friend-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 50px;
+  padding: 5px 6px 5px 14px;
+  border: 1px solid rgba(139, 167, 226, .22);
+  border-radius: 14px;
+  background: rgba(8, 15, 31, .62);
+  box-shadow: inset 0 1px rgba(255, 255, 255, .035), 0 12px 30px rgba(0, 0, 0, .12);
+}
+.scord-friend-search > span {
+  color: #9b8cff;
+  font-size: 20px;
+  font-weight: 700;
+}
+.scord-friend-search input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #eef3ff;
+  font-size: 14px;
+}
+.scord-friend-search input::placeholder { color: #657493; }
+.scord-friend-search button {
+  min-height: 40px;
+  padding: 0 15px;
+  border: 0;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #8b5cf6, #5e77ed);
+  color: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  box-shadow: 0 8px 20px rgba(99, 74, 220, .25);
+}
+.scord-friend-search button:hover { filter: brightness(1.1); transform: translateY(-1px); }
+.scord-friend-help { margin: 9px 0 14px; color: #71809d; font-size: 12px; }
+.scord-friend-safety {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 12px;
+  border: 1px solid rgba(52, 211, 153, .13);
+  border-radius: 11px;
+  background: rgba(52, 211, 153, .06);
+  color: #8ebba9;
+  font-size: 11px;
+}
+.scord-friend-safety span:first-child { color: #34d399; font-size: 9px; }
+.scord-friends-section-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; color: #aebbd3; font-size: 12px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+.scord-friends-section-title strong { color: #b9a9ff; font-size: 13px; }
+.scord-friend-request-list { display: grid; gap: 7px; max-height: 280px; overflow-y: auto; padding-right: 3px; scrollbar-width: thin; scrollbar-color: rgba(139, 167, 226, .38) transparent; }
+.scord-friend-request-card { display: grid; grid-template-columns: 38px minmax(0,1fr) auto; align-items: center; gap: 10px; padding: 9px; border: 1px solid rgba(155, 176, 224, .1); border-radius: 13px; background: rgba(22, 32, 57, .55); }
+.scord-friend-request-card:hover { border-color: rgba(139, 167, 226, .22); background: rgba(49, 57, 99, .42); }
+.scord-friend-request-avatar { display: grid; width: 36px; height: 36px; place-items: center; border-radius: 50%; background: linear-gradient(135deg, #8b5cf6, #2f83c8); color: #fff; font-size: 12px; font-weight: 800; }
+.scord-friend-request-copy { display: grid; min-width: 0; gap: 3px; }
+.scord-friend-request-copy strong { overflow: hidden; color: #e9efff; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.scord-friend-request-copy span { color: #7f8eac; font-size: 11px; }
+.scord-friend-request-actions { display: flex; gap: 5px; }
+.scord-friend-action { min-height: 30px; padding: 0 9px; border: 1px solid rgba(155, 176, 224, .16); border-radius: 8px; background: rgba(6, 12, 26, .4); color: #aebbd3; cursor: pointer; font-size: 11px; font-weight: 700; }
+.scord-friend-action--accept { border-color: rgba(52, 211, 153, .22); background: rgba(52, 211, 153, .12); color: #8eebc5; }
+.scord-friends-empty { display: grid; justify-items: center; gap: 5px; padding: 30px 12px; color: #7f8eac; text-align: center; }
+.scord-friends-empty strong { color: #dbe5fa; font-size: 13px; }
+.scord-friends-empty span:last-child { font-size: 11px; }
+.scord-friends-empty-icon { color: #9b8cff; font-size: 24px; }
+
+.theme-settings-modal { color: #dfe8fb; }
+.theme-settings-modal .theme-header { padding-bottom: 12px; }
+.theme-settings-modal .theme-title { color: #f4f6ff; font-size: 20px; font-weight: 800; }
+.theme-settings-modal .theme-subtitle { margin-top: 5px; color: #8494b6; font-size: 12px; }
+.theme-settings-modal .theme-tabs { display: flex; gap: 7px; margin: 6px 0 15px; padding: 4px; border: 1px solid rgba(155,176,224,.12); border-radius: 12px; background: rgba(8,13,27,.45); }
+.theme-settings-modal .theme-tab { min-height: 34px; flex: 1; border: 1px solid transparent; border-radius: 8px; background: transparent; color: #8796b3; cursor: pointer; font-size: 12px; font-weight: 700; }
+.theme-settings-modal .theme-tab.active, .theme-settings-modal .theme-tab:hover { border-color: rgba(139,167,226,.18); background: rgba(139,92,246,.16); color: #f2f5ff; }
+.theme-settings-modal .theme-presets-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 9px; max-height: 420px; overflow-y: auto; padding: 2px 3px 4px 0; scrollbar-width: thin; scrollbar-color: rgba(139,167,226,.38) transparent; }
+.theme-settings-modal .theme-preset { padding: 11px; border: 1px solid rgba(155,176,224,.1); border-radius: 13px; background: rgba(18,28,49,.56); cursor: pointer; }
+.theme-settings-modal .theme-preset:hover, .theme-settings-modal .theme-preset.active { border-color: rgba(139,167,226,.34); background: linear-gradient(135deg, rgba(139,92,246,.17), rgba(56,189,248,.06)); }
+.theme-settings-modal .theme-preset-header { display: flex; align-items: center; gap: 8px; }
+.theme-settings-modal .theme-preset-name { color: #e9efff; font-size: 12px; font-weight: 800; }
+.theme-settings-modal .theme-preset-icon { display: grid; width: 26px; height: 26px; place-items: center; border-radius: 8px; background: rgba(139,92,246,.17); }
+.theme-settings-modal .theme-preset-badge { margin-left: auto; color: #8fdbff; font-size: 12px; }
+.theme-settings-modal .theme-preset-colors { display: flex; gap: 4px; margin-top: 10px; }
+.theme-settings-modal .color-swatch { width: 17px; height: 17px; border: 1px solid rgba(255,255,255,.13); border-radius: 5px; }
+
+@media (max-width: 768px) {
+  #modal .scord-friends-modal { width: 100%; }
+  .scord-friends-hero h3 { font-size: 20px; }
+  .scord-friend-search { align-items: stretch; flex-wrap: wrap; padding: 8px; }
+  .scord-friend-search input { min-width: calc(100% - 42px); }
+  .scord-friend-search button { width: 100%; }
+  .scord-friend-request-card { grid-template-columns: 34px minmax(0,1fr); }
+  .scord-friend-request-actions { grid-column: 1 / -1; }
+  .scord-friend-action { flex: 1; min-height: 36px; }
+  .theme-settings-modal .theme-presets-grid { grid-template-columns: 1fr; max-height: 48vh; }
+}
+
 /* ── Members panel: compact translucent directory ──────────────── */
 /* Keep the header fixed and make the list the only scroll owner. The old
    stack gave both .members-panel and #members-list their own overflow. */
@@ -1267,4 +1461,87 @@
     border-radius: 18px;
     box-shadow: 0 24px 70px rgba(0, 0, 0, 0.42);
   }
+}
+
+/* Friends directory concept surface */
+#app .scord-friends-directory {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  color: #e9efff;
+  background:
+    radial-gradient(circle at 78% 0%, rgba(93, 78, 190, .18), transparent 34%),
+    linear-gradient(145deg, rgba(14, 22, 41, .96), rgba(7, 12, 25, .98));
+}
+#app .scord-friends-directory__topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 28px clamp(24px, 4vw, 56px) 22px;
+  border-bottom: 1px solid rgba(155,176,224,.12);
+  background: linear-gradient(180deg, rgba(32, 44, 71, .48), rgba(15, 23, 43, .18));
+  backdrop-filter: blur(20px) saturate(140%);
+}
+#app .scord-friends-directory__topbar h1 { margin: 5px 0 4px; color: #f4f7ff; font-size: clamp(24px, 2.4vw, 32px); letter-spacing: -.03em; }
+#app .scord-friends-directory__topbar p { margin: 0; color: #91a0bf; font-size: 13px; }
+#app .scord-friends-directory__hash { color: #86a8ff; }
+#app .scord-friends-directory__add { min-height: 42px; padding: 0 18px; border: 1px solid rgba(125, 211, 252, .26); border-radius: 12px; background: linear-gradient(135deg, #6d5bf2, #4f8cff); box-shadow: 0 12px 30px rgba(79, 140, 255, .2); color: white; cursor: pointer; font-weight: 800; }
+#app .scord-friends-directory__add:hover { transform: translateY(-1px); filter: brightness(1.08); }
+#app .scord-friends-directory__layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(250px, 29%); min-height: 0; flex: 1; }
+#app .scord-friends-directory__main { min-width: 0; overflow: auto; padding: 26px clamp(24px, 4vw, 56px) 40px; scrollbar-width: thin; scrollbar-color: rgba(139,167,226,.4) transparent; }
+#app .scord-friends-directory__toolbar { display: flex; align-items: center; gap: 14px; }
+#app .scord-friends-directory__search { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; padding: 0 14px; border: 1px solid rgba(155,176,224,.14); border-radius: 12px; background: rgba(8, 14, 29, .5); color: #8495b7; }
+#app .scord-friends-directory__search input { width: 100%; min-height: 42px; border: 0; outline: 0; background: transparent; color: #eaf0ff; font: inherit; }
+#app .scord-friends-directory__search input::placeholder { color: #7483a1; }
+#app .scord-friends-directory__count { color: #8696b4; font-size: 12px; white-space: nowrap; }
+#app .scord-friends-directory__tabs { display: flex; gap: 6px; margin: 20px 0 22px; padding: 4px; border: 1px solid rgba(155,176,224,.1); border-radius: 12px; background: rgba(7, 12, 25, .42); }
+#app .scord-friends-directory__tabs button { min-height: 34px; padding: 0 15px; border: 0; border-radius: 8px; background: transparent; color: #8493b1; cursor: pointer; font: inherit; font-size: 12px; font-weight: 750; }
+#app .scord-friends-directory__tabs button.is-active, #app .scord-friends-directory__tabs button:hover { background: rgba(126, 102, 255, .2); color: #edf2ff; }
+#app .scord-friends-directory__tabs b { display: inline-grid; min-width: 18px; min-height: 18px; margin-left: 4px; place-items: center; border-radius: 99px; background: rgba(244,114,182,.2); color: #ffb3d3; font-size: 10px; }
+#app .scord-friends-directory__section-title { display: flex; align-items: center; gap: 12px; margin: 0 0 8px; color: #7787a7; font-size: 10px; font-weight: 850; letter-spacing: .14em; }
+#app .scord-directory-line { height: 1px; flex: 1; background: rgba(155,176,224,.1); }
+#app .scord-friends-directory__list { display: grid; gap: 4px; }
+#app .scord-friends-directory__row { display: flex; align-items: center; gap: 12px; min-height: 64px; padding: 8px 12px; border: 1px solid transparent; border-radius: 13px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+#app .scord-friends-directory__row:hover { border-color: rgba(139,167,226,.15); background: linear-gradient(100deg, rgba(139,92,246,.13), rgba(56,189,248,.06)); }
+#app .scord-directory-avatar { display: inline-grid; width: 38px; height: 38px; flex: 0 0 38px; place-items: center; border: 1px solid rgba(255,255,255,.16); border-radius: 50%; background: linear-gradient(135deg, #7c3aed, #4f46e5); color: white; font-size: 12px; font-weight: 850; box-shadow: 0 7px 20px rgba(0,0,0,.22); overflow: hidden; }
+#app .scord-directory-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 3px; }
+#app .scord-directory-copy strong, #app .scord-active-card strong { overflow: hidden; color: #edf2ff; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+#app .scord-directory-copy small, #app .scord-active-card small { color: #8291ad; font-size: 12px; }
+#app .scord-directory-status { width: 9px; height: 9px; border: 2px solid #10182c; border-radius: 50%; background: #596780; }
+#app .scord-directory-status.online { background: #38d996; box-shadow: 0 0 0 3px rgba(56,217,150,.08); }
+#app .scord-directory-chat { display: grid; width: 32px; height: 32px; place-items: center; border-radius: 9px; background: rgba(139,167,226,.08); color: #93a9d4; opacity: 0; transition: opacity .15s ease; }
+#app .scord-friends-directory__row:hover .scord-directory-chat { opacity: 1; }
+#app .scord-friends-directory__empty { display: flex; align-items: center; gap: 8px; min-height: 150px; flex-direction: column; justify-content: center; color: #7e8cac; text-align: center; }
+#app .scord-friends-directory__empty strong { color: #e7edff; font-size: 14px; }
+#app .scord-friends-directory__empty span { max-width: 280px; font-size: 12px; line-height: 1.5; }
+#app .scord-friends-directory__aside { min-width: 0; overflow: auto; padding: 28px 22px; border-left: 1px solid rgba(155,176,224,.12); background: linear-gradient(180deg, rgba(20,29,49,.58), rgba(7,12,25,.72)); backdrop-filter: blur(16px); }
+#app .scord-friends-directory__aside-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; color: #ecf1ff; font-size: 15px; font-weight: 800; }
+#app .scord-friends-directory__aside-title span { display: inline-grid; min-width: 24px; min-height: 24px; place-items: center; border-radius: 8px; background: rgba(56,189,248,.1); color: #8bdcff; font-size: 11px; }
+#app .scord-friends-directory__active-list { display: grid; gap: 8px; }
+#app .scord-active-card { display: flex; align-items: center; gap: 10px; padding: 10px; border: 1px solid rgba(155,176,224,.1); border-radius: 12px; background: rgba(14,22,40,.48); }
+#app .scord-active-card .scord-directory-avatar { width: 32px; height: 32px; flex-basis: 32px; font-size: 10px; }
+#app .scord-active-card > span:nth-child(2) { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 2px; }
+#app .scord-active-card i { width: 7px; height: 7px; border-radius: 50%; background: #38d996; box-shadow: 0 0 0 4px rgba(56,217,150,.08); }
+#app .scord-friends-directory__empty--aside { min-height: 170px; padding: 18px; border: 1px dashed rgba(155,176,224,.14); border-radius: 14px; }
+#app .scord-directory-pulse { width: 10px; height: 10px; border-radius: 50%; background: #38d996; box-shadow: 0 0 0 8px rgba(56,217,150,.08); }
+#app .scord-friends-directory__tip { display: flex; gap: 10px; margin-top: 20px; padding: 13px; border: 1px solid rgba(139,92,246,.18); border-radius: 13px; background: linear-gradient(135deg, rgba(139,92,246,.12), rgba(56,189,248,.05)); }
+#app .scord-friends-directory__tip > span { color: #9d8cff; }
+#app .scord-friends-directory__tip div { display: flex; gap: 3px; flex-direction: column; }
+#app .scord-friends-directory__tip strong { color: #d9d2ff; font-size: 12px; }
+#app .scord-friends-directory__tip small { color: #8b9ab7; font-size: 11px; line-height: 1.45; }
+@media (max-width: 900px) {
+  #app .scord-friends-directory__layout { grid-template-columns: 1fr; }
+  #app .scord-friends-directory__aside { display: none; }
+}
+@media (max-width: 560px) {
+  #app .scord-friends-directory__topbar { align-items: flex-start; flex-direction: column; padding: 20px 16px; }
+  #app .scord-friends-directory__add { width: 100%; }
+  #app .scord-friends-directory__main { padding: 18px 14px 28px; }
+  #app .scord-friends-directory__toolbar { align-items: stretch; flex-direction: column; }
+  #app .scord-friends-directory__count { align-self: flex-end; }
 }

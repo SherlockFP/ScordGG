@@ -2532,6 +2532,7 @@ function showHomeView() {
     document.querySelectorAll(".rail-icon").forEach(el => el.classList.remove("active"));
     document.getElementById("home-btn").classList.add("active");
     document.getElementById("sidebar-server-name").textContent = "SCORD";
+    if (typeof showScordFriendsDirectory === "function") showScordFriendsDirectory();
 }
 
 // Message search state
@@ -7424,8 +7425,7 @@ function renderHomeSidebar() {
     homeItem.innerHTML = `<span class="ch-icon">@</span><span class="ch-name">Arkadaslar</span>`;
     homeItem.onclick = () => {
         hideDMMainView(true);
-        document.getElementById("home-view")?.classList.remove("hidden");
-        document.querySelector("#home-view .home-hero")?.classList.remove("hidden");
+        if (typeof showScordFriendsDirectory === "function") showScordFriendsDirectory();
     };
     list.appendChild(homeItem);
 
@@ -23007,6 +23007,88 @@ function updateAnimations(enabled) {
     document.documentElement.setAttribute("data-animations", enabled ? "on" : "off");
     if (enabled) { document.body.classList.remove('no-animations'); } else { document.body.classList.add('no-animations'); }
     toast("Animasyonlar: " + (enabled ? "etkin" : "devre disi"), "success");
+}
+
+function showAddFriendModal() {
+    var pending = Array.isArray(state._pendingRequests) ? state._pendingRequests : [];
+    var pendingCards = pending.length ? pending.map(function (req) {
+        var safeName = escapeHtml(req.username || "Kullanici");
+        var safeId = String(req.from || "").replace(/[^a-zA-Z0-9_-]/g, "");
+        return '<article class="scord-friend-request-card"><div class="scord-friend-request-avatar">' + escapeHtml(initials(req.username || "?")) + '</div><div class="scord-friend-request-copy"><strong>' + safeName + '</strong><span>Arkadaslik istegi gonderdi</span></div><div class="scord-friend-request-actions"><button class="scord-friend-action scord-friend-action--accept" onclick="window._acceptFriendRequest(\'' + safeId + '\',\'' + safeName.replace(/'/g, "\\'") + '\',\'' + escapeHtml(req.tag || "") + '\');showAddFriendModal()">Kabul</button><button class="scord-friend-action" onclick="window._rejectFriendRequest(\'' + safeId + '\');showAddFriendModal()">Reddet</button></div></article>';
+    }).join("") : '<div class="scord-friends-empty"><span class="scord-friends-empty-icon">✦</span><strong>Bekleyen istek yok</strong><span>Yeni bir istek geldiginde burada gorunecek.</span></div>';
+    var body = '<div class="scord-friends-modal" role="region" aria-label="Arkadaslar">' +
+        '<div class="scord-friends-hero"><div><span class="scord-eyebrow">SOCIAL DIRECTORY</span><h3>Arkadaslar</h3><p>Yeni bir baglanti kur, birlikte konusmaya devam et.</p></div><div class="scord-friends-orbit">✦</div></div>' +
+        '<div class="scord-friends-tabs" role="tablist"><button class="scord-friends-tab is-active" type="button" onclick="window._scordFriendTab(\'add\',this)">Arkadas Ekle</button><button class="scord-friends-tab" type="button" onclick="window._scordFriendTab(\'pending\',this)">Bekleyen Istekler <span>' + pending.length + '</span></button></div>' +
+        '<section id="scord-friends-add" class="scord-friends-pane is-visible"><label for="friend-tag-input">Kullanici ID</label><div class="scord-friend-search"><span aria-hidden="true">@</span><input type="text" id="friend-tag-input" placeholder="Kullanici#1234" autocomplete="off" onkeydown="if(event.key===\'Enter\')addFriendByTag(this.value)"><button type="button" onclick="addFriendByTag(document.getElementById(\'friend-tag-input\').value)">Arkadas Ekle</button></div><p class="scord-friend-help">Kullanici adini ve 4 haneli ID etiketini birlikte gir.</p><div class="scord-friend-safety"><span>●</span><span>Istekler yalnizca mevcut baglanti uzerinden gonderilir.</span></div></section>' +
+        '<section id="scord-friends-pending" class="scord-friends-pane"><div class="scord-friends-section-title"><span>Bekleyen Istekler</span><strong>' + pending.length + '</strong></div><div class="scord-friend-request-list">' + pendingCards + '</div></section>' +
+        '</div>';
+    showModal("Arkadaslar", body, '<button class="btn-secondary" onclick="hideModal()">Kapat</button>');
+    window._scordFriendTab = function (tab, button) {
+        document.querySelectorAll(".scord-friends-tab").forEach(function (el) { el.classList.toggle("is-active", el === button); });
+        document.getElementById("scord-friends-add")?.classList.toggle("is-visible", tab === "add");
+        document.getElementById("scord-friends-pending")?.classList.toggle("is-visible", tab === "pending");
+    };
+}
+
+// Friends directory: the home surface follows the same three-column rhythm as
+// the visual concept, while keeping all rows native HTML for fast loading.
+function showScordFriendsDirectory() {
+    var home = document.getElementById("home-view");
+    if (!home) return;
+    home.classList.remove("hidden", "home-dm-active");
+    document.getElementById("chat-view")?.classList.add("hidden");
+    document.getElementById("voice-view")?.classList.add("hidden");
+    document.querySelector("#home-view .home-hero")?.classList.add("hidden");
+    document.getElementById("dm-main-view")?.classList.add("hidden");
+    document.getElementById("sidebar-server-name").textContent = "Arkadaşlar";
+    document.querySelectorAll(".rail-icon").forEach(function (el) { el.classList.remove("active"); });
+    document.getElementById("home-btn")?.classList.add("active");
+
+    var view = document.getElementById("scord-friends-directory");
+    if (!view) {
+        view = document.createElement("section");
+        view.id = "scord-friends-directory";
+        view.className = "scord-friends-directory";
+        home.appendChild(view);
+    }
+
+    var friends = Array.isArray(state.friends) ? state.friends : [];
+    var pending = Array.isArray(state._pendingRequests) ? state._pendingRequests : [];
+    var query = "";
+    var tabs = ["Çevrimiçi", "Tümü", "Bekleyen"];
+
+    function displayName(row) { return row?.name || row?.username || "Kullanıcı"; }
+    function render() {
+        var q = query.trim().toLowerCase();
+        var list = friends.filter(function (f) { return !q || displayName(f).toLowerCase().includes(q); });
+        var peerRows = Object.keys(state.peers || {}).map(function (id) {
+            var p = state.peers[id] || {};
+            return { peerId: id, username: p.username || p.name, name: p.username || p.name, avatarColor: p.avatarColor, avatarImage: p.avatarImage, status: state.peerStatuses?.[id]?.status || "offline" };
+        });
+        var online = peerRows.filter(function (p) { return p.status && p.status !== "offline"; });
+        view.innerHTML = '<div class="scord-friends-directory__topbar">' +
+            '<div><span class="scord-eyebrow">SOCIAL SPACE</span><h1><span class="scord-friends-directory__hash">✦</span> Arkadaşlar</h1><p>Bağlantılarını keşfet, sohbeti tek yerde tut.</p></div>' +
+            '<button type="button" class="scord-friends-directory__add" id="scord-directory-add">＋ Arkadaş Ekle</button></div>' +
+            '<div class="scord-friends-directory__layout"><main class="scord-friends-directory__main">' +
+            '<div class="scord-friends-directory__toolbar"><label class="scord-friends-directory__search"><span>⌕</span><input id="scord-directory-search" type="search" placeholder="Arkadaşlarda ara" value="' + escapeHtml(query) + '"></label><span class="scord-friends-directory__count">' + list.length + ' kişi</span></div>' +
+            '<nav class="scord-friends-directory__tabs" aria-label="Arkadaş filtreleri">' + tabs.map(function (tab, i) { return '<button type="button" class="' + (i === 0 ? "is-active" : "") + '">' + tab + (tab === "Bekleyen" && pending.length ? ' <b>' + pending.length + '</b>' : '') + '</button>'; }).join("") + '</nav>' +
+            '<section class="scord-friends-directory__section"><div class="scord-friends-directory__section-title"><span>ÇEVRİMİÇİ — ' + online.length + '</span><span class="scord-directory-line"></span></div><div id="scord-directory-friend-list" class="scord-friends-directory__list">' +
+            (list.length ? list.map(function (f) { return '<button type="button" class="scord-friends-directory__row" data-peer-id="' + escapeHtml(f.peerId || "") + '"><span class="scord-directory-avatar" data-name="' + escapeHtml(displayName(f)) + '" data-color="' + escapeHtml(f.avatarColor || "#5865f2") + '">' + escapeHtml(initials(displayName(f))) + '</span><span class="scord-directory-copy"><strong>' + escapeHtml(displayName(f)) + '</strong><small>' + escapeHtml(f.note || "Sohbete hazır") + '</small></span><span class="scord-directory-status online"></span><span class="scord-directory-chat">💬</span></button>'; }).join("") : '<div class="scord-friends-directory__empty"><strong>Henüz arkadaş yok</strong><span>İlk bağlantını kurmak için Arkadaş Ekle’ye dokun.</span></div>') +
+            '</div></section></main><aside class="scord-friends-directory__aside"><div class="scord-friends-directory__aside-title">Şimdi aktif <span>' + online.length + '</span></div><div class="scord-friends-directory__active-list">' +
+            (online.length ? online.slice(0, 8).map(function (p) { return '<div class="scord-active-card"><span class="scord-directory-avatar" data-name="' + escapeHtml(displayName(p)) + '" data-color="' + escapeHtml(p.avatarColor || "#5865f2") + '">' + escapeHtml(initials(displayName(p))) + '</span><span><strong>' + escapeHtml(displayName(p)) + '</strong><small>SCORD’da aktif</small></span><i></i></div>'; }).join("") : '<div class="scord-friends-directory__empty scord-friends-directory__empty--aside"><span class="scord-directory-pulse"></span><strong>Henüz kimse yok</strong><span>Arkadaşların çevrimiçi olduğunda burada görünecek.</span></div>') +
+            '</div><div class="scord-friends-directory__tip"><span>✦</span><div><strong>SCORD ipucu</strong><small>Arkadaş isteklerini ve bildirimlerini tek merkezden yönet.</small></div></div></aside></div>';
+
+        view.querySelector("#scord-directory-add")?.addEventListener("click", showAddFriendModal);
+        view.querySelector("#scord-directory-search")?.addEventListener("input", function (e) { query = e.target.value; render(); var input = document.getElementById("scord-directory-search"); input?.focus(); input?.setSelectionRange(query.length, query.length); });
+        view.querySelectorAll(".scord-friends-directory__row").forEach(function (row) {
+            row.addEventListener("click", function () {
+                var id = row.dataset.peerId; var f = friends.find(function (item) { return item.peerId === id; });
+                if (f) openDM(id, displayName(f), f.avatarColor, f.avatarImage);
+            });
+        });
+        view.querySelectorAll(".scord-directory-avatar").forEach(function (av) { applyAvatarToElement(av, av.dataset.color, null, av.dataset.name); });
+    }
+    render();
 }
 
 console.log("[App] All features restored: Settings, UI, Animations");
