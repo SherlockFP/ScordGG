@@ -711,6 +711,82 @@ html body #app .msg-edited-badge { display: inline-flex; margin-left: 7px; color
 html body #app .msg-row--deleted { min-height: 42px; padding-block: 4px !important; }
 html body #app .msg-tombstone { display: inline-flex; min-height: 36px; align-items: center; gap: 8px; margin-left: 48px; padding: 0 12px; border: 1px dashed rgba(139,167,226,.18); border-radius: 11px; background: rgba(139,167,226,.035); color: #8392af; font-size: 12px; font-style: italic; }
 
+/* Social centre: the same compact sapphire glass language as chat and settings. */
+html body #app .msg-row-inner { padding-right: 198px; }
+html body #app .msg-poll-host { margin-top: 10px; max-width: min(560px,100%); }
+html body #app .social-inbox-btn { position: relative; }
+html body #app .social-inbox-count {
+  position: absolute; top: -5px; right: -6px; display: grid; min-width: 16px; height: 16px;
+  place-items: center; padding: 0 4px; border: 2px solid #162949; border-radius: 99px;
+  background: linear-gradient(135deg,#ff6f91,#e64968); color: #fff; font: 800 9px/1 Inter,sans-serif;
+  box-shadow: 0 5px 16px rgba(230,73,104,.28);
+}
+html body #app .social-inbox-count.hidden { display: none !important; }
+html body .scord-social-inbox,
+html body .scord-connections,
+html body .scord-report-form,
+html body .scord-poll-form { display: grid; gap: 16px; color: var(--scord-text-1,#f3f6ff); }
+html body .scord-social-inbox { width: min(650px,calc(100vw - 48px)); }
+html body .scord-social-inbox-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding-bottom: 15px; border-bottom: 1px solid rgba(139,167,226,.12); }
+html body .scord-social-inbox h3,
+html body .scord-connections h3,
+html body .scord-report-form h3,
+html body .scord-poll-form h3 { margin: 4px 0 5px; color: #f6f8ff; font: 750 22px/1.1 Space Grotesk,Inter,sans-serif; letter-spacing: -.025em; }
+html body .scord-social-inbox p,
+html body .scord-connections p,
+html body .scord-report-form p,
+html body .scord-poll-form p { margin: 0; color: #92a3c3; font-size: 12px; line-height: 1.5; }
+html body .scord-social-inbox-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+html body .scord-social-text-btn { min-height: 36px; padding: 0 10px; border: 1px solid rgba(139,167,226,.18); border-radius: 9px; background: rgba(139,167,226,.055); color: #b8c7e8; cursor: pointer; font: 700 11px/1 Inter,sans-serif; }
+html body .scord-social-text-btn:hover,
+html body .scord-social-text-btn:focus-visible { border-color: rgba(117,103,255,.5); background: rgba(117,103,255,.14); color: #fff; outline: 0; }
+html body .scord-inbox-list { display: grid; max-height: min(460px,52vh); gap: 7px; overflow-y: auto; overscroll-behavior: contain; padding-right: 3px; scrollbar-width: thin; scrollbar-color: rgba(117,103,255,.5) transparent; }
+html body .scord-inbox-item { display: grid; grid-template-columns: 35px minmax(0,1fr) auto; align-items: start; gap: 10px; width: 100%; min-height: 68px; padding: 11px; border: 1px solid rgba(139,167,226,.1); border-radius: 12px; background: rgba(10,22,43,.42); color: inherit; cursor: pointer; text-align: left; transition: border-color 160ms var(--scord-ease),background 160ms var(--scord-ease); }
+html body .scord-inbox-item:hover,
+html body .scord-inbox-item:focus-visible { border-color: rgba(117,103,255,.43); background: rgba(62,62,132,.17); outline: 0; }
+html body .scord-inbox-item.is-unread { border-color: rgba(86,150,255,.25); background: linear-gradient(105deg,rgba(54,87,164,.2),rgba(14,28,54,.5)); }
+html body .scord-inbox-glyph { display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid rgba(139,167,226,.18); border-radius: 11px; background: rgba(139,167,226,.08); color: #c9d7f4; font: 800 15px/1 Inter,sans-serif; }
+html body .scord-inbox-glyph--mention { border-color: rgba(86,150,255,.35); background: rgba(79,140,255,.13); color: #82b8ff; }
+html body .scord-inbox-glyph--friend { border-color: rgba(53,212,154,.28); background: rgba(53,212,154,.11); color: #78e5bd; }
+html body .scord-inbox-glyph--report { border-color: rgba(255,171,74,.28); background: rgba(255,171,74,.1); color: #ffc276; }
+html body .scord-inbox-copy { display: grid; min-width: 0; gap: 2px; }
+html body .scord-inbox-copy strong { overflow: hidden; color: #edf2ff; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+html body .scord-inbox-copy span { overflow: hidden; color: #92a3c3; font-size: 11px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+html body .scord-inbox-copy small { color: #677a9e; font-size: 10px; }
+html body .scord-inbox-unread { width: 7px; height: 7px; margin-top: 5px; border-radius: 50%; background: #68a7ff; box-shadow: 0 0 10px rgba(104,167,255,.7); }
+html body .scord-social-empty { display: grid; min-height: 130px; place-content: center; gap: 5px; padding: 20px; border: 1px dashed rgba(139,167,226,.15); border-radius: 13px; color: #899ab9; text-align: center; }
+html body .scord-social-empty strong { color: #e6edff; font-size: 13px; }
+html body .scord-social-empty span { font-size: 11px; }
+html body .scord-connections { width: min(680px,calc(100vw - 48px)); }
+html body .scord-connections-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+html body .scord-connections-grid > section { display: grid; align-content: start; gap: 8px; min-height: 196px; padding: 12px; border: 1px solid rgba(139,167,226,.12); border-radius: 14px; background: rgba(9,20,39,.48); }
+html body .scord-connections-title { display: flex; align-items: center; justify-content: space-between; padding-bottom: 8px; border-bottom: 1px solid rgba(139,167,226,.09); color: #91a3c7; font-size: 10px; font-weight: 800; letter-spacing: .11em; }
+html body .scord-connections-title b { display: grid; min-width: 20px; height: 20px; place-items: center; border-radius: 7px; background: rgba(117,103,255,.14); color: #c8c2ff; font-size: 10px; }
+html body .scord-connection-row { display: grid; grid-template-columns: 32px minmax(0,1fr) auto; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid rgba(139,167,226,.07); }
+html body .scord-connection-row:last-child { border-bottom: 0; }
+html body .scord-connection-avatar { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 10px; background: linear-gradient(135deg,#7567ff,#4f8cff); color: #fff; font: 800 11px/1 Inter,sans-serif; }
+html body .scord-connection-avatar.is-blocked { background: rgba(240,98,126,.16); color: #ff9aae; }
+html body .scord-connection-row > span:nth-child(2) { display: grid; min-width: 0; gap: 2px; }
+html body .scord-connection-row strong { overflow: hidden; color: #eef3ff; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+html body .scord-connection-row small { overflow: hidden; color: #7f91b4; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+html body .scord-connection-row > div { display: flex; gap: 4px; }
+html body .scord-connection-row button { min-height: 30px; padding: 0 8px; border: 1px solid rgba(139,167,226,.18); border-radius: 8px; background: rgba(139,167,226,.07); color: #c7d4ee; cursor: pointer; font: 700 10px/1 Inter,sans-serif; }
+html body .scord-connection-row button:hover { border-color: rgba(117,103,255,.48); background: rgba(117,103,255,.16); color: #fff; }
+html body .scord-report-form,
+html body .scord-poll-form { width: min(470px,calc(100vw - 48px)); }
+html body .scord-report-form label,
+html body .scord-poll-form label { display: grid; gap: 7px; color: #becbe3; font-size: 11px; font-weight: 750; }
+html body .scord-report-form label > span { color: #7587a8; font-weight: 500; }
+html body .scord-report-form select,
+html body .scord-report-form textarea,
+html body .scord-poll-form input { width: 100%; min-height: 42px; box-sizing: border-box; border: 1px solid rgba(139,167,226,.18); border-radius: 10px; outline: 0; background: rgba(5,14,29,.62); color: #eef3ff; font: 13px/1.4 Inter,sans-serif; }
+html body .scord-report-form select,
+html body .scord-poll-form input { padding: 0 12px; }
+html body .scord-report-form textarea { min-height: 92px; padding: 10px 12px; resize: vertical; }
+html body .scord-report-form select:focus,
+html body .scord-report-form textarea:focus,
+html body .scord-poll-form input:focus { border-color: rgba(117,103,255,.65); box-shadow: 0 0 0 3px rgba(117,103,255,.12); }
+
 /* GIF picker: its result grid owns scroll and never escapes the composer. */
 html body #app .gif-popover {
   position: absolute;

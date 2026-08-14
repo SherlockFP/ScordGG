@@ -287,7 +287,7 @@ function startAuthoritativeResync() {
         if (!sid || document.hidden) return;
         // ponytail: 10sn sabit poll; oda başına websocket push'a geçilebilir
         try {
-            const res = await fetch(`${API_BASE}/rooms/${encodeURIComponent(sid)}`);
+            const res = await scordFetch(`${API_BASE}/rooms/${encodeURIComponent(sid)}`);
             const room = await res.json();
             if (room && room.error === "deleted") { purgeLocalServer(sid); return; }
             if (!room || room.error || room.room_id !== sid) return;
@@ -3538,6 +3538,12 @@ function appendMessageDOM(msg, grouped = false, serverId = null, opts = {}) {
     }
 
     bubble.appendChild(textDiv);
+    if (msg.poll && typeof createPollMessage === "function") {
+        const pollHost = document.createElement("div");
+        pollHost.className = "msg-poll-host";
+        pollHost.innerHTML = createPollMessage(msg.poll);
+        bubble.appendChild(pollHost);
+    }
     stack.appendChild(bubble);
     inner.appendChild(avatarDiv);
     inner.appendChild(stack);
@@ -3559,10 +3565,11 @@ function appendMessageDOM(msg, grouped = false, serverId = null, opts = {}) {
         messageActions.appendChild(button);
     };
     addQuickAction("Yanıtla", '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true"><path d="m10 8-5 4 5 4v-2.5h3.5c2.5 0 4.2 1.1 5.5 3.5-.2-5-2.8-7.5-7.2-7.5H10V8Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>', () => setReplyTarget(msg));
+    addQuickAction("Tepki ekle", '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.8"/><path d="M8.5 14.5s1.2 2 3.5 2 3.5-2 3.5-2M8.7 9.4h.01M15.3 9.4h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>', button => showReactionPicker(sid, msg.channelId || state.activeChannelId, msg.id, button));
     if (isSelf) {
         addQuickAction("Mesajı düzenle", '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true"><path d="m14.5 5.5 4 4M4 20l3.8-.8L19 8a1.8 1.8 0 0 0 0-2.5l-.5-.5A1.8 1.8 0 0 0 16 5L4.8 16.2 4 20Z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>', () => startMessageEdit(msg));
     }
-    addQuickAction("Diğer mesaj işlemleri", '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>', (button) => {
+    addQuickAction("Thread, rapor ve diğer mesaj işlemleri", '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>', (button) => {
         const rect = button.getBoundingClientRect();
         showMsgContextMenu(msg, rect.right - 8, rect.bottom + 6);
     });
@@ -3656,6 +3663,13 @@ async function sendMessage() {
         id: genId(),
         isPinned: false
     };
+
+    // Polls travel through the same durable message payload as normal chat.
+    if (state.composerPoll) {
+        msg.poll = state.composerPoll;
+        msg.text = `Anket: ${state.composerPoll.question}`;
+        state.composerPoll = null;
+    }
 
     if (state.replyTo?.messageId) {
         msg.replyTo = {
@@ -3785,6 +3799,9 @@ function saveMessage(serverId, msg) {
     const server = state.servers.find(s => s.id === serverId);
     if (!server) return;
     if (msg.reactions) msg.reactions = normalizeReactionsMap(msg.reactions);
+    if (msg.poll && typeof savePoll === "function" && !getPolls().some(poll => poll.id === msg.poll.id)) {
+        savePoll(msg.poll);
+    }
     const cid = canonicalChannelIdForChat(server, msg.channelId);
     const normalized = cid !== msg.channelId ? { ...msg, channelId: cid } : msg;
 
@@ -4109,7 +4126,7 @@ async function joinServer(roomId) {
     console.log("[Join] Joining server:", roomId);
 
     // Check room exists
-    const room = await fetch(`${API_BASE}/rooms/${encodeURIComponent(roomId)}`).then(r => r.json());
+    const room = await scordFetch(`${API_BASE}/rooms/${encodeURIComponent(roomId)}`).then(r => r.json());
     if (!room || room.error) {
         console.error("[Join] Room not found:", roomId);
         toast("Sunucu bulunamadı.", "error");
@@ -6595,6 +6612,10 @@ function showMsgContextMenu(msg, x, y) {
         });
     });
 
+    if (!isAuthor) {
+        addItem("⚑", "Mesajı Raporla", () => openMessageReportModal(msg), true);
+    }
+
     if (canMod) {
         const isPinned = !!(msg.isPinned || server.pinned_messages?.some(p => p.id === msg.id));
         addItem("📌", isPinned ? "Sabitlemeyi Kaldır" : "Mesajı Sabitle", () => {
@@ -7053,6 +7074,10 @@ function toggleBlockStatus(peerId, username) {
         toast(`@${username} engellendi. Artık mesajlarını ve sesini duymayacaksın.`, "info");
     }
     localStorage.setItem("scord_blocked_peers", JSON.stringify(state.blockedPeers));
+    const blockRequest = idx === -1
+        ? scordFetch(`${API_BASE}/friends/${encodeURIComponent(peerId)}/block`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) })
+        : scordFetch(`${API_BASE}/friends/${encodeURIComponent(peerId)}/block`, { method: "DELETE" });
+    blockRequest.catch(error => console.warn("[Friends] block sync failed:", error));
     updateMuteStates();
 
     // Refresh current views
@@ -11423,7 +11448,7 @@ async function reconcileServerRegistry() {
     if (ids.length === 0) return;
     let result;
     try {
-        const res = await fetch(`${API_BASE}/rooms/sync`, {
+        const res = await scordFetch(`${API_BASE}/rooms/sync`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ room_ids: ids }),
@@ -11476,7 +11501,7 @@ async function handleRoomNotFound(roomId) {
     if (!roomId) return;
     let result;
     try {
-        const res = await fetch(`${API_BASE}/rooms/sync`, {
+        const res = await scordFetch(`${API_BASE}/rooms/sync`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ room_ids: [roomId] }),
@@ -25225,3 +25250,306 @@ setTimeout(bindScordUserMenuAnchors, 180);
 })();
 
 console.log("[V25] Screen picker + unified settings + server redesign + P2P tuning loaded");
+
+// Social product slice: one local, durable inbox stitches existing P2P friend
+// requests, mentions and moderation reports together without another poll loop.
+(function initScordSocialSlice() {
+    const STORAGE_KEY = "scord_social_inbox_v1";
+    const REPORTS_KEY = "scord_message_reports_v1";
+    const safe = value => typeof escapeHtml === "function" ? escapeHtml(String(value || "")) : String(value || "");
+
+    function loadInbox() {
+        if (Array.isArray(state.socialNotifications)) return state.socialNotifications;
+        try { state.socialNotifications = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"); }
+        catch { state.socialNotifications = []; }
+        return state.socialNotifications;
+    }
+
+    function saveInbox() {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(loadInbox().slice(0, 60)));
+    }
+
+    function formatNotificationTime(timestamp) {
+        const elapsed = Math.max(0, Date.now() - Number(timestamp || Date.now()));
+        if (elapsed < 60_000) return "şimdi";
+        if (elapsed < 3_600_000) return `${Math.floor(elapsed / 60_000)} dk`;
+        if (elapsed < 86_400_000) return `${Math.floor(elapsed / 3_600_000)} sa`;
+        return new Date(timestamp).toLocaleDateString("tr-TR", { day: "numeric", month: "short" });
+    }
+
+    function updateSocialBadge() {
+        const unread = loadInbox().filter(item => !item.read).length;
+        const badge = document.getElementById("social-notification-count");
+        const button = document.getElementById("social-notification-btn");
+        if (badge) {
+            badge.textContent = unread > 99 ? "99+" : String(unread);
+            badge.classList.toggle("hidden", unread === 0);
+            badge.setAttribute("aria-label", unread ? `${unread} okunmamış bildirim` : "Okunmamış bildirim yok");
+        }
+        if (button) button.setAttribute("aria-label", unread ? `Bildirim merkezi, ${unread} okunmamış` : "Bildirim merkezini aç");
+    }
+
+    function recordSocialNotification(input) {
+        const inbox = loadInbox();
+        const fingerprint = input.fingerprint || `${input.kind}:${input.messageId || input.peerId || ""}:${input.timestamp || ""}`;
+        if (inbox.some(item => item.fingerprint === fingerprint)) return;
+        inbox.unshift({
+            id: typeof genId === "function" ? genId() : `${Date.now()}-${Math.random()}`,
+            kind: input.kind || "activity",
+            title: String(input.title || "SCORD bildirimi"),
+            body: String(input.body || ""),
+            timestamp: Number(input.timestamp || Date.now()),
+            read: false,
+            fingerprint,
+            serverId: input.serverId || "",
+            channelId: input.channelId || "",
+            messageId: input.messageId || "",
+            peerId: input.peerId || "",
+        });
+        state.socialNotifications = inbox.slice(0, 60);
+        saveInbox();
+        updateSocialBadge();
+    }
+
+    function isMentionForMe(message) {
+        const name = String(state.username || "").trim();
+        const text = String(message?.text || "");
+        if (!name) return /@everyone|@here/i.test(text);
+        return new RegExp(`(^|\\s)@${escapeRegExp(name)}(?!\\w)|@everyone|@here`, "i").test(text);
+    }
+
+    function routeNotification(item) {
+        item.read = true;
+        saveInbox();
+        updateSocialBadge();
+        if (item.kind === "friend") {
+            openSocialConnections();
+            return;
+        }
+        if (item.serverId && item.channelId && typeof selectChannel === "function") {
+            hideModal();
+            selectChannel(item.serverId, item.channelId);
+            setTimeout(() => scrollToChatMessage(item.messageId), 80);
+        }
+    }
+
+    function openSocialInbox() {
+        const notifications = loadInbox();
+        const unread = notifications.filter(item => !item.read).length;
+        const rows = notifications.length ? notifications.map(item => {
+            const icon = item.kind === "mention" ? "@" : item.kind === "friend" ? "+" : item.kind === "report" ? "!" : "•";
+            return `<button type="button" class="scord-inbox-item ${item.read ? "" : "is-unread"}" data-social-id="${safe(item.id)}"><span class="scord-inbox-glyph scord-inbox-glyph--${safe(item.kind)}" aria-hidden="true">${icon}</span><span class="scord-inbox-copy"><strong>${safe(item.title)}</strong><span>${safe(item.body)}</span><small>${safe(formatNotificationTime(item.timestamp))}</small></span>${item.read ? "" : '<i class="scord-inbox-unread" aria-label="Okunmadı"></i>'}</button>`;
+        }).join("") : '<div class="scord-social-empty"><strong>Güncel kaldın</strong><span>Bahsetmeler, istekler ve rapor güncellemeleri burada görünür.</span></div>';
+        const body = `<section class="scord-social-inbox" aria-label="Bildirim merkezi"><header class="scord-social-inbox-head"><div><span class="scord-eyebrow">SOCIAL INBOX</span><h3>Bildirim merkezi</h3><p>${unread ? `${unread} okunmamış güncelleme` : "Tüm bildirimler okundu"}</p></div><div class="scord-social-inbox-actions"><button type="button" class="scord-social-text-btn" data-social-action="connections">Bağlantılar</button><button type="button" class="scord-social-text-btn" data-social-action="read">Tümünü oku</button></div></header><div class="scord-inbox-list">${rows}</div></section>`;
+        showModal("Bildirim merkezi", body, '<button class="btn-secondary" type="button" onclick="hideModal()">Kapat</button>');
+        document.querySelectorAll("[data-social-id]").forEach(button => button.addEventListener("click", () => {
+            const item = loadInbox().find(entry => entry.id === button.dataset.socialId);
+            if (item) routeNotification(item);
+        }));
+        document.querySelector('[data-social-action="read"]')?.addEventListener("click", () => {
+            loadInbox().forEach(item => { item.read = true; });
+            saveInbox();
+            updateSocialBadge();
+            openSocialInbox();
+        });
+        document.querySelector('[data-social-action="connections"]')?.addEventListener("click", openSocialConnections);
+        document.getElementById("social-notification-btn")?.setAttribute("aria-expanded", "true");
+    }
+
+    function personName(peerId) {
+        const friend = (state.friends || []).find(item => item.peerId === peerId);
+        const peer = state.peers?.[peerId];
+        const blocked = (state._blockedProfiles || []).find(item => item.peer_id === peerId);
+        return friend?.name || friend?.username || peer?.username || peer?.name || blocked?.username || "Bilinmeyen kullanıcı";
+    }
+
+    function openSocialConnections() {
+        const incoming = Array.isArray(state._pendingRequests) ? state._pendingRequests : [];
+        const outgoing = Array.isArray(state._friendRequests) ? state._friendRequests : [];
+        const blocked = Array.isArray(state.blockedPeers) ? state.blockedPeers : [];
+        const requestRows = incoming.length ? incoming.map(req => `<article class="scord-connection-row"><span class="scord-connection-avatar">${safe(initials(req.username || "?"))}</span><span><strong>${safe(req.username || "Kullanıcı")}${req.tag ? `#${safe(req.tag)}` : ""}</strong><small>Arkadaşlık isteği gönderdi</small></span><div><button type="button" data-accept="${safe(req.from)}">Kabul</button><button type="button" data-reject="${safe(req.from)}">Reddet</button></div></article>`).join("") : '<div class="scord-social-empty"><strong>Bekleyen istek yok</strong><span>Yeni P2P istekleri buraya düşer.</span></div>';
+        const blockRows = blocked.length ? blocked.map(peerId => `<article class="scord-connection-row"><span class="scord-connection-avatar is-blocked">×</span><span><strong>${safe(personName(peerId))}</strong><small>Mesajları ve sesi engellendi</small></span><div><button type="button" data-unblock="${safe(peerId)}">Engeli kaldır</button></div></article>`).join("") : '<div class="scord-social-empty"><strong>Engellenen kullanıcı yok</strong><span>Engellediğin hesaplar burada görünür.</span></div>';
+        const body = `<section class="scord-connections" aria-label="Bağlantı yönetimi"><header><span class="scord-eyebrow">CONNECTIONS</span><h3>Arkadaşlar ve gizlilik</h3><p>${outgoing.length ? `${outgoing.length} giden istek bekliyor.` : "İstekleri ve engellenen hesapları tek yerden yönet."}</p></header><div class="scord-connections-grid"><section><div class="scord-connections-title"><span>GELEN İSTEKLER</span><b>${incoming.length}</b></div>${requestRows}</section><section><div class="scord-connections-title"><span>ENGELLENENLER</span><b>${blocked.length}</b></div>${blockRows}</section></div></section>`;
+        showModal("Bağlantılar", body, '<button class="btn-secondary" type="button" onclick="hideModal()">Kapat</button>');
+        document.querySelectorAll("[data-accept]").forEach(button => button.addEventListener("click", async () => {
+            const request = incoming.find(item => item.from === button.dataset.accept);
+            try {
+                await scordFetch(`${API_BASE}/friends/requests/${encodeURIComponent(button.dataset.accept)}/accept`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({}),
+                });
+            } catch { /* P2P fallback below remains usable during an offline session. */ }
+            if (request && typeof window._acceptFriendRequest === "function") window._acceptFriendRequest(request.from, request.username, request.tag);
+            recordSocialNotification({ kind: "friend", title: "Arkadaşlık isteği kabul edildi", body: `${request?.username || "Kullanıcı"} artık arkadaşlarında.`, peerId: request?.from, fingerprint: `friend-accepted:${request?.from}:${Date.now()}` });
+            openSocialConnections();
+        }));
+        document.querySelectorAll("[data-reject]").forEach(button => button.addEventListener("click", async () => {
+            try {
+                await scordFetch(`${API_BASE}/friends/requests/${encodeURIComponent(button.dataset.reject)}/decline`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({}),
+                });
+            } catch { /* Local P2P state is still cleared below. */ }
+            if (typeof window._rejectFriendRequest === "function") window._rejectFriendRequest(button.dataset.reject);
+            openSocialConnections();
+        }));
+        document.querySelectorAll("[data-unblock]").forEach(button => button.addEventListener("click", async () => {
+            const id = button.dataset.unblock;
+            state.blockedPeers = (state.blockedPeers || []).filter(peerId => peerId !== id);
+            localStorage.setItem("scord_blocked_peers", JSON.stringify(state.blockedPeers));
+            try { await scordFetch(`${API_BASE}/friends/${encodeURIComponent(id)}/block`, { method: "DELETE" }); }
+            catch { /* Local block state remains available offline. */ }
+            openSocialConnections();
+        }));
+    }
+
+    window.openMessageReportModal = function openMessageReportModal(message) {
+        if (!message?.id || !state.activeServerId) return toast("Raporlanacak mesaj bulunamadı.", "error");
+        const body = `<section class="scord-report-form"><span class="scord-eyebrow">SAFETY</span><h3>Mesajı raporla</h3><p>Rapor, sunucu yöneticilerine iletilmek üzere kaydedilir.</p><label>Neden<select id="scord-report-reason"><option value="spam">Spam veya istenmeyen içerik</option><option value="harassment">Taciz veya nefret söylemi</option><option value="safety">Güvenlik riski</option><option value="other">Diğer</option></select></label><label>Açıklama <span>isteğe bağlı</span><textarea id="scord-report-detail" maxlength="500" placeholder="Yöneticinin bilmesi gereken kısa bağlam"></textarea></label></section>`;
+        showModal("Mesajı raporla", body, '<button class="btn-secondary" type="button" onclick="hideModal()">Vazgeç</button><button class="btn-primary" type="button" id="scord-submit-report">Raporu gönder</button>');
+        document.getElementById("scord-submit-report")?.addEventListener("click", () => window.submitMessageReport(message));
+    };
+
+    window.submitMessageReport = async function submitMessageReport(message) {
+        const report = {
+            id: typeof genId === "function" ? genId() : `${Date.now()}-${Math.random()}`,
+            serverId: state.activeServerId,
+            channelId: message.channelId || state.activeChannelId,
+            messageId: message.id,
+            authorId: message.authorId,
+            reason: document.getElementById("scord-report-reason")?.value || "other",
+            detail: document.getElementById("scord-report-detail")?.value.trim().slice(0, 500) || "",
+            createdAt: Date.now(),
+            status: "queued",
+        };
+        let stored = [];
+        try { stored = JSON.parse(localStorage.getItem(REPORTS_KEY) || "[]"); }
+        catch { stored = []; }
+        if (!stored.some(item => item.messageId === report.messageId && item.authorId === report.authorId)) stored.unshift(report);
+        localStorage.setItem(REPORTS_KEY, JSON.stringify(stored.slice(0, 40)));
+        try {
+            const reportToken = state.authToken || localStorage.getItem("scord_token");
+            const response = await fetch(`${API_BASE}/rooms/${encodeURIComponent(report.serverId)}/reports`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", ...(reportToken ? { Authorization: `Bearer ${reportToken}` } : {}) },
+                body: JSON.stringify(report),
+            });
+            if (response.ok) report.status = "submitted";
+        } catch { /* endpoint is optional until the moderation API is deployed */ }
+        recordSocialNotification({ kind: "report", title: "Rapor kaydedildi", body: "Mesaj raporun yöneticiler için sıraya alındı.", serverId: report.serverId, channelId: report.channelId, messageId: report.messageId, fingerprint: `report:${report.id}` });
+        hideModal();
+        toast(report.status === "submitted" ? "Rapor yöneticilere gönderildi." : "Rapor cihazında güvenle sıraya alındı.", "success");
+    };
+
+    window.openQuickPollComposer = function openQuickPollComposer() {
+        if (!state.activeServerId || !state.activeChannelId) return toast("Önce bir metin kanalı aç.", "warning");
+        const body = '<section class="scord-poll-form"><span class="scord-eyebrow">CHANNEL POLL</span><h3>Hızlı anket</h3><p>İki seçenekli, kalıcı bir kanal anketi oluştur.</p><label>Soru<input id="scord-poll-question" maxlength="160" placeholder="Bu akşam ne oynuyoruz?"></label><label>Birinci seçenek<input id="scord-poll-option-a" maxlength="100" placeholder="Valorant"></label><label>İkinci seçenek<input id="scord-poll-option-b" maxlength="100" placeholder="Minecraft"></label></section>';
+        showModal("Anket oluştur", body, '<button class="btn-secondary" type="button" onclick="hideModal()">Vazgeç</button><button class="btn-primary" type="button" id="scord-create-poll">Anketi gönder</button>');
+        document.getElementById("scord-create-poll")?.addEventListener("click", () => {
+            const question = document.getElementById("scord-poll-question")?.value.trim();
+            const options = [document.getElementById("scord-poll-option-a")?.value.trim(), document.getElementById("scord-poll-option-b")?.value.trim()].filter(Boolean);
+            if (!question || options.length < 2) return toast("Soru ve iki seçenek gerekli.", "error");
+            state.composerPoll = {
+                id: typeof genId === "function" ? genId() : `${Date.now()}-${Math.random()}`,
+                question,
+                type: "single",
+                options: options.map(text => ({ id: typeof genId === "function" ? genId() : `${Date.now()}-${Math.random()}`, text, votes: 0, voters: [] })),
+                anonymous: false,
+                publicResults: true,
+                createdBy: state.peerId,
+                createdAt: Date.now(),
+                expiresAt: null,
+                totalVotes: 0,
+                voters: [],
+            };
+            const input = document.getElementById("chat-input");
+            if (input) input.value = question;
+            hideModal();
+            sendMessage();
+        });
+    };
+
+    async function syncSocialConnections() {
+        if (!state.authToken && !localStorage.getItem("scord_token")) return;
+        try {
+            const response = await scordFetch(`${API_BASE}/friends`);
+            if (!response.ok) return;
+            const data = await response.json();
+            if (Array.isArray(data.friends)) {
+                state.friends = data.friends.map(friend => ({
+                    peerId: friend.peer_id,
+                    name: friend.username,
+                    avatarColor: friend.avatar_color,
+                    avatarImage: friend.avatar_image,
+                    tag: friend.discriminator || "",
+                }));
+                localStorage.setItem("scord_friends", JSON.stringify(state.friends));
+            }
+            if (Array.isArray(data.incoming_requests)) {
+                state._pendingRequests = data.incoming_requests.map(request => ({ from: request.peer_id, username: request.username, tag: request.discriminator || "", timestamp: Number(request.created_at || Date.now()) * 1000 }));
+                localStorage.setItem("scord_pending_requests", JSON.stringify(state._pendingRequests));
+            }
+            if (Array.isArray(data.outgoing_requests)) {
+                state._friendRequests = data.outgoing_requests.map(request => ({ peerId: request.peer_id, username: request.username, tag: request.discriminator || "", timestamp: Number(request.created_at || Date.now()) * 1000 }));
+                localStorage.setItem("scord_friend_requests", JSON.stringify(state._friendRequests));
+            }
+            if (Array.isArray(data.blocked)) {
+                state._blockedProfiles = data.blocked;
+                state.blockedPeers = Array.from(new Set([...(state.blockedPeers || []), ...data.blocked.map(profile => profile.peer_id)]));
+                localStorage.setItem("scord_blocked_peers", JSON.stringify(state.blockedPeers));
+            }
+            updateSocialBadge();
+        } catch (error) {
+            console.warn("[Social] connection sync failed:", error);
+        }
+    }
+
+    function bindSocialControls() {
+        const inboxButton = document.getElementById("social-notification-btn");
+        if (inboxButton && inboxButton.dataset.socialBound !== "1") {
+            inboxButton.dataset.socialBound = "1";
+            inboxButton.addEventListener("click", openSocialInbox);
+        }
+        const pollButton = document.getElementById("poll-btn");
+        if (pollButton && pollButton.dataset.socialBound !== "1") {
+            pollButton.dataset.socialBound = "1";
+            pollButton.addEventListener("click", window.openQuickPollComposer);
+        }
+        updateSocialBadge();
+    }
+
+    const originalIncoming = window.handleIncomingP2P;
+    if (typeof originalIncoming === "function") {
+        window.handleIncomingP2P = function socialIncoming(fromPeerId, data, roomId) {
+            if (data?.type === "chat" && data.payload?.authorId !== state.peerId) {
+                const message = data.payload;
+                const mention = isMentionForMe(message);
+                recordSocialNotification({
+                    kind: mention ? "mention" : "message",
+                    title: mention ? `${message.author || "Bir kullanıcı"} senden bahsetti` : `${message.author || "Bir kullanıcı"} mesaj gönderdi`,
+                    body: String(message.text || "").slice(0, 160),
+                    timestamp: Date.now(),
+                    serverId: roomId,
+                    channelId: message.channelId,
+                    messageId: message.id,
+                    peerId: message.authorId,
+                    fingerprint: `message:${roomId}:${message.id}`,
+                });
+            } else if (data?.type === "friend_request") {
+                recordSocialNotification({ kind: "friend", title: "Yeni arkadaşlık isteği", body: `${data.username || "Bir kullanıcı"} seni eklemek istiyor.`, peerId: data.from || fromPeerId, timestamp: data.timestamp || Date.now(), fingerprint: `friend-request:${data.from || fromPeerId}:${data.timestamp || ""}` });
+            } else if (data?.type === "friend_request_accepted") {
+                recordSocialNotification({ kind: "friend", title: "Arkadaşlık isteği kabul edildi", body: `${data.username || "Bir kullanıcı"} artık arkadaşlarında.`, peerId: data.from || fromPeerId, timestamp: Date.now(), fingerprint: `friend-accepted:${data.from || fromPeerId}:${data.timestamp || ""}` });
+            }
+            return originalIncoming.apply(this, arguments);
+        };
+    }
+
+    window.recordSocialNotification = recordSocialNotification;
+    window.openSocialInbox = openSocialInbox;
+    window.openSocialConnections = openSocialConnections;
+    bindSocialControls();
+    syncSocialConnections();
+    document.addEventListener("DOMContentLoaded", bindSocialControls, { once: true });
+})();

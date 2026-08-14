@@ -9,6 +9,9 @@ window.SCORD_TIMING = {
     /** WebSocket sinyal kopunca yeniden bağlanma */
     P2P_WS_RECONNECT_MS: 3000,
 
+    P2P_WS_MAX_RECONNECT_ATTEMPTS: 8,
+    P2P_ICE_DISCONNECTED_GRACE_MS: 8000,
+
     /** Sunucuya keepalive ping (ICE/signaling) */
     P2P_SIGNALING_PING_INTERVAL_MS: 25000,
 

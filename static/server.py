@@ -85,15 +85,18 @@ DEFAULT_ROLE_PERMISSIONS = {
         "manage_server", "manage_roles", "manage_channels", "kick_members",
         "move_members", "force_disconnect", "join_voice", "speak",
         "screen_share", "camera", "music_control", "send_messages",
+        "ban_members", "timeout_members", "manage_invites", "view_audit_log", "manage_reports",
     },
     "admin": {
         "manage_server", "manage_roles", "manage_channels", "kick_members",
         "move_members", "force_disconnect", "join_voice", "speak",
         "screen_share", "camera", "music_control", "send_messages",
+        "ban_members", "timeout_members", "manage_invites", "view_audit_log", "manage_reports",
     },
     "mod": {
         "kick_members", "move_members", "force_disconnect", "join_voice",
         "speak", "screen_share", "camera", "music_control", "send_messages",
+        "ban_members", "timeout_members", "manage_reports",
     },
     "member": {"join_voice", "speak", "screen_share", "camera", "send_messages"},
 }
@@ -235,6 +238,103 @@ def init_accounts_db():
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_server_members_role ON server_members(room_id, role)")
+        # New social/moderation state is additive. Existing friendship rows and
+        # deployments remain valid while newer clients can opt into these flows.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS friend_requests (
+                requester_peer_id TEXT NOT NULL,
+                target_peer_id TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                PRIMARY KEY (requester_peer_id, target_peer_id),
+                CHECK (requester_peer_id <> target_peer_id)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_friend_requests_target ON friend_requests(target_peer_id, status, updated_at DESC)")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS friend_blocks (
+                blocker_peer_id TEXT NOT NULL,
+                blocked_peer_id TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                PRIMARY KEY (blocker_peer_id, blocked_peer_id),
+                CHECK (blocker_peer_id <> blocked_peer_id)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS server_invites (
+                invite_code TEXT PRIMARY KEY,
+                room_id TEXT NOT NULL,
+                created_by TEXT NOT NULL DEFAULT '',
+                created_at REAL NOT NULL,
+                expires_at REAL,
+                max_uses INTEGER,
+                use_count INTEGER NOT NULL DEFAULT 0,
+                revoked_at REAL
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_server_invites_room ON server_invites(room_id, revoked_at)")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS server_bans (
+                room_id TEXT NOT NULL,
+                peer_id TEXT NOT NULL,
+                actor_peer_id TEXT NOT NULL,
+                reason TEXT NOT NULL DEFAULT '',
+                created_at REAL NOT NULL,
+                PRIMARY KEY (room_id, peer_id)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS server_timeouts (
+                room_id TEXT NOT NULL,
+                peer_id TEXT NOT NULL,
+                actor_peer_id TEXT NOT NULL,
+                reason TEXT NOT NULL DEFAULT '',
+                expires_at REAL NOT NULL,
+                created_at REAL NOT NULL,
+                PRIMARY KEY (room_id, peer_id)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_server_timeouts_expiry ON server_timeouts(expires_at)")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS server_message_throttle (
+                room_id TEXT NOT NULL,
+                channel_id TEXT NOT NULL,
+                peer_id TEXT NOT NULL,
+                last_sent_at REAL NOT NULL,
+                PRIMARY KEY (room_id, channel_id, peer_id)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS server_audit_log (
+                audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                room_id TEXT NOT NULL,
+                actor_peer_id TEXT NOT NULL,
+                target_peer_id TEXT NOT NULL DEFAULT '',
+                action TEXT NOT NULL,
+                reason TEXT NOT NULL DEFAULT '',
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                created_at REAL NOT NULL
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_server_audit_log_room ON server_audit_log(room_id, created_at DESC)")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS server_message_reports (
+                report_id TEXT PRIMARY KEY,
+                room_id TEXT NOT NULL,
+                channel_id TEXT NOT NULL,
+                message_id TEXT NOT NULL,
+                reporter_peer_id TEXT NOT NULL,
+                author_peer_id TEXT NOT NULL DEFAULT '',
+                reason TEXT NOT NULL,
+                detail TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'open',
+                moderator_peer_id TEXT NOT NULL DEFAULT '',
+                created_at REAL NOT NULL,
+                resolved_at REAL
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_server_message_reports_room ON server_message_reports(room_id, status, created_at DESC)")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS deleted_servers (
                 room_id TEXT PRIMARY KEY,
@@ -409,6 +509,94 @@ def _server_member_count(room_id: str) -> int:
     except sqlite3.Error:
         return 0
 
+
+def _is_room_member(room_id: str, peer_id: str) -> bool:
+    """Server-side membership check; platform admins retain global access."""
+    if not peer_id:
+        return False
+    if _is_platform_admin(peer_id):
+        return True
+    room = rooms.get(room_id)
+    if room and room.owner_id == peer_id:
+        return True
+    with _db() as conn:
+        return bool(conn.execute(
+            "SELECT 1 FROM server_members WHERE room_id = ? AND peer_id = ?",
+            (room_id, peer_id),
+        ).fetchone())
+
+
+def _require_room_member(room_id: str, request: Request, body: dict | None = None) -> tuple["Room", sqlite3.Row]:
+    room = rooms.get(room_id)
+    if not room or room_id in deleted_room_ids:
+        raise HTTPException(status_code=404, detail="not_found")
+    account = _request_account(request, body)
+    if not account:
+        raise HTTPException(status_code=401, detail="unauthorized")
+    if not _is_room_member(room_id, account["peer_id"]):
+        raise HTTPException(status_code=403, detail="not_a_member")
+    if _is_banned(room_id, account["peer_id"]):
+        raise HTTPException(status_code=403, detail="banned")
+    return room, account
+
+
+def _is_banned(room_id: str, peer_id: str) -> bool:
+    with _db() as conn:
+        return bool(conn.execute(
+            "SELECT 1 FROM server_bans WHERE room_id = ? AND peer_id = ?",
+            (room_id, peer_id),
+        ).fetchone())
+
+
+def _active_timeout(room_id: str, peer_id: str) -> Optional[sqlite3.Row]:
+    now = time.time()
+    with _db() as conn:
+        conn.execute("DELETE FROM server_timeouts WHERE expires_at <= ?", (now,))
+        return conn.execute(
+            "SELECT * FROM server_timeouts WHERE room_id = ? AND peer_id = ? AND expires_at > ?",
+            (room_id, peer_id, now),
+        ).fetchone()
+
+
+def _record_audit(room_id: str, actor_peer_id: str, action: str, target_peer_id: str = "", reason: str = "", metadata: dict | None = None) -> None:
+    with _db() as conn:
+        conn.execute(
+            "INSERT INTO server_audit_log (room_id, actor_peer_id, target_peer_id, action, reason, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (room_id, actor_peer_id, target_peer_id, action, reason[:500], json.dumps(metadata or {}, ensure_ascii=False), time.time()),
+        )
+
+
+def _can_moderate_target(room: "Room", actor_peer_id: str, target_peer_id: str) -> bool:
+    """Platform admins may act globally; role peers cannot act sideways/upwards."""
+    if actor_peer_id == target_peer_id:
+        return False
+    if _is_platform_admin(actor_peer_id):
+        return True
+    rank = {"member": 0, "mod": 1, "admin": 2, "owner": 3}
+    return rank.get(room.role_for(actor_peer_id), 0) > rank.get(room.role_for(target_peer_id), 0)
+
+
+def _invite_payload(row: sqlite3.Row) -> dict:
+    return {
+        "invite_code": row["invite_code"],
+        "expires_at": row["expires_at"],
+        "max_uses": row["max_uses"],
+        "use_count": row["use_count"],
+        "revoked": bool(row["revoked_at"]),
+    }
+
+
+def _ensure_room_invite(room: "Room", created_by: str = "") -> None:
+    """Backfill legacy/current invite codes without changing their behavior."""
+    if not room.invite_code:
+        room.invite_code = str(uuid.uuid4())[:6].upper()
+    with _db() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO server_invites (invite_code, room_id, created_by, created_at) VALUES (?, ?, ?, ?)",
+            (room.invite_code, room.room_id, created_by, time.time()),
+        )
+
+
 def _role_defaults(role_id: str) -> dict:
     return {p: True for p in DEFAULT_ROLE_PERMISSIONS.get(role_id, DEFAULT_ROLE_PERMISSIONS["member"])}
 
@@ -524,6 +712,10 @@ def _room_from_snapshot(rid: str, data: dict) -> "Room":
     room.description = data.get("description", "")
     room.invite_code = data.get("invite_code", str(uuid.uuid4())[:6].upper())
     room.is_public = bool(data.get("is_public", True))
+    room.channel_slow_modes = {
+        str(channel_id): max(0, min(int(seconds), 21600))
+        for channel_id, seconds in (data.get("channel_slow_modes") or {}).items()
+    }
     room.normalize_permissions()
     return room
 
@@ -569,6 +761,12 @@ def save_db():
                             role = 'owner',
                             last_seen = excluded.last_seen
                     """, (rid, room.owner_id, room.owner_username or "", room.created_at, now))
+                # Each persisted room has at least one durable invite record.
+                # INSERT OR IGNORE preserves usage/expiry metadata for a code.
+                conn.execute(
+                    "INSERT OR IGNORE INTO server_invites (invite_code, room_id, created_by, created_at) VALUES (?, ?, ?, ?)",
+                    (room.invite_code, rid, room.owner_id or "", now),
+                )
             for rid in sorted(deleted_room_ids)[-DELETED_TOMBSTONE_CAP:]:
                 conn.execute(
                     "INSERT OR REPLACE INTO deleted_servers (room_id, deleted_at) VALUES (?, ?)",
@@ -755,6 +953,9 @@ class Room:
         self.description = ""
         self.is_public = True
         self.invite_code = str(uuid.uuid4())[:6].upper()
+        # Text-channel slow mode is durable room configuration; enforcement is
+        # server-side in save_history_message.
+        self.channel_slow_modes: Dict[str, int] = {}
 
     def to_persist_dict(self):
         """Data to be saved to disk (metadata only)."""
@@ -777,6 +978,7 @@ class Room:
             "description": self.description,
             "is_public": self.is_public,
             "invite_code": self.invite_code,
+            "channel_slow_modes": self.channel_slow_modes,
         }
 
     def to_discovery_dict(self):
@@ -787,6 +989,7 @@ class Room:
             "description": self.description,
             "icon_url": self.icon_url,
             "invite_code": self.invite_code,
+            "channel_slow_modes": self.channel_slow_modes,
             "owner_username": self.owner_username,
             "member_count": max(_server_member_count(self.room_id), len(self.peers), 1),
             "channel_count": len(self.channels),
@@ -979,13 +1182,9 @@ def list_rooms():
 
 
 @app.get("/api/rooms/{room_id}")
-def get_room(room_id: str):
+def get_room(room_id: str, request: Request):
     """Tek oda i├ºin taze otoriter durum ΓÇö istemci periyodik resync i├ºin kullan─▒r."""
-    if room_id in deleted_room_ids:
-        return {"error": "deleted"}
-    room = rooms.get(room_id)
-    if not room:
-        return {"error": "Not found"}
+    room, _ = _require_room_member(room_id, request)
     return room.to_dict()
 
 @app.post("/api/auth/register")
@@ -1117,7 +1316,143 @@ def list_friends(request: Request):
             "WHERE f.peer_id = ? AND f.status = 'accepted' ORDER BY lower(a.username)",
             (account["peer_id"],),
         ).fetchall()
-    return {"friends": [{**_account_public(row), "status": row["status"]} for row in rows]}
+        incoming = conn.execute(
+            "SELECT a.*, r.created_at FROM friend_requests r JOIN accounts a ON a.peer_id = r.requester_peer_id "
+            "WHERE r.target_peer_id = ? AND r.status = 'pending' ORDER BY r.created_at DESC",
+            (account["peer_id"],),
+        ).fetchall()
+        outgoing = conn.execute(
+            "SELECT a.*, r.created_at FROM friend_requests r JOIN accounts a ON a.peer_id = r.target_peer_id "
+            "WHERE r.requester_peer_id = ? AND r.status = 'pending' ORDER BY r.created_at DESC",
+            (account["peer_id"],),
+        ).fetchall()
+        blocked = conn.execute(
+            "SELECT a.*, b.created_at FROM friend_blocks b JOIN accounts a ON a.peer_id = b.blocked_peer_id "
+            "WHERE b.blocker_peer_id = ? ORDER BY b.created_at DESC",
+            (account["peer_id"],),
+        ).fetchall()
+    return {
+        "friends": [{**_account_public(row), "status": row["status"]} for row in rows],
+        "incoming_requests": [{**_account_public(row), "created_at": row["created_at"]} for row in incoming],
+        "outgoing_requests": [{**_account_public(row), "created_at": row["created_at"]} for row in outgoing],
+        "blocked": [{**_account_public(row), "created_at": row["created_at"]} for row in blocked],
+    }
+
+
+def _friend_target_from_body(conn: sqlite3.Connection, body: dict) -> Optional[sqlite3.Row]:
+    target_id = str(body.get("target_peer_id") or "").strip()
+    if target_id:
+        return conn.execute("SELECT * FROM accounts WHERE peer_id = ?", (target_id,)).fetchone()
+    identifier = str(body.get("identifier") or "").strip()
+    match = re.fullmatch(r"(.{2,32})#(\d{4})", identifier)
+    if not match:
+        return None
+    return conn.execute(
+        "SELECT * FROM accounts WHERE lower(COALESCE(NULLIF(display_name, ''), username)) = lower(?) AND discriminator = ?",
+        (match.group(1).strip(), match.group(2)),
+    ).fetchone()
+
+
+@app.post("/api/friends/requests")
+def create_friend_request(body: dict, request: Request):
+    account = _request_account(request, body)
+    if not account:
+        raise HTTPException(status_code=401, detail="unauthorized")
+    with _db() as conn:
+        target = _friend_target_from_body(conn, body)
+        if not target:
+            raise HTTPException(status_code=404, detail="account_not_found")
+        if target["peer_id"] == account["peer_id"]:
+            raise HTTPException(status_code=400, detail="cannot_friend_self")
+        blocked = conn.execute(
+            "SELECT 1 FROM friend_blocks WHERE (blocker_peer_id = ? AND blocked_peer_id = ?) OR (blocker_peer_id = ? AND blocked_peer_id = ?)",
+            (account["peer_id"], target["peer_id"], target["peer_id"], account["peer_id"]),
+        ).fetchone()
+        if blocked:
+            raise HTTPException(status_code=403, detail="friend_request_unavailable")
+        existing = conn.execute(
+            "SELECT status FROM friendships WHERE peer_id = ? AND friend_peer_id = ?",
+            (account["peer_id"], target["peer_id"]),
+        ).fetchone()
+        if existing and existing["status"] == "accepted":
+            return {"success": True, "already_friends": True, "friend": _account_public(target)}
+        now = time.time()
+        # An opposite pending request becomes an accepted friendship directly.
+        reverse = conn.execute(
+            "SELECT 1 FROM friend_requests WHERE requester_peer_id = ? AND target_peer_id = ? AND status = 'pending'",
+            (target["peer_id"], account["peer_id"]),
+        ).fetchone()
+        if reverse:
+            conn.execute("DELETE FROM friend_requests WHERE (requester_peer_id = ? AND target_peer_id = ?) OR (requester_peer_id = ? AND target_peer_id = ?)",
+                         (account["peer_id"], target["peer_id"], target["peer_id"], account["peer_id"]))
+            conn.execute("INSERT OR REPLACE INTO friendships (peer_id, friend_peer_id, status, created_at) VALUES (?, ?, 'accepted', ?)",
+                         (account["peer_id"], target["peer_id"], now))
+            conn.execute("INSERT OR REPLACE INTO friendships (peer_id, friend_peer_id, status, created_at) VALUES (?, ?, 'accepted', ?)",
+                         (target["peer_id"], account["peer_id"], now))
+            return {"success": True, "accepted": True, "friend": _account_public(target)}
+        conn.execute(
+            "INSERT INTO friend_requests (requester_peer_id, target_peer_id, status, created_at, updated_at) VALUES (?, ?, 'pending', ?, ?) "
+            "ON CONFLICT(requester_peer_id, target_peer_id) DO UPDATE SET status = 'pending', updated_at = excluded.updated_at",
+            (account["peer_id"], target["peer_id"], now, now),
+        )
+    return {"success": True, "request": {"peer_id": target["peer_id"], "status": "pending"}}
+
+
+@app.post("/api/friends/requests/{requester_peer_id}/accept")
+def accept_friend_request(requester_peer_id: str, body: dict, request: Request):
+    account = _request_account(request, body)
+    if not account:
+        raise HTTPException(status_code=401, detail="unauthorized")
+    with _db() as conn:
+        pending = conn.execute(
+            "SELECT 1 FROM friend_requests WHERE requester_peer_id = ? AND target_peer_id = ? AND status = 'pending'",
+            (requester_peer_id, account["peer_id"]),
+        ).fetchone()
+        target = conn.execute("SELECT * FROM accounts WHERE peer_id = ?", (requester_peer_id,)).fetchone()
+        if not pending or not target:
+            raise HTTPException(status_code=404, detail="request_not_found")
+        now = time.time()
+        conn.execute("DELETE FROM friend_requests WHERE requester_peer_id = ? AND target_peer_id = ?", (requester_peer_id, account["peer_id"]))
+        for left, right in ((account["peer_id"], requester_peer_id), (requester_peer_id, account["peer_id"])):
+            conn.execute("INSERT OR REPLACE INTO friendships (peer_id, friend_peer_id, status, created_at) VALUES (?, ?, 'accepted', ?)", (left, right, now))
+    return {"success": True, "friend": _account_public(target)}
+
+
+@app.post("/api/friends/requests/{requester_peer_id}/decline")
+def decline_friend_request(requester_peer_id: str, body: dict, request: Request):
+    account = _request_account(request, body)
+    if not account:
+        raise HTTPException(status_code=401, detail="unauthorized")
+    with _db() as conn:
+        cursor = conn.execute(
+            "DELETE FROM friend_requests WHERE requester_peer_id = ? AND target_peer_id = ? AND status = 'pending'",
+            (requester_peer_id, account["peer_id"]),
+        )
+    return {"success": True, "declined": bool(cursor.rowcount)}
+
+
+@app.post("/api/friends/{peer_id}/block")
+def block_friend(peer_id: str, body: dict, request: Request):
+    account = _request_account(request, body)
+    if not account or peer_id == account["peer_id"]:
+        raise HTTPException(status_code=400, detail="invalid_block")
+    with _db() as conn:
+        if not conn.execute("SELECT 1 FROM accounts WHERE peer_id = ?", (peer_id,)).fetchone():
+            raise HTTPException(status_code=404, detail="account_not_found")
+        conn.execute("INSERT OR REPLACE INTO friend_blocks (blocker_peer_id, blocked_peer_id, created_at) VALUES (?, ?, ?)", (account["peer_id"], peer_id, time.time()))
+        conn.execute("DELETE FROM friendships WHERE (peer_id = ? AND friend_peer_id = ?) OR (peer_id = ? AND friend_peer_id = ?)", (account["peer_id"], peer_id, peer_id, account["peer_id"]))
+        conn.execute("DELETE FROM friend_requests WHERE (requester_peer_id = ? AND target_peer_id = ?) OR (requester_peer_id = ? AND target_peer_id = ?)", (account["peer_id"], peer_id, peer_id, account["peer_id"]))
+    return {"success": True}
+
+
+@app.delete("/api/friends/{peer_id}/block")
+def unblock_friend(peer_id: str, request: Request):
+    account = _request_account(request)
+    if not account:
+        raise HTTPException(status_code=401, detail="unauthorized")
+    with _db() as conn:
+        conn.execute("DELETE FROM friend_blocks WHERE blocker_peer_id = ? AND blocked_peer_id = ?", (account["peer_id"], peer_id))
+    return {"success": True}
 
 
 @app.post("/api/friends/confirm")
@@ -1280,10 +1615,32 @@ async def save_history_message(room_id: str, body: dict, request: Request):
     account = _request_account(request, body)
     if not account or msg.get("authorId") != account["peer_id"]:
         raise HTTPException(status_code=403, detail="forbidden")
+    if not _is_room_member(room_id, account["peer_id"]):
+        raise HTTPException(status_code=403, detail="not_a_member")
     if not room.has_permission(account["peer_id"], "send_messages", msg.get("channelId")):
         raise HTTPException(status_code=403, detail="forbidden")
+    if _is_banned(room_id, account["peer_id"]):
+        raise HTTPException(status_code=403, detail="banned")
+    if _active_timeout(room_id, account["peer_id"]):
+        raise HTTPException(status_code=403, detail="timed_out")
     
     ch_id = msg.get("channelId", "general")
+    slow_mode_seconds = int(room.channel_slow_modes.get(ch_id, 0) or 0)
+    if slow_mode_seconds:
+        now = time.time()
+        with _db() as conn:
+            last = conn.execute(
+                "SELECT last_sent_at FROM server_message_throttle WHERE room_id = ? AND channel_id = ? AND peer_id = ?",
+                (room_id, ch_id, account["peer_id"]),
+            ).fetchone()
+            retry_after = slow_mode_seconds - (now - last["last_sent_at"]) if last else 0
+            if retry_after > 0:
+                raise HTTPException(status_code=429, detail={"error": "slow_mode", "retry_after": round(retry_after, 1)})
+            conn.execute(
+                "INSERT INTO server_message_throttle (room_id, channel_id, peer_id, last_sent_at) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(room_id, channel_id, peer_id) DO UPDATE SET last_sent_at = excluded.last_sent_at",
+                (room_id, ch_id, account["peer_id"], now),
+            )
     if ch_id not in room.messages:
         room.messages[ch_id] = []
     
@@ -1451,29 +1808,276 @@ def rotate_invite(room_id: str, body: dict, request: Request):
     if room_id not in rooms:
         return {"error": "Not found"}
     room = rooms[room_id]
-    _owner_key_ok(room, body, request.query_params, request)
     account = _request_account(request, body)
-    if body.get("owner_id") != room.owner_id and not (account and _is_platform_admin(account["peer_id"])):
-        return {"error": "Unauthorized"}
+    if not account or not room.has_permission(account["peer_id"], "manage_invites"):
+        raise HTTPException(status_code=403, detail="forbidden")
+    old_code = room.invite_code
     room.invite_code = str(uuid.uuid4())[:6].upper()
+    with _db() as conn:
+        conn.execute("UPDATE server_invites SET revoked_at = ? WHERE invite_code = ?", (time.time(), old_code))
+        conn.execute(
+            "INSERT INTO server_invites (invite_code, room_id, created_by, created_at) VALUES (?, ?, ?, ?)",
+            (room.invite_code, room_id, account["peer_id"], time.time()),
+        )
+    _record_audit(room_id, account["peer_id"], "invite_rotated", metadata={"previous_code": old_code})
     schedule_save_db(0.4)
     return {"invite_code": room.invite_code}
+
+
+@app.post("/api/rooms/{room_id}/invites")
+def create_room_invite(room_id: str, body: dict, request: Request):
+    room, account = _require_room_member(room_id, request, body)
+    if not room.has_permission(account["peer_id"], "manage_invites"):
+        raise HTTPException(status_code=403, detail="forbidden")
+    expires_in = body.get("expires_in_seconds")
+    max_uses = body.get("max_uses")
+    try:
+        expires_in = int(expires_in) if expires_in not in (None, "", 0, "0") else None
+        max_uses = int(max_uses) if max_uses not in (None, "", 0, "0") else None
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="invalid_invite_limits")
+    if expires_in is not None and not 60 <= expires_in <= 365 * 24 * 3600:
+        raise HTTPException(status_code=400, detail="invalid_invite_expiry")
+    if max_uses is not None and not 1 <= max_uses <= 10000:
+        raise HTTPException(status_code=400, detail="invalid_invite_max_uses")
+    code = str(uuid.uuid4())[:8].upper()
+    now = time.time()
+    with _db() as conn:
+        conn.execute(
+            "INSERT INTO server_invites (invite_code, room_id, created_by, created_at, expires_at, max_uses) VALUES (?, ?, ?, ?, ?, ?)",
+            (code, room_id, account["peer_id"], now, now + expires_in if expires_in else None, max_uses),
+        )
+        invite = conn.execute("SELECT * FROM server_invites WHERE invite_code = ?", (code,)).fetchone()
+    _record_audit(room_id, account["peer_id"], "invite_created", metadata={"invite_code": code, "expires_in_seconds": expires_in, "max_uses": max_uses})
+    return {"success": True, "invite": _invite_payload(invite)}
+
+
+@app.get("/api/rooms/{room_id}/invites")
+def list_room_invites(room_id: str, request: Request):
+    room, account = _require_room_member(room_id, request)
+    if not room.has_permission(account["peer_id"], "manage_invites"):
+        raise HTTPException(status_code=403, detail="forbidden")
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM server_invites WHERE room_id = ? ORDER BY created_at DESC LIMIT 100",
+            (room_id,),
+        ).fetchall()
+    return {"invites": [_invite_payload(row) for row in rows]}
+
+
+@app.delete("/api/rooms/{room_id}/invites/{invite_code}")
+def revoke_room_invite(room_id: str, invite_code: str, request: Request):
+    room, account = _require_room_member(room_id, request)
+    if not room.has_permission(account["peer_id"], "manage_invites"):
+        raise HTTPException(status_code=403, detail="forbidden")
+    with _db() as conn:
+        cursor = conn.execute(
+            "UPDATE server_invites SET revoked_at = ? WHERE room_id = ? AND invite_code = ? AND revoked_at IS NULL",
+            (time.time(), room_id, invite_code.upper()),
+        )
+    if not cursor.rowcount:
+        raise HTTPException(status_code=404, detail="invite_not_found")
+    _record_audit(room_id, account["peer_id"], "invite_revoked", metadata={"invite_code": invite_code.upper()})
+    return {"success": True}
+
+
+def _require_moderator(room_id: str, request: Request, body: dict, permission: str) -> tuple["Room", sqlite3.Row]:
+    room, account = _require_room_member(room_id, request, body)
+    if not room.has_permission(account["peer_id"], permission):
+        raise HTTPException(status_code=403, detail="forbidden")
+    return room, account
+
+
+@app.post("/api/rooms/{room_id}/moderation/ban")
+def ban_room_member(room_id: str, body: dict, request: Request):
+    room, account = _require_moderator(room_id, request, body, "ban_members")
+    target_peer_id = str(body.get("target_peer_id") or "").strip()
+    reason = str(body.get("reason") or "").strip()[:500]
+    if not target_peer_id or not _can_moderate_target(room, account["peer_id"], target_peer_id):
+        raise HTTPException(status_code=403, detail="cannot_moderate_target")
+    with _db() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO server_bans (room_id, peer_id, actor_peer_id, reason, created_at) VALUES (?, ?, ?, ?, ?)",
+            (room_id, target_peer_id, account["peer_id"], reason, time.time()),
+        )
+        conn.execute("DELETE FROM server_members WHERE room_id = ? AND peer_id = ?", (room_id, target_peer_id))
+        conn.execute("DELETE FROM server_timeouts WHERE room_id = ? AND peer_id = ?", (room_id, target_peer_id))
+    _remove_peer_from_voice(room, target_peer_id)
+    _record_audit(room_id, account["peer_id"], "member_banned", target_peer_id, reason)
+    return {"success": True}
+
+
+@app.delete("/api/rooms/{room_id}/moderation/ban/{target_peer_id}")
+def unban_room_member(room_id: str, target_peer_id: str, request: Request):
+    room, account = _require_moderator(room_id, request, {}, "ban_members")
+    with _db() as conn:
+        cursor = conn.execute("DELETE FROM server_bans WHERE room_id = ? AND peer_id = ?", (room_id, target_peer_id))
+    if not cursor.rowcount:
+        raise HTTPException(status_code=404, detail="ban_not_found")
+    _record_audit(room_id, account["peer_id"], "member_unbanned", target_peer_id)
+    return {"success": True}
+
+
+@app.post("/api/rooms/{room_id}/moderation/timeout")
+def timeout_room_member(room_id: str, body: dict, request: Request):
+    room, account = _require_moderator(room_id, request, body, "timeout_members")
+    target_peer_id = str(body.get("target_peer_id") or "").strip()
+    reason = str(body.get("reason") or "").strip()[:500]
+    try:
+        duration_seconds = int(body.get("duration_seconds"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="invalid_timeout_duration")
+    if not 60 <= duration_seconds <= 28 * 24 * 3600:
+        raise HTTPException(status_code=400, detail="invalid_timeout_duration")
+    if not target_peer_id or not _can_moderate_target(room, account["peer_id"], target_peer_id):
+        raise HTTPException(status_code=403, detail="cannot_moderate_target")
+    now = time.time()
+    expires_at = now + duration_seconds
+    with _db() as conn:
+        conn.execute(
+            "INSERT INTO server_timeouts (room_id, peer_id, actor_peer_id, reason, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(room_id, peer_id) DO UPDATE SET actor_peer_id = excluded.actor_peer_id, reason = excluded.reason, expires_at = excluded.expires_at, created_at = excluded.created_at",
+            (room_id, target_peer_id, account["peer_id"], reason, expires_at, now),
+        )
+    _record_audit(room_id, account["peer_id"], "member_timed_out", target_peer_id, reason, {"duration_seconds": duration_seconds})
+    return {"success": True, "expires_at": expires_at}
+
+
+@app.delete("/api/rooms/{room_id}/moderation/timeout/{target_peer_id}")
+def clear_room_timeout(room_id: str, target_peer_id: str, request: Request):
+    room, account = _require_moderator(room_id, request, {}, "timeout_members")
+    with _db() as conn:
+        cursor = conn.execute("DELETE FROM server_timeouts WHERE room_id = ? AND peer_id = ?", (room_id, target_peer_id))
+    if not cursor.rowcount:
+        raise HTTPException(status_code=404, detail="timeout_not_found")
+    _record_audit(room_id, account["peer_id"], "member_timeout_cleared", target_peer_id)
+    return {"success": True}
+
+
+@app.post("/api/rooms/{room_id}/moderation/slow-mode")
+def set_room_slow_mode(room_id: str, body: dict, request: Request):
+    room, account = _require_moderator(room_id, request, body, "manage_channels")
+    channel_id = str(body.get("channel_id") or "").strip()
+    try:
+        seconds = int(body.get("seconds", 0))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="invalid_slow_mode")
+    if seconds < 0 or seconds > 21600 or not any(channel.get("id") == channel_id and channel.get("type") == "text" for channel in room.channels):
+        raise HTTPException(status_code=400, detail="invalid_slow_mode")
+    if seconds:
+        room.channel_slow_modes[channel_id] = seconds
+    else:
+        room.channel_slow_modes.pop(channel_id, None)
+    schedule_save_db()
+    _record_audit(room_id, account["peer_id"], "slow_mode_updated", metadata={"channel_id": channel_id, "seconds": seconds})
+    return {"success": True, "channel_id": channel_id, "seconds": seconds}
+
+
+@app.get("/api/rooms/{room_id}/audit-log")
+def get_room_audit_log(room_id: str, request: Request, limit: int = 50):
+    room, account = _require_moderator(room_id, request, {}, "view_audit_log")
+    limit = max(1, min(int(limit), 100))
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM server_audit_log WHERE room_id = ? ORDER BY audit_id DESC LIMIT ?",
+            (room_id, limit),
+        ).fetchall()
+    return {"entries": [{**dict(row), "metadata": json.loads(row["metadata_json"] or "{}")} for row in rows]}
+
+
+def _report_payload(row: sqlite3.Row) -> dict:
+    return dict(row)
+
+
+@app.post("/api/rooms/{room_id}/reports")
+def create_message_report(room_id: str, body: dict, request: Request):
+    room, account = _require_room_member(room_id, request, body)
+    channel_id = str(body.get("channelId") or body.get("channel_id") or "").strip()
+    message_id = str(body.get("messageId") or body.get("message_id") or "").strip()
+    reason = str(body.get("reason") or "other").strip().lower()
+    detail = str(body.get("detail") or "").strip()[:500]
+    if not channel_id or not message_id or reason not in {"spam", "harassment", "safety", "other"}:
+        raise HTTPException(status_code=400, detail="invalid_report")
+    message = next((item for item in room.messages.get(channel_id, []) if item.get("id") == message_id), None)
+    if not message:
+        raise HTTPException(status_code=404, detail="message_not_found")
+    report_id = str(body.get("id") or uuid.uuid4())[:100]
+    now = time.time()
+    with _db() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO server_message_reports (report_id, room_id, channel_id, message_id, reporter_peer_id, author_peer_id, reason, detail, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (report_id, room_id, channel_id, message_id, account["peer_id"], str(message.get("authorId") or ""), reason, detail, now),
+        )
+        report = conn.execute("SELECT * FROM server_message_reports WHERE report_id = ?", (report_id,)).fetchone()
+    _record_audit(room_id, account["peer_id"], "message_reported", str(message.get("authorId") or ""), reason, {"message_id": message_id, "channel_id": channel_id})
+    return {"success": True, "report": _report_payload(report)}
+
+
+@app.get("/api/rooms/{room_id}/reports")
+def list_message_reports(room_id: str, request: Request, status: str = "open", limit: int = 50):
+    _, _ = _require_moderator(room_id, request, {}, "manage_reports")
+    limit = max(1, min(int(limit), 100))
+    status = status if status in {"open", "resolved", "dismissed", "all"} else "open"
+    with _db() as conn:
+        if status == "all":
+            rows = conn.execute("SELECT * FROM server_message_reports WHERE room_id = ? ORDER BY created_at DESC LIMIT ?", (room_id, limit)).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM server_message_reports WHERE room_id = ? AND status = ? ORDER BY created_at DESC LIMIT ?", (room_id, status, limit)).fetchall()
+    return {"reports": [_report_payload(row) for row in rows]}
+
+
+@app.patch("/api/rooms/{room_id}/reports/{report_id}")
+def resolve_message_report(room_id: str, report_id: str, body: dict, request: Request):
+    _, account = _require_moderator(room_id, request, body, "manage_reports")
+    status = str(body.get("status") or "resolved").lower()
+    if status not in {"resolved", "dismissed"}:
+        raise HTTPException(status_code=400, detail="invalid_report_status")
+    now = time.time()
+    with _db() as conn:
+        cursor = conn.execute(
+            "UPDATE server_message_reports SET status = ?, moderator_peer_id = ?, resolved_at = ? WHERE room_id = ? AND report_id = ?",
+            (status, account["peer_id"], now, room_id, report_id),
+        )
+        if not cursor.rowcount:
+            raise HTTPException(status_code=404, detail="report_not_found")
+        report = conn.execute("SELECT * FROM server_message_reports WHERE report_id = ?", (report_id,)).fetchone()
+    _record_audit(room_id, account["peer_id"], f"report_{status}", metadata={"report_id": report_id})
+    return {"success": True, "report": _report_payload(report)}
 
 @app.get("/api/rooms/join/{invite_code}")
 def get_room_by_code(invite_code: str, request: Request):
     code = invite_code.upper()
-    for room in rooms.values():
-        if room.invite_code == code:
-            account = _request_account(request)
-            if account:
-                _upsert_server_member(
-                    room.room_id,
-                    account["peer_id"],
-            _account_name(account),
-                    room.role_for(account["peer_id"]),
+    account = _request_account(request)
+    if not account:
+        raise HTTPException(status_code=401, detail="unauthorized")
+    with _db() as conn:
+        invite = conn.execute("SELECT * FROM server_invites WHERE invite_code = ?", (code,)).fetchone()
+        # A pre-migration room gets a record the first time its existing code is used.
+        if not invite:
+            legacy_room = next((candidate for candidate in rooms.values() if candidate.invite_code == code), None)
+            if legacy_room:
+                conn.execute(
+                    "INSERT OR IGNORE INTO server_invites (invite_code, room_id, created_by, created_at) VALUES (?, ?, ?, ?)",
+                    (code, legacy_room.room_id, legacy_room.owner_id, time.time()),
                 )
-            return room.to_dict()
-    return {"error": "Not found"}
+                invite = conn.execute("SELECT * FROM server_invites WHERE invite_code = ?", (code,)).fetchone()
+        if not invite or invite["revoked_at"] or (invite["expires_at"] and invite["expires_at"] <= time.time()):
+            raise HTTPException(status_code=404, detail="invite_not_found")
+        room = rooms.get(invite["room_id"])
+        if not room:
+            raise HTTPException(status_code=404, detail="invite_not_found")
+        if _is_banned(room.room_id, account["peer_id"]):
+            raise HTTPException(status_code=403, detail="banned")
+        already_member = _is_room_member(room.room_id, account["peer_id"])
+        if not already_member:
+            used = conn.execute(
+                "UPDATE server_invites SET use_count = use_count + 1 WHERE invite_code = ? AND (max_uses IS NULL OR use_count < max_uses)",
+                (code,),
+            )
+            if used.rowcount != 1:
+                raise HTTPException(status_code=410, detail="invite_exhausted")
+    _upsert_server_member(room.room_id, account["peer_id"], _account_name(account), room.role_for(account["peer_id"]))
+    return room.to_dict()
 
 @app.delete("/api/rooms/{room_id}")
 async def delete_room(room_id: str, owner_id: str, request: Request):
@@ -1504,19 +2108,22 @@ async def delete_room(room_id: str, owner_id: str, request: Request):
 
 
 @app.post("/api/rooms/sync")
-def sync_rooms(body: dict):
+def sync_rooms(body: dict, request: Request):
     """
     ─░stemci a├º─▒l─▒┼ƒta yerel ├╢nbellekteki oda id'lerini buraya postalar.
     D├╢nen s─▒n─▒fland─▒rmaya g├╢re istemci: active -> metadata g├╝nceller,
     deleted -> yerel kopyay─▒ siler, unknown -> restore dener (redeploy sonras─▒
     disk s─▒f─▒rlanm─▒┼ƒsa) ya da bulunamazsa kullan─▒c─▒ya sorar.
     """
-    ids = body.get("room_ids") or []
+    account = _request_account(request, body)
+    if not account:
+        raise HTTPException(status_code=401, detail="unauthorized")
+    ids = [str(room_id) for room_id in (body.get("room_ids") or [])[:250]]
     active, deleted, unknown = [], [], []
     for rid in ids:
-        if rid in rooms:
+        if rid in rooms and _is_room_member(rid, account["peer_id"]) and not _is_banned(rid, account["peer_id"]):
             active.append(rooms[rid].to_dict())
-        elif rid in deleted_room_ids:
+        elif rid in deleted_room_ids and _is_platform_admin(account["peer_id"]):
             deleted.append(rid)
         else:
             unknown.append(rid)
@@ -1751,6 +2358,14 @@ async def signaling_ws(websocket: WebSocket, room_id: str, peer_id: str):
         return
 
     room = rooms[room_id]
+    if not _is_room_member(room_id, peer_id):
+        await websocket.send_text(json.dumps({"type": "error", "message": "Room membership required"}))
+        await websocket.close(code=4403, reason="not_a_member")
+        return
+    if _is_banned(room_id, peer_id):
+        await websocket.send_text(json.dumps({"type": "error", "message": "Banned from this server"}))
+        await websocket.close(code=4403, reason="banned")
+        return
     username = websocket.query_params.get("username", "Anonymous")
     avatar_color = websocket.query_params.get("color", "#7289da")
     # avatar_image is NOT stored server-side (too large); clients share it P2P via identity_announce
@@ -2058,6 +2673,18 @@ def startup_event():
     ensure_template_rooms()
     _SUPABASE_SYNC_READY = True
     schedule_supabase_push(ACCOUNTS_DB_FILE)
+
+
+@app.on_event("shutdown")
+def shutdown_event():
+    """Stop deferred persistence work before an ephemeral worker exits."""
+    global _db_save_timer
+    with _db_save_lock:
+        timer = _db_save_timer
+        _db_save_timer = None
+    if timer:
+        timer.cancel()
+        timer.join(timeout=1)
 
 if __name__ == "__main__":
     import uvicorn

@@ -52,9 +52,16 @@ class P2PMesh {
 
         this._pendingIce = {};           // peerId → [candidate, ...]
         this._reconnectTimer = null;
+        this._reconnectAttempts = 0;
+        this._maxReconnectAttempts = _scordTiming().P2P_WS_MAX_RECONNECT_ATTEMPTS ?? 8;
+        this._iceGraceMs = _scordTiming().P2P_ICE_DISCONNECTED_GRACE_MS ?? 8000;
         this._dead = false;
         this.cameraStream = null;
         this.authToken = "";
+        this._onNetworkOnline = () => {
+            if (!this._dead && (!this.ws || this.ws.readyState === WebSocket.CLOSED)) this._scheduleReconnect(true);
+        };
+        window.addEventListener?.("online", this._onNetworkOnline);
     }
 
     /* ── Connect to signaling server ─────────────────────────── */
@@ -76,6 +83,7 @@ class P2PMesh {
 
         this.ws.onopen = () => {
             console.log("[P2P] Signaling connected");
+            this._reconnectAttempts = 0;
             this._setStatus("connected");
             this._startPing();
         };
@@ -89,11 +97,7 @@ class P2PMesh {
             if (this._dead) return;
             console.warn("[P2P] Signaling disconnected", { code: ev?.code, reason: ev?.reason, wasClean: ev?.wasClean });
             this._setStatus("disconnected");
-            clearTimeout(this._reconnectTimer);
-            this._reconnectTimer = setTimeout(
-                () => this.connect(this.username, this.avatarColor, this.avatarImage, this.authToken),
-                _scordTiming().P2P_WS_RECONNECT_MS ?? 3000
-            );
+            this._scheduleReconnect();
         };
 
         this.ws.onerror = (e) => {
@@ -105,6 +109,7 @@ class P2PMesh {
     disconnect() {
         this._dead = true;
         clearTimeout(this._reconnectTimer);
+        window.removeEventListener?.("online", this._onNetworkOnline);
         this._pingTimer && clearInterval(this._pingTimer);
         this._reconnectTimer = null;
 
@@ -128,6 +133,23 @@ class P2PMesh {
             try { this.ws.close(); } catch { }
         }
         this.ws = null;
+    }
+
+    _scheduleReconnect(immediate = false) {
+        if (this._dead || this._reconnectTimer) return;
+        if (this._reconnectAttempts >= this._maxReconnectAttempts) {
+            this._setStatus("reconnect_failed");
+            return;
+        }
+        const base = _scordTiming().P2P_WS_RECONNECT_MS ?? 3000;
+        const capped = Math.min(base * (2 ** this._reconnectAttempts), 30000);
+        const jitter = Math.round(capped * (0.15 * Math.random()));
+        const delay = immediate ? 0 : capped + jitter;
+        this._reconnectAttempts += 1;
+        this._reconnectTimer = setTimeout(() => {
+            this._reconnectTimer = null;
+            this.connect(this.username, this.avatarColor, this.avatarImage, this.authToken);
+        }, delay);
     }
 
     /* ── Signaling message dispatcher ────────────────────────── */
@@ -301,7 +323,7 @@ class P2PMesh {
         // bundlePolicy=max-bundle + rtcpMuxPolicy=require: tek port/tek multiplexed
         // akış — paket sayısını ve NAT delik açma yükünü azaltır (kötü ağ dostu).
         const pc = new RTCPeerConnection({ iceServers: _scordIceServers(), bundlePolicy: "max-bundle", rtcpMuxPolicy: "require" });
-        const peerObj = { pc, dc: null, info };
+        const peerObj = { pc, dc: null, info, _iceRecoveries: 0, _iceGraceTimer: null };
         this.peers[peerId] = peerObj;
         this._pendingIce[peerId] = [];
 
@@ -386,14 +408,27 @@ class P2PMesh {
         };
 
         pc.onconnectionstatechange = () => {
+            if (pc.connectionState === "connected") {
+                peerObj._iceRecoveries = 0;
+                clearTimeout(peerObj._iceGraceTimer);
+            } else if (pc.connectionState === "failed") {
+                this._recoverPeer(peerId, peerObj, "connection_failed");
+            }
             console.log(`[P2P] ${peerId} → ${pc.connectionState}`);
         };
 
         pc.oniceconnectionstatechange = () => {
             console.log(`[P2P] ${peerId} ice → ${pc.iceConnectionState}`);
-            if (pc.iceConnectionState === "failed") {
-                // Common quick recovery: trigger ICE restart by renegotiation
-                try { pc.restartIce?.(); } catch { }
+            if (pc.iceConnectionState === "disconnected") {
+                clearTimeout(peerObj._iceGraceTimer);
+                peerObj._iceGraceTimer = setTimeout(() => {
+                    if (pc.iceConnectionState === "disconnected") this._recoverPeer(peerId, peerObj, "ice_disconnected");
+                }, this._iceGraceMs);
+            } else if (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") {
+                clearTimeout(peerObj._iceGraceTimer);
+                peerObj._iceRecoveries = 0;
+            } else if (pc.iceConnectionState === "failed") {
+                this._recoverPeer(peerId, peerObj, "ice_failed");
             }
         };
 
@@ -518,9 +553,31 @@ class P2PMesh {
         }
     }
 
+    _recoverPeer(peerId, peerObj, reason) {
+        const pc = peerObj?.pc;
+        if (!pc || this._dead || pc.connectionState === "closed") return;
+        clearTimeout(peerObj._iceGraceTimer);
+        if (peerObj._recovering) return;
+        if (peerObj._iceRecoveries >= 2) {
+            console.warn(`[P2P] ${peerId} recovery exhausted (${reason})`);
+            this._setStatus("peer_reconnect_failed");
+            this._closePeer(peerId);
+            return;
+        }
+        peerObj._recovering = true;
+        peerObj._iceRecoveries += 1;
+        console.warn(`[P2P] Recovering ${peerId} (${reason}), attempt ${peerObj._iceRecoveries}`);
+        try {
+            pc.restartIce?.();
+            pc.onnegotiationneeded?.();
+        } catch { }
+        setTimeout(() => { peerObj._recovering = false; }, 1000);
+    }
+
     _closePeer(peerId) {
         const p = this.peers[peerId];
         if (!p) return;
+        clearTimeout(p._iceGraceTimer);
         p.dc && p.dc.close();
         p.pc.close();
         delete this.peers[peerId];

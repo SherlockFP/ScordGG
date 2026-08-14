@@ -8,6 +8,7 @@ the bootstrap account and template rooms are created.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -62,19 +63,38 @@ def _table_rows(conn: sqlite3.Connection, table: str) -> list[dict[str, Any]]:
         return []
 
 
+def _snapshot_checksum(snapshot: dict[str, Any]) -> str:
+    """Return the stable checksum for a snapshot payload, excluding its checksum field."""
+    payload = {key: value for key, value in snapshot.items() if key != "checksum"}
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
 def build_snapshot(database_file: str) -> dict[str, Any]:
     conn = sqlite3.connect(database_file)
     conn.row_factory = sqlite3.Row
     try:
-        return {
-            "schema_version": 2,
+        conn.execute("BEGIN")
+        snapshot = {
+            "schema_version": 3,
             "captured_at": time.time(),
+            "source_instance": os.environ.get("SCORD_INSTANCE_ID") or os.environ.get("RENDER_INSTANCE_ID") or "local",
             "accounts": _table_rows(conn, "accounts"),
             "friendships": _table_rows(conn, "friendships"),
+            "friend_requests": _table_rows(conn, "friend_requests"),
+            "friend_blocks": _table_rows(conn, "friend_blocks"),
             "servers": _table_rows(conn, "servers"),
             "server_members": _table_rows(conn, "server_members"),
+            "server_invites": _table_rows(conn, "server_invites"),
+            "server_bans": _table_rows(conn, "server_bans"),
+            "server_timeouts": _table_rows(conn, "server_timeouts"),
+            "server_message_throttle": _table_rows(conn, "server_message_throttle"),
+            "server_audit_log": _table_rows(conn, "server_audit_log"),
+            "server_message_reports": _table_rows(conn, "server_message_reports"),
             "deleted_servers": _table_rows(conn, "deleted_servers"),
         }
+        snapshot["checksum"] = _snapshot_checksum(snapshot)
+        return snapshot
     finally:
         conn.close()
 
@@ -131,7 +151,15 @@ def restore_if_empty(database_file: str) -> bool:
     if not rows or not isinstance(rows[0].get("payload"), dict):
         return False
     snapshot = rows[0]["payload"]
-    table_order = ("accounts", "friendships", "servers", "server_members", "deleted_servers")
+    expected_checksum = snapshot.get("checksum")
+    if expected_checksum and expected_checksum != _snapshot_checksum(snapshot):
+        log.warning("Supabase snapshot checksum mismatch; refusing restore")
+        return False
+    table_order = (
+        "accounts", "friendships", "friend_requests", "friend_blocks", "servers", "server_members",
+        "server_invites", "server_bans", "server_timeouts", "server_message_throttle", "server_audit_log", "server_message_reports",
+        "deleted_servers",
+    )
     conn = sqlite3.connect(database_file)
     try:
         conn.execute("PRAGMA foreign_keys = OFF")
