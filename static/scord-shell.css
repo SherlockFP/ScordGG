@@ -999,3 +999,272 @@
     max-width: min(640px, 92%) !important;
   }
 }
+
+/* ── Moderation surfaces: calm glass menus + readable message actions ── */
+#app .members-panel .member-role-cat {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  margin-inline: -2px;
+  background: linear-gradient(180deg, rgba(18, 27, 48, 0.94), rgba(18, 27, 48, 0.72)) !important;
+  backdrop-filter: blur(14px) saturate(135%);
+  -webkit-backdrop-filter: blur(14px) saturate(135%);
+}
+#app .members-panel .member-avatar {
+  border-radius: 50% !important;
+}
+#app .members-panel .member-avatar .status-dot {
+  border-radius: 50% !important;
+}
+
+#ctx-menu,
+#dm-ctx-menu,
+.ctx-menu {
+  min-width: 208px !important;
+  max-width: min(280px, calc(100vw - 24px));
+  padding: 7px !important;
+  border: 1px solid rgba(154, 172, 218, 0.18) !important;
+  border-radius: 16px !important;
+  background: linear-gradient(155deg, rgba(26, 36, 64, 0.96), rgba(8, 13, 27, 0.97)) !important;
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.48), inset 0 1px rgba(255, 255, 255, 0.06) !important;
+  backdrop-filter: blur(22px) saturate(140%) !important;
+  -webkit-backdrop-filter: blur(22px) saturate(140%) !important;
+}
+#ctx-menu .ctx-item,
+#dm-ctx-menu > div,
+.ctx-menu .ctx-item {
+  min-height: 38px !important;
+  margin: 2px 0;
+  padding: 9px 11px !important;
+  border: 1px solid transparent;
+  border-radius: 11px !important;
+  color: #dce5f8 !important;
+  font-size: 13px !important;
+  transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
+}
+#ctx-menu .ctx-item:hover,
+#dm-ctx-menu > div:hover,
+.ctx-menu .ctx-item:hover {
+  border-color: rgba(139, 167, 226, 0.2);
+  background: linear-gradient(90deg, rgba(139, 92, 246, 0.22), rgba(56, 189, 248, 0.10)) !important;
+  transform: translateX(2px);
+}
+#ctx-menu .ctx-item.danger,
+#dm-ctx-menu > div[style*="ed4245"] {
+  color: #ff9da5 !important;
+}
+#ctx-menu .ctx-item.danger:hover,
+#dm-ctx-menu > div[style*="ed4245"]:hover {
+  background: rgba(239, 68, 68, 0.16) !important;
+  border-color: rgba(248, 113, 113, 0.22);
+}
+.ctx-menu .ctx-icon {
+  width: 22px;
+  color: #a9b8d7;
+  text-align: center;
+}
+
+#app .message.msg-row:focus-within {
+  outline: 1px solid rgba(139, 167, 226, 0.2);
+  outline-offset: -1px;
+}
+#app .message.msg-row .msg-bubble {
+  border: 1px solid rgba(155, 176, 224, 0.10) !important;
+  background: linear-gradient(135deg, rgba(29, 41, 68, 0.78), rgba(17, 25, 46, 0.72)) !important;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.13) !important;
+}
+#app .message.msg-row.msg-row--self .msg-bubble {
+  border-color: rgba(139, 92, 246, 0.22) !important;
+  background: linear-gradient(135deg, rgba(96, 58, 190, 0.40), rgba(31, 52, 91, 0.78)) !important;
+}
+
+/* ── Members panel: compact translucent directory ──────────────── */
+/* Keep the header fixed and make the list the only scroll owner. The old
+   stack gave both .members-panel and #members-list their own overflow. */
+#app .chat-body {
+  min-height: 0;
+}
+
+#app .members-panel,
+#app #voice-members-panel {
+  width: min(268px, 28vw) !important;
+  min-width: 228px;
+  min-height: 0;
+  display: flex;
+  flex: 0 0 min(268px, 28vw) !important;
+  flex-direction: column;
+  gap: 0;
+  padding: 0 !important;
+  overflow: hidden !important;
+  border-left: 1px solid rgba(155, 176, 224, 0.14) !important;
+  background:
+    linear-gradient(180deg, rgba(18, 27, 48, 0.78), rgba(8, 13, 27, 0.92)) !important;
+  backdrop-filter: blur(18px) saturate(125%) !important;
+  -webkit-backdrop-filter: blur(18px) saturate(125%) !important;
+}
+
+#app #voice-members-panel,
+#app #voice-members-panel.collapsed {
+  display: none !important;
+}
+
+#app .members-panel h4 {
+  flex: 0 0 auto;
+  margin: 0 !important;
+  padding: 18px 16px 10px !important;
+  color: #aeb9d2 !important;
+  font-size: 10px !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.14em !important;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+#app .members-panel h4 span {
+  color: #6f7e9d;
+  font-weight: 700;
+}
+
+#app #members-list,
+#app #voice-members-list {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  height: auto !important;
+  margin: 0 !important;
+  padding: 0 10px 14px !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  contain: content !important;
+  content-visibility: visible !important;
+  overscroll-behavior: contain;
+  scrollbar-color: rgba(148, 163, 201, 0.30) transparent;
+  scrollbar-width: thin;
+}
+
+#app #members-list::-webkit-scrollbar,
+#app #voice-members-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+#app #members-list::-webkit-scrollbar-track,
+#app #voice-members-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+#app #members-list::-webkit-scrollbar-thumb,
+#app #voice-members-list::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: rgba(148, 163, 201, 0.28);
+  background-clip: padding-box;
+}
+
+#app #members-list:hover::-webkit-scrollbar-thumb,
+#app #voice-members-list:hover::-webkit-scrollbar-thumb {
+  background: rgba(139, 167, 226, 0.46);
+  background-clip: padding-box;
+}
+
+#app .members-panel .member-role-cat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 14px 8px 6px !important;
+  color: #7f8da9 !important;
+  font-size: 10px !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.13em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+#app .members-panel .member-role-cat::after {
+  height: 1px;
+  flex: 1;
+  background: rgba(155, 176, 224, 0.10);
+  content: "";
+}
+
+#app .members-panel .member-item {
+  min-height: 48px !important;
+  margin: 2px 0 !important;
+  padding: 7px 9px !important;
+  gap: 10px !important;
+  border: 1px solid transparent;
+  border-radius: 12px !important;
+  background: transparent !important;
+  color: var(--scord-text) !important;
+  transition: background 150ms ease, border-color 150ms ease, transform 150ms ease !important;
+}
+
+#app .members-panel .member-item:hover,
+#app .members-panel .member-item:focus-within {
+  border-color: rgba(139, 167, 226, 0.16) !important;
+  background: linear-gradient(100deg, rgba(139, 92, 246, 0.14), rgba(56, 189, 248, 0.07)) !important;
+  transform: translateX(1px);
+}
+
+#app .members-panel .member-avatar {
+  width: 34px !important;
+  height: 34px !important;
+  flex: 0 0 34px;
+  border: 1px solid rgba(226, 232, 255, 0.15);
+  border-radius: 11px !important;
+  box-shadow: 0 5px 14px rgba(0, 0, 0, 0.18);
+  font-size: 12px;
+}
+
+#app .members-panel .member-avatar .status-dot {
+  right: -3px;
+  bottom: -3px;
+  width: 11px;
+  height: 11px;
+  border: 3px solid #10182c !important;
+  box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.18);
+}
+
+#app .members-panel .member-name {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: #d9e1f4 !important;
+  font-size: 13px !important;
+  font-weight: 650 !important;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#app .members-panel .member-you-tag {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 3px 7px !important;
+  border: 1px solid rgba(56, 189, 248, 0.18);
+  background: rgba(56, 189, 248, 0.10) !important;
+  color: #8ddcff !important;
+  font-size: 9px !important;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+@media (max-width: 1180px) and (min-width: 769px) {
+  #app .members-panel,
+  #app #voice-members-panel {
+    width: 236px !important;
+    flex-basis: 236px !important;
+    min-width: 216px;
+  }
+}
+
+@media (max-width: 768px) {
+  #app .members-panel,
+  #app #voice-members-panel {
+    width: min(310px, calc(100vw - 24px)) !important;
+    min-width: 0;
+    flex-basis: min(310px, calc(100vw - 24px)) !important;
+    border: 1px solid rgba(155, 176, 224, 0.16) !important;
+    border-radius: 18px;
+    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.42);
+  }
+}

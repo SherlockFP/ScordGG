@@ -37,8 +37,18 @@ class FrontendContractTests(unittest.TestCase):
         self.assertIn('options.headers.Authorization = `Bearer ${token}`', app)
         self.assertIn('token=${encodeURIComponent(token)}', p2p)
         self.assertIn('account["peer_id"] != peer_id', server)
-        self.assertIn("function isSuperAdmin() {\n    return false;", app)
+        self.assertIn("function isSuperAdmin() {\n    return state.isPlatformAdmin === true;", app)
         self.assertNotIn('localStorage.setItem("scord_pass", pass)', app)
+
+    def test_persistent_accounts_friends_and_platform_admin_contract(self):
+        server = (ROOT / "static" / "server.py").read_text(encoding="utf-8")
+        app = (ROOT / "app.js").read_text(encoding="utf-8")
+        self.assertIn("platform_admin", server)
+        self.assertIn("CREATE TABLE IF NOT EXISTS friendships", server)
+        self.assertIn('@app.get("/api/friends")', server)
+        self.assertIn("administrator_snapshot", server)
+        self.assertIn("loadPersistentFriends", app)
+        self.assertIn("/friends/confirm", app)
 
 
 class ServerTemplateTests(unittest.TestCase):

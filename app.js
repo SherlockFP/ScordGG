@@ -44,6 +44,7 @@ const EMOJIS = ["😀", "😃", "😄", "😁", "😆", "😅", "🤣", "😂", 
 var __rawState = {
     peerId: null,
     authToken: "",
+    isPlatformAdmin: false,
     username: "",
     avatarColor: "#7c3aed",
     _appliedTheme: null,
@@ -1943,7 +1944,7 @@ function showChannelContextMenu(ev, channel, serverId) {
                     setChannelBackground(serverId, channel.id, url.trim());
                 } else {
                     // Fallback
-                    fetch(`${API_BASE}/rooms/${serverId}/channel_background`, {
+                    scordFetch(`${API_BASE}/rooms/${serverId}/channel_background`, {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ channel_id: channel.id, url: url.trim() || null })
@@ -2118,6 +2119,7 @@ function applyAccountToState(acc) {
     state.peerId = acc.peer_id;
     if (acc.token) state.authToken = acc.token;
     state.username = acc.username;
+    state.isPlatformAdmin = acc.platform_admin === true || String(acc.username || "").trim().toLowerCase() === "sherlock";
     state.avatarImage = acc.avatar_image || "";
     state.avatarColor = acc.avatar_color || state.avatarColor;
     state.bio = acc.bio || "";
@@ -2130,6 +2132,7 @@ function applyAccountToState(acc) {
     localStorage.setItem("scord_bio", state.bio);
     localStorage.setItem("scord_banner_url", state.bannerUrl);
     localStorage.setItem("scord_banner_color", state.bannerColor);
+    loadPersistentFriends();
 }
 
 /** Profil alanlarını hem localStorage'a hem hesaba (sunucuya) yazar. */
@@ -2179,6 +2182,7 @@ async function initSetup() {
         state.username = savedNick;
         state.peerId = savedId;
         state.authToken = token;
+        state.isPlatformAdmin = String(savedNick || "").trim().toLowerCase() === "sherlock";
         state.avatarColor = localStorage.getItem("scord_color") || state.avatarColor;
         state.avatarImage = localStorage.getItem("scord_avatar_image") || "";
         state.bio = localStorage.getItem("scord_bio") || "";
@@ -3575,7 +3579,7 @@ async function sendMessage() {
     }
 
     // V16: Server-side Persistence
-    fetch(`${API_BASE}/rooms/${state.activeServerId}/messages`, {
+    scordFetch(`${API_BASE}/rooms/${state.activeServerId}/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: msg })
@@ -3851,6 +3855,9 @@ async function createServer(name) {
         id: room_id,
         name: name,
         ownerId: state.peerId,
+        ownerUsername: state.username,
+        createdAt: Date.now(),
+        administrators: [{ peer_id: state.peerId, username: state.username, role: "owner" }],
         inviteCode,
         channels: [
             { id: "ch-genel", name: "genel", type: "text" },
@@ -3913,7 +3920,7 @@ async function submitAddChannel(serverId, type) {
     if (!name) return toast("Bir kanal adı girmelisin.", "error");
 
     const keys = JSON.parse(localStorage.getItem("scordOwnerKeys") || "{}");
-    const res = await fetch(`${API_BASE}/rooms/${serverId}/channels`, {
+    const res = await scordFetch(`${API_BASE}/rooms/${serverId}/channels`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, type, ...(keys[serverId] ? { owner_key: keys[serverId] } : {}) })
@@ -3945,7 +3952,7 @@ async function deleteChannel(serverId, channelId) {
 
     try {
         const keys = JSON.parse(localStorage.getItem("scordOwnerKeys") || "{}");
-        const res = await fetch(`${API_BASE}/rooms/${serverId}/channels/${channelId}${keys[serverId] ? `?owner_key=${encodeURIComponent(keys[serverId])}` : ""}`, { method: "DELETE" });
+        const res = await scordFetch(`${API_BASE}/rooms/${serverId}/channels/${channelId}${keys[serverId] ? `?owner_key=${encodeURIComponent(keys[serverId])}` : ""}`, { method: "DELETE" });
         const data = await res.json();
         if (data.success || res.ok) {
             server.channels = server.channels.filter(c => c.id !== channelId);
@@ -3979,7 +3986,7 @@ async function renameChannel(serverId, channelId) {
 
     try {
         const keys = JSON.parse(localStorage.getItem("scordOwnerKeys") || "{}");
-        const res = await fetch(`${API_BASE}/rooms/${serverId}/channels/${channelId}`, {
+        const res = await scordFetch(`${API_BASE}/rooms/${serverId}/channels/${channelId}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ name: newName.toLowerCase().replace(/\s+/g, '-'), ...(keys[serverId] ? { owner_key: keys[serverId] } : {}) })
@@ -4047,6 +4054,9 @@ async function joinServer(roomId) {
         name: room.name,
         color,
         ownerId: room.owner_id,
+        ownerUsername: room.owner_username || "",
+        createdAt: room.created_at || Date.now(),
+        administrators: room.administrators || [],
         inviteCode: room.invite_code,
         channels: room.channels || [
             { id: "ch-genel", name: "genel", type: "text" },
@@ -6500,7 +6510,7 @@ function showMsgContextMenu(msg, x, y) {
             const live = server.messages?.[msg.channelId]?.find(m => m.id === msg.id);
             if (live) live.isPinned = msg.isPinned;
             renderMessages(state.activeServerId, state.activeChannelId);
-            fetch(`${API_BASE}/rooms/${state.activeServerId}/pin`, {
+            scordFetch(`${API_BASE}/rooms/${state.activeServerId}/pin`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ message: msg }),
@@ -6535,6 +6545,9 @@ function deleteChatMessage(msg) {
 
     server.messages[channelId] = server.messages[channelId].filter(m => m.id !== msg.id);
     server.pinned_messages = (server.pinned_messages || []).filter(m => m.id !== msg.id);
+    scordFetch(`${API_BASE}/rooms/${encodeURIComponent(state.activeServerId)}/messages/${encodeURIComponent(msg.id)}?channel_id=${encodeURIComponent(channelId)}`, {
+        method: "DELETE",
+    }).catch(e => console.warn("[Chat] server delete failed:", e));
     meshBroadcastReliable({ type: "msg_delete", payload: { channelId, msgId: msg.id } });
     renderMessages(state.activeServerId, state.activeChannelId);
     toast("Mesaj silindi.", "info");
@@ -7247,7 +7260,7 @@ function openServerSettingsModal() {
         else delete srv.channel_backgrounds[state.activeChannelId];
         // Server API'ye kaydet
         try {
-            await fetch(`${API_BASE}/rooms/${srv.id}/channel_background`, {
+            await scordFetch(`${API_BASE}/rooms/${srv.id}/channel_background`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ channel_id: state.activeChannelId, url: url || null }),
@@ -7268,7 +7281,7 @@ function openServerSettingsModal() {
         if (!srv || srv.ownerId !== state.peerId) return;
         try {
         const keys = JSON.parse(localStorage.getItem("scordOwnerKeys") || "{}");
-        const res = await fetch(`${API_BASE}/rooms/${srv.id}/invite_rotate`, {
+        const res = await scordFetch(`${API_BASE}/rooms/${srv.id}/invite_rotate`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ owner_id: state.peerId, ...(keys[srv.id] ? { owner_key: keys[srv.id] } : {}) }),
@@ -7325,7 +7338,7 @@ function saveServerSettings() {
     // Server'a kaydet (API)
     if (typeof API_BASE !== "undefined") {
         const keys = JSON.parse(localStorage.getItem("scordOwnerKeys") || "{}");
-        fetch(`${API_BASE}/rooms/${server.id}/settings`, {
+        scordFetch(`${API_BASE}/rooms/${server.id}/settings`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -7742,7 +7755,29 @@ function renderDMMainSearch() {
     });
 }
 
-function addFriend(peerId, name) {
+async function loadPersistentFriends() {
+    if (!state.authToken) return;
+    try {
+        const res = await scordFetch(`${API_BASE}/friends`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!Array.isArray(data.friends)) return;
+        const merged = new Map((state.friends || []).map(friend => [friend.peerId, friend]));
+        data.friends.forEach(friend => merged.set(friend.peer_id, {
+            peerId: friend.peer_id,
+            name: friend.username,
+            avatarColor: friend.avatar_color,
+            avatarImage: friend.avatar_image,
+        }));
+        state.friends = Array.from(merged.values());
+        localStorage.setItem("scord_friends", JSON.stringify(state.friends));
+        if (!state.activeServerId && typeof renderHomeSidebar === "function") renderHomeSidebar();
+    } catch (e) {
+        console.warn("[Friends] persistent sync failed:", e);
+    }
+}
+
+async function addFriend(peerId, name) {
     const server = state.servers.find(s => s.id === state.activeServerId);
     const m = server?.members.find(mem => mem.peer_id === peerId);
 
@@ -7755,13 +7790,19 @@ function addFriend(peerId, name) {
         avatarColor: m?.avatar_color,
         avatarImage: m?.avatar_image
     });
+    scordFetch(`${API_BASE}/friends/confirm`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target_peer_id: peerId }),
+    }).catch(e => console.warn("[Friends] persist failed:", e));
     localStorage.setItem("scord_friends", JSON.stringify(state.friends));
     toast(`${name} arkadaş olarak eklendi! ✨`, "success");
 }
 
-function removeFriend(peerId) {
+async function removeFriend(peerId) {
     state.friends = state.friends.filter(f => f.peerId !== peerId);
     localStorage.setItem("scord_friends", JSON.stringify(state.friends));
+    try { await scordFetch(`${API_BASE}/friends/${encodeURIComponent(peerId)}`, { method: "DELETE" }); } catch (e) { console.warn("[Friends] remove persist failed:", e); }
     if (!state.activeServerId) renderHomeSidebar();
     toast("Arkadaş listesinden çıkarıldı.", "info");
 }
@@ -9003,7 +9044,7 @@ async function deleteServer(serverId) {
     try {
         const keys = JSON.parse(localStorage.getItem("scordOwnerKeys") || "{}");
         const ownerKey = keys[serverId] || "";
-        const res = await fetch(`${API_BASE}/rooms/${encodeURIComponent(serverId)}?owner_id=${encodeURIComponent(state.peerId)}${ownerKey ? `&owner_key=${encodeURIComponent(ownerKey)}` : ""}`, { method: "DELETE" });
+        const res = await scordFetch(`${API_BASE}/rooms/${encodeURIComponent(serverId)}?owner_id=${encodeURIComponent(state.peerId)}${ownerKey ? `&owner_key=${encodeURIComponent(ownerKey)}` : ""}`, { method: "DELETE" });
         const data = await res.json();
         if (data.success) {
             delete keys[serverId];
@@ -9024,7 +9065,7 @@ async function deleteServer(serverId) {
 }
 
 function updateServerIcon(serverId, url) {
-    fetch(`${API_BASE}/rooms/${serverId}/icon`, {
+    scordFetch(`${API_BASE}/rooms/${serverId}/icon`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url })
@@ -11027,6 +11068,10 @@ function normalizeServerLivePayload(server, room) {
     // room_state ile zaten gönderiyor (server.py to_dict) — burada eksik olan
     // istemci tarafı tüketimdi.
     if (room.name) server.name = room.name;
+    if (room.owner_id) server.ownerId = room.owner_id;
+    if (room.owner_username) server.ownerUsername = room.owner_username;
+    if (room.created_at) server.createdAt = room.created_at;
+    if (room.administrators) server.administrators = room.administrators;
     if (room.icon_url !== undefined) server.icon_url = room.icon_url;
     if (room.description !== undefined) server.description = room.description;
     if (room.invite_code) server.inviteCode = room.invite_code;
@@ -11084,6 +11129,7 @@ window.purgeLocalServer = purgeLocalServer;
 
 function _localServerToRestorePayload(server) {
     return {
+        token: localStorage.getItem("scord_token") || "",
         name: server.name,
         owner_id: server.ownerId || server.owner_id,
         channels: server.channels,
@@ -11125,7 +11171,7 @@ async function reconcileServerRegistry() {
             if (ok) payload.owner_key = ok;
             const res = await fetch(`${API_BASE}/rooms/${encodeURIComponent(id)}/restore`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: { "Content-Type": "application/json", ...(localStorage.getItem("scord_token") ? { Authorization: `Bearer ${localStorage.getItem("scord_token")}` } : {}) },
                 body: JSON.stringify(payload),
             });
             const data = await res.json();
@@ -11178,7 +11224,7 @@ async function handleRoomNotFound(roomId) {
             if (ok) payload.owner_key = ok;
             const res = await fetch(`${API_BASE}/rooms/${encodeURIComponent(roomId)}/restore`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: { "Content-Type": "application/json", ...(localStorage.getItem("scord_token") ? { Authorization: `Bearer ${localStorage.getItem("scord_token")}` } : {}) },
                 body: JSON.stringify(payload),
             });
             const data = await res.json();
@@ -11272,7 +11318,7 @@ function handleAuthoritativeServerEvent(msg, roomId) {
 }
 
 function isSuperAdmin() {
-    return false;
+    return state.isPlatformAdmin === true;
 }
 
 function myRoleId(server) {
@@ -11743,7 +11789,7 @@ saveProfessionalServerSettings = window.saveProfessionalServerSettings = functio
     if (desc !== undefined) server.description = desc;
     // Sunucuya kalıcı yaz (isim/ikon/açıklama)
     const keys = JSON.parse(localStorage.getItem("scordOwnerKeys") || "{}");
-    fetch(`${API_BASE}/rooms/${server.id}/settings`, {
+    scordFetch(`${API_BASE}/rooms/${server.id}/settings`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: server.name, icon_url: server.icon_url, description: server.description || "", ...(keys[server.id] ? { owner_key: keys[server.id] } : {}) }),
@@ -18318,7 +18364,7 @@ function addServerSystemMessage(serverId, text, channelId = null) {
     server.messages[ch].push(msg);
     if (state.activeServerId === serverId && state.activeChannelId === ch) renderMessages(serverId, ch);
     try {
-        fetch(`${API_BASE}/rooms/${serverId}/messages`, {
+        scordFetch(`${API_BASE}/rooms/${serverId}/messages`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ channelId: ch, message: msg }),
@@ -19356,7 +19402,7 @@ console.log("[App] Performance + Mobile optimization loaded");
       window.state.mesh.broadcast({ type: "msg_delete", payload: { channelId: channelId, msgId: msg.id } });
     }
     if (_API && window.state.activeServerId) {
-      fetch(_API + "/rooms/" + window.state.activeServerId + "/messages/" + msg.id + "?channel_id=" + encodeURIComponent(channelId), { method: "DELETE" }).catch(function () {});
+      scordFetch(_API + "/rooms/" + window.state.activeServerId + "/messages/" + msg.id + "?channel_id=" + encodeURIComponent(channelId), { method: "DELETE" }).catch(function () {});
     }
     if (typeof renderMessages === "function") renderMessages(window.state.activeServerId, window.state.activeChannelId);
     if (typeof toast === "function") toast("Mesaj silindi.", "info");
@@ -19402,7 +19448,7 @@ console.log("[App] Performance + Mobile optimization loaded");
   window.updateServerIcon = function updateServerIcon(serverId, url) {
     var trimmed = (url || "").trim();
     if (!trimmed) { if (typeof toast === "function") toast("Geçerli bir URL girin.", "error"); return; }
-    fetch(_API + "/rooms/" + serverId + "/icon", {
+    scordFetch(_API + "/rooms/" + serverId + "/icon", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url: trimmed }),
@@ -19429,7 +19475,7 @@ console.log("[App] Performance + Mobile optimization loaded");
     if (!channel) return;
     if (!confirm('"' + channel.name + '" kanalını silmek istediğine emin misin?')) return;
     try {
-      var res = await fetch(_API + "/rooms/" + serverId + "/channels/" + channelId, { method: "DELETE" });
+      var res = await scordFetch(_API + "/rooms/" + serverId + "/channels/" + channelId, { method: "DELETE" });
       var data = await res.json();
       if (data.success) {
         server.channels = server.channels.filter(function (c) { return c.id !== channelId; });
@@ -19475,7 +19521,7 @@ console.log("[App] Performance + Mobile optimization loaded");
 
   window.setChannelBackground = async function setChannelBackground(serverId, channelId, url) {
     try {
-      var res = await fetch(_API + "/rooms/" + serverId + "/channel_background", {
+      var res = await scordFetch(_API + "/rooms/" + serverId + "/channel_background", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ channel_id: channelId, url: url || null }),
