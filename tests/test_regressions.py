@@ -25,6 +25,21 @@ class FrontendContractTests(unittest.TestCase):
         self.assertIn("grid-template-columns: minmax(0, 1fr) auto", css)
         self.assertNotIn("display: none !important;\n  }\n\n  #app .channel-sidebar", css)
 
+    def test_design_bible_visual_contract(self):
+        html = (ROOT / "index.html").read_text(encoding="utf-8")
+        app = (ROOT / "app.js").read_text(encoding="utf-8")
+        css = (ROOT / "static" / "scord-design.css").read_text(encoding="utf-8")
+        bible = (ROOT / "design-system" / "scord" / "MASTER.md").read_text(encoding="utf-8")
+        self.assertRegex(html, r'href="static/scord-design\.css\?v=\d+"')
+        self.assertIn('id="member-directory-search"', html)
+        self.assertIn("--scord-canvas: #050b18", css)
+        self.assertIn("html body #app .message.msg-row.msg-row--self .msg-bubble", css)
+        self.assertIn("background: transparent !important", css)
+        self.assertIn("@media (max-width: 768px)", css)
+        self.assertIn("function setupMemberDirectorySearch", app)
+        self.assertIn('.member-status-dot, .member-avatar .status-dot', app)
+        self.assertIn("Message backgrounds are transparent", bible)
+
     def test_legacy_identity_store_is_migrated(self):
         source = (ROOT / "app.js").read_text(encoding="utf-8")
         self.assertIn("function migrateLegacyIdentityStore", source)

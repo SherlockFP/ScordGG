@@ -920,7 +920,7 @@ function updateMemberList() {
 }
 
 function updateMemberStatusDisplay(memberEl, member) {
-    const statusDot = memberEl.querySelector(".member-status-dot");
+    const statusDot = memberEl.querySelector(".member-status-dot, .member-avatar .status-dot");
     const statusText = memberEl.querySelector(".member-status-text");
 
     if (statusDot && member.status) {
@@ -2448,10 +2448,10 @@ function initMobileNav() {
         bar.id = "mobile-tabbar";
         bar.className = "mobile-tabbar";
         bar.innerHTML = `
-          <button type="button" data-mt="servers"><span>☰</span>Sunucular</button>
-          <button type="button" data-mt="home"><span>🏠</span>Ana Sayfa</button>
-          <button type="button" data-mt="dms"><span>💬</span>DM'ler</button>
-          <button type="button" data-mt="settings"><span>⚙️</span>Ayarlar</button>`;
+          <button type="button" data-mt="servers"><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h16"/></svg></span>Sunucular</button>
+          <button type="button" data-mt="home"><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m3 11 9-8 9 8v9a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/></svg></span>Ana Sayfa</button>
+          <button type="button" data-mt="dms"><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg></span>DM'ler</button>
+          <button type="button" data-mt="settings"><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.09A1.7 1.7 0 0 0 9 19.36a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.63 15 1.7 1.7 0 0 0 3.08 14H3v-4h.09A1.7 1.7 0 0 0 4.64 9a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.63 1.7 1.7 0 0 0 10 3.08V3h4v.09A1.7 1.7 0 0 0 15 4.64a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.37 9 1.7 1.7 0 0 0 20.92 10H21v4h-.09A1.7 1.7 0 0 0 19.4 15z"/></svg></span>Ayarlar</button>`;
         document.getElementById("app")?.appendChild(bar);
         bar.addEventListener("click", e => {
             const b = e.target.closest("button[data-mt]");
@@ -2575,6 +2575,8 @@ function showChatView(serverId, channelId) {
 
     state.activeServerId = serverId;
     state.activeChannelId = channelId;
+    const sidebarName = document.getElementById("sidebar-server-name");
+    if (sidebarName) sidebarName.textContent = server.name;
     updateChannelSidebar(serverId);
     renderMessages(serverId, channelId);
     updateMembersPanel(serverId);
@@ -5589,7 +5591,7 @@ function renderVoiceParticipants(serverId, channelId) {
         container.className = "voice-participants";
         container.innerHTML = `
           <div class="voice-empty-state">
-            <span class="voice-empty-state-icon" aria-hidden="true">🎙️</span>
+            <span class="voice-empty-state-icon" aria-hidden="true"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8"/></svg></span>
             <h4>Burada henüz kimse yok</h4>
             <p>Arkadaşlarını davet et veya aşağıdan kanala katıl. Ses uçtan uca aktarılır.</p>
           </div>`;
@@ -23090,6 +23092,21 @@ function showScordFriendsDirectory() {
     }
     render();
 }
+
+(function setupMemberDirectorySearch() {
+    var input = document.getElementById("member-directory-search");
+    var list = document.getElementById("members-list");
+    if (!input || !list || input.dataset.bound === "1") return;
+    input.dataset.bound = "1";
+    var applyFilter = function () {
+        var query = input.value.trim().toLocaleLowerCase("tr");
+        list.querySelectorAll(".member-item").forEach(function (item) {
+            item.hidden = !!query && !String(item.textContent || "").toLocaleLowerCase("tr").includes(query);
+        });
+    };
+    input.addEventListener("input", applyFilter);
+    new MutationObserver(applyFilter).observe(list, { childList: true });
+})();
 
 console.log("[App] All features restored: Settings, UI, Animations");
 

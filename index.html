@@ -11,6 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="static/style.css" />
   <link rel="stylesheet" href="static/scord-shell.css?v=6" />
+  <link rel="stylesheet" href="static/scord-design.css?v=2" />
   <script src="https://www.youtube.com/iframe_api"></script>
 </head>
 
@@ -250,7 +251,9 @@
 
           <div class="chat-header-right">
              <span id="connection-badge" class="connection-badge" title="Bağlantı durumu" role="status" aria-live="polite"></span>
-            <button type="button" id="focus-mode-toggle" class="header-btn focus-mode-btn" title="Odak modu (üye panelini gizle)" aria-label="Odak modunu değiştir" aria-pressed="false">⛶</button>
+            <button type="button" id="focus-mode-toggle" class="header-btn focus-mode-btn" title="Odak modu (üye panelini gizle)" aria-label="Odak modunu değiştir" aria-pressed="false">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5" /></svg>
+            </button>
             <span id="peer-count-badge" class="peer-badge">0 kişi</span>
             <button class="header-btn" id="pins-toggle-btn" title="Sabitlenmiş Mesajlar" aria-label="Sabitlenmiş mesajları aç">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
@@ -275,7 +278,7 @@
             <button type="button" id="new-msgs-chip" class="new-msgs-chip hidden" aria-live="polite">Yeni mesajlar ↓</button>
             <div class="messages-area" id="messages-area">
               <div class="messages-welcome">
-                <div class="messages-welcome-icon">💬</div>
+                <div class="messages-welcome-icon" aria-hidden="true"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" /></svg></div>
                 <h3>Kanalın başlangıcı!</h3>
                 <p>Bu kanalın ilk mesajı olmak için hazır mısın?</p>
               </div>
@@ -286,7 +289,14 @@
 
           <!-- Members panel -->
           <aside class="members-panel" id="members-panel">
-            <h4>Üyeler — <span id="member-count">0</span></h4>
+            <div class="members-panel-head">
+              <div class="members-panel-title-row"><div><span class="members-panel-kicker">TOPLULUK</span><h3>Dizin</h3></div><span class="members-panel-count"><span id="member-count">0</span></span></div>
+              <p>Bu alandaki üyeler</p>
+              <label class="members-panel-search" for="member-directory-search">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                <input id="member-directory-search" type="search" placeholder="Üye ara" autocomplete="off" />
+              </label>
+            </div>
             <div id="members-list"></div>
           </aside>
         </div>
@@ -315,11 +325,11 @@
             </div>
             <!-- Mention Popup -->
             <div id="mention-popup" class="mention-popup hidden"></div>
-            <button class="input-action-btn" id="gif-btn" title="GIF Gönder">GIF</button>
-            <button class="input-action-btn" id="emoji-btn">😀</button>
+            <button class="input-action-btn" id="gif-btn" title="GIF Gönder" aria-label="GIF gönder">GIF</button>
+            <button class="input-action-btn" id="emoji-btn" title="Emoji" aria-label="Emoji seç"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M8.5 14.5s1.2 2 3.5 2 3.5-2 3.5-2M9 9h.01M15 9h.01"/></svg></button>
             <textarea id="chat-input" placeholder="#genel kanalına mesaj gönder" rows="1"></textarea>
-            <button class="input-action-btn" id="translate-toggle-btn" title="Yazarken Çevir">🌐</button>
-            <button class="input-action-btn" id="chat-attach-btn">📎</button>
+            <button class="input-action-btn" id="translate-toggle-btn" title="Yazarken Çevir" aria-label="Çeviri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg></button>
+            <button class="input-action-btn" id="chat-attach-btn" title="Dosya ekle" aria-label="Dosya ekle"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m20.5 11.5-8.6 8.6a5 5 0 0 1-7.1-7.1l9.2-9.2a3.5 3.5 0 0 1 5 5l-9.3 9.3a2 2 0 0 1-2.8-2.8l8.6-8.6"/></svg></button>
             <input type="file" id="chat-file-upload" class="hidden" accept="image/*, .txt, .pdf, .zip, .rar" />
             <button class="input-send-btn" id="send-btn" title="Gönder">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
@@ -456,7 +466,7 @@
 
   <script src="static/timing.js?v=3"></script>
   <script src="static/p2p.js?v=4"></script>
-  <script src="app.js?v=6"></script>
+  <script src="app.js?v=8"></script>
 
   <script>
   document.addEventListener("click", function(e) {
