@@ -903,6 +903,7 @@
 @media (min-width: 861px) and (min-height: 700px) {
   #modal.modal--wide-settings {
     width: min(980px, 94vw) !important;
+    max-height: calc(100vh - 28px) !important;
   }
 
   #modal.modal--wide-settings .modal-body {
@@ -912,14 +913,19 @@
   }
 
   #modal.modal--wide-settings .scord-settings-shell {
-    min-height: 590px !important;
-    max-height: 590px !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    height: auto !important;
     margin: 0 !important;
   }
 
   #modal.modal--wide-settings .scord-settings-content {
-    overflow: hidden !important;
+    overflow: visible !important;
     padding: 22px 24px !important;
+  }
+
+  #modal.modal--wide-settings .scord-settings-page:not(.hidden) {
+    align-content: start;
   }
 
   #modal.modal--wide-settings #set-account:not(.hidden) {
