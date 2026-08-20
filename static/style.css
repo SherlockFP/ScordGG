@@ -4000,6 +4000,10 @@ body {
   text-align: center;
 }
 
+.channel-item .ch-badge--mention {
+  background: #ed4245;
+}
+
 /* Voice user under channel */
 .voice-member {
   display: flex;
@@ -6974,6 +6978,18 @@ html[data-scord-chat="classic"] .msg-row-inner {
   background: color-mix(in srgb, var(--bg-elevated) 94%, #000);
   box-shadow: var(--shadow-xl);
   animation: direct-call-in 150ms ease-out;
+}
+
+.direct-call-panel .direct-call-video {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.direct-call-panel .direct-call-video video.hidden { display: none; }
+.direct-call-panel .direct-call-actions .direct-call-action[data-action="camera"].active {
+  background: var(--accent);
+  color: #fff;
 }
 
 .direct-call-panel--incoming {

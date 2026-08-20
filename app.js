@@ -1890,7 +1890,22 @@ function markChannelRead(serverId, channelId) {
     if (!server) return;
     if (!server.unread) server.unread = {};
     server.unread[channelId] = 0;
+    if (server.mentions) delete server.mentions[channelId];
+    _recomputeUnreadTotals();
     updateChannelSidebar(serverId);
+}
+
+function _recomputeUnreadTotals() {
+    if (typeof state === "undefined" || !state) return;
+    let n = 0, m = 0;
+    (state.servers || []).forEach(s => {
+        Object.values(s.unread || {}).forEach(v => { if (v > 0) n += v; });
+        Object.values(s.mentions || {}).forEach(v => { if (v) m++; });
+    });
+    Object.values(state._dmUnread || {}).forEach(v => { if (v > 0) n += v; });
+    state._unreadCount = n;
+    state._mentionCount = m;
+    document.title = (m ? "(@" + m + ") " : n ? "(" + n + ") " : "") + "Scord — by Sherlock";
 }
 
 function showChannelContextMenu(ev, channel, serverId) {
@@ -3120,6 +3135,7 @@ function createChannelItem(channel, serverId) {
     if (unread > 0) {
         const badge = document.createElement("span");
         badge.className = "ch-badge";
+        if (server?.mentions?.[channel.id]) badge.classList.add("ch-badge--mention");
         badge.textContent = unread > 99 ? "99+" : unread;
         item.appendChild(badge);
     }
@@ -3360,6 +3376,8 @@ function _renderMessagesImpl(serverId, channelId) {
         if (server) {
             if (!server.unread) server.unread = {};
             server.unread[cid] = 0;
+            if (server.mentions) delete server.mentions[cid];
+            _recomputeUnreadTotals();
             updateChannelSidebar(serverId);
         }
         return;
@@ -3404,6 +3422,8 @@ function _renderMessagesImpl(serverId, channelId) {
     if (server) {
         if (!server.unread) server.unread = {};
         server.unread[cid] = 0;
+        if (server.mentions) delete server.mentions[cid];
+        _recomputeUnreadTotals();
         updateChannelSidebar(serverId);
     }
     requestAnimationFrame(() => {
@@ -3828,6 +3848,11 @@ function saveMessage(serverId, msg) {
         if (!isChannelMuted(serverId, normalized.channelId)) {
             if (!server.unread) server.unread = {};
             server.unread[normalized.channelId] = (server.unread[normalized.channelId] || 0) + 1;
+            if ((normalized.text || "").includes("@" + (state.username || ""))) {
+                if (!server.mentions) server.mentions = {};
+                server.mentions[normalized.channelId] = true;
+            }
+            _recomputeUnreadTotals();
         }
         updateChannelSidebar(serverId);
     }
@@ -4389,8 +4414,21 @@ function handleIncomingP2P(fromPeerId, data, roomId) {
             toast(`Özel Mesaj (DM) - ${data.payload.author}: ${(data.payload.text || "").slice(0, 60)}`, "info");
         }
         if (data.payload.authorId !== state.peerId) {
+            if (!state._dmUnread) state._dmUnread = {};
+            state._dmUnread[fromPeerId] = (state._dmUnread[fromPeerId] || 0) + 1;
+            _recomputeUnreadTotals();
             if (state.notifSettings?.messageSound !== false) {
                 playSound(880, 150); // Slightly higher/longer chirp for DM
+            }
+        }
+    } else if (data.type === "dm_typing") {
+        if (state.activeDM === fromPeerId) {
+            const el = document.getElementById("dm-typing-indicator");
+            if (el) {
+                el.textContent = ((data.payload && data.payload.name) ? data.payload.name : "Kullanıcı") + " yazıyor...";
+                el.classList.remove("hidden");
+                clearTimeout(el._t);
+                el._t = setTimeout(() => el.classList.add("hidden"), 2500);
             }
         }
     } else if (data.type === "identity_announce" || data.type === "profile_update") {
@@ -6560,6 +6598,7 @@ function showContextMenu(peerId, username, x, y) {
         }
         if (server.ownerId !== peerId) {
             addItem("🚪", "Sunucudan At", () => kickPeer(peerId, username), true);
+            addItem("⛔", "Sunucudan Yasakla", () => banPeer(peerId, username), true);
         }
     }
 
@@ -6982,6 +7021,25 @@ function voiceDisconnectPeer(peerId, username) {
     // Current moderation event
     sendServerEvent({ type: "force_disconnect", target: peerId, channelId: state.voiceChannelId || state.activeChannelId });
     toast(`${username} ses kanalından çıkarıldı.`, "info");
+}
+
+function banPeer(peerId, username) {
+    const server = state.servers.find(s => s.id === state.activeServerId);
+    if (!server) return;
+    if (state.mesh) {
+        meshBroadcastReliable({ type: "force_kick", target: peerId });
+        sendServerEvent({ type: "force_kick", target: peerId });
+    }
+    scordFetch(`${API_BASE}/rooms/${encodeURIComponent(server.id)}/moderation/ban`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target_peer_id: peerId }),
+    }).then(r => {
+        if (!r.ok) console.warn("[Mod] ban API failed", r.status);
+    }).catch(e => console.warn("[Mod] ban API error", e));
+    server.members = (server.members || []).filter(m => m.peer_id !== peerId);
+    updateMembersPanel(state.activeServerId);
+    toast(`${username} sunucudan yasaklandı. ⛔`, "info");
 }
 
 function forceMutePeer(peerId, username) {
@@ -7573,6 +7631,7 @@ function saveServerSettings() {
 /* ── Direct Messaging ─────────────────────────────────────── */
 function openDM(peerId, name, avatarColor = null, avatarImage = null) {
     state.activeDM = peerId;
+    if (state._dmUnread) { delete state._dmUnread[peerId]; _recomputeUnreadTotals(); }
     const peer = getPeerDisplaySafe(peerId, name, avatarColor, avatarImage);
     document.getElementById("dm-target-name").textContent = "@" + peer.name;
     const av = document.getElementById("dm-header-avatar");
@@ -7584,7 +7643,14 @@ function openDM(peerId, name, avatarColor = null, avatarImage = null) {
     addToRecentDMs(peerId, peer.name, peer.avatarColor, peer.avatarImage);
     showDMMainView(peerId, peer.name, peer.avatarColor, peer.avatarImage);
     renderDMMessages(peerId);
-    setTimeout(() => document.getElementById("dm-main-input")?.focus(), 80);
+    setTimeout(() => {
+        const input = document.getElementById("dm-main-input");
+        if (input) {
+            input.focus();
+            const draft = localStorage.getItem("scord_draft_" + peerId);
+            if (draft) input.value = draft;
+        }
+    }, 80);
 }
 
 function addToRecentDMs(peerId, name, avatarColor, avatarImage) {
@@ -7815,6 +7881,7 @@ function ensureDMMainView() {
           <button type="button" class="dm-close-btn" id="dm-main-close-btn" title="Sohbeti kapat">x</button>
         </div>
         <div id="dm-call-strip" class="dm-call-strip hidden"></div>
+        <div id="dm-typing-indicator" class="dm-typing-indicator hidden" style="font-size:12px;color:var(--text-muted);padding:2px 16px;min-height:18px;"></div>
         <div class="dm-body" id="dm-main-messages-area"></div>
         <div class="dm-input-area">
           <textarea id="dm-main-input" rows="1" placeholder="Mesaj yaz..." maxlength="2000" autocomplete="off"></textarea>
@@ -7829,6 +7896,16 @@ function ensureDMMainView() {
         if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
             sendDM();
+        }
+    });
+    view.querySelector("#dm-main-input")?.addEventListener("input", (e) => {
+        const peerId = state.activeDM;
+        if (!peerId) return;
+        const text = e.target.value;
+        if (text) localStorage.setItem("scord_draft_" + peerId, text);
+        else localStorage.removeItem("scord_draft_" + peerId);
+        if (text && state.mesh && state.mesh.ws && state.mesh.ws.readyState === WebSocket.OPEN && typeof state.mesh.sendSignal === "function") {
+            state.mesh.sendSignal({ type: "dm_typing", target: peerId, payload: { name: state.username } });
         }
     });
     view.querySelector("#dm-main-close-btn")?.addEventListener("click", () => hideDMMainView(true));
@@ -8082,6 +8159,7 @@ function sendDM() {
     }
     if (mainInput) mainInput.value = "";
     if (overlayInput) overlayInput.value = "";
+    if (state.activeDM) localStorage.removeItem("scord_draft_" + state.activeDM);
 }
 
 let _qsActiveIdx = 0;
@@ -8110,6 +8188,10 @@ function toggleQuickSwitcher() {
     else closeQuickSwitcher();
 }
 
+window.addEventListener("focus", () => {
+    if (typeof _recomputeUnreadTotals === "function") _recomputeUnreadTotals();
+});
+
 function updateQuickSwitcherFilter(q) {
     const res = document.getElementById("quick-switcher-results");
     if (!res) return;
@@ -8124,6 +8206,25 @@ function updateQuickSwitcherFilter(q) {
             }
         });
     });
+    if (qq.length >= 2) {
+        state.servers.forEach(srv => {
+            Object.entries(srv.messages || {}).forEach(([chId, arr]) => {
+                const ch = (srv.channels || []).find(c => c.id === chId);
+                (arr || []).forEach(m => {
+                    if ((m.text || "").toLowerCase().includes(qq)) {
+                        items.push({ serverId: srv.id, channelId: chId, msgId: m.id, type: "msg", title: (m.text || "").slice(0, 60), sub: `${srv.name} / #${ch ? ch.name : chId} · ${m.author || ""}` });
+                    }
+                });
+            });
+        });
+        Object.entries(state.dms || {}).forEach(([peerId, arr]) => {
+            (arr || []).forEach(m => {
+                if ((m.text || "").toLowerCase().includes(qq)) {
+                    items.push({ type: "dmmsg", peerId, title: (m.text || "").slice(0, 60), sub: `DM · ${m.author || ""}` });
+                }
+            });
+        });
+    }
     _qsFiltered = items.slice(0, 40);
     res.innerHTML = "";
     _qsFiltered.forEach((it, i) => {
@@ -8143,6 +8244,17 @@ function runQuickSwitcherIndex(i) {
     const it = _qsFiltered[i];
     if (!it) return;
     closeQuickSwitcher();
+    if (typeof _recomputeUnreadTotals === "function") _recomputeUnreadTotals();
+    if (it.type === "msg") {
+        switchToServer(it.serverId);
+        showChatView(it.serverId, it.channelId);
+        setTimeout(() => scrollToChatMessage(it.msgId), 120);
+        return;
+    }
+    if (it.type === "dmmsg") {
+        openDM(it.peerId);
+        return;
+    }
     switchToServer(it.serverId);
     if (it.type === "voice") showVoiceView(it.serverId, it.channelId);
     else showChatView(it.serverId, it.channelId);
@@ -8425,6 +8537,28 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     document.addEventListener("keydown", (e) => {
+        const _t = e.target;
+        const _typing = _t && (_t.tagName === "INPUT" || _t.tagName === "TEXTAREA" || _t.isContentEditable);
+        if (!_typing && !e.ctrlKey && !e.metaKey && !e.altKey) {
+            const _k = String(e.key).toLowerCase();
+            if (_k === "m") {
+                e.preventDefault();
+                if (typeof toggleMicrophone === "function") toggleMicrophone();
+                return;
+            }
+            if (_k === "v") {
+                e.preventDefault();
+                if (state.voiceChannelId) {
+                    leaveVoiceChannel();
+                } else {
+                    const srv = state.servers.find(s => s.id === state.activeServerId);
+                    const vc = srv?.channels?.find(c => c.type === "voice");
+                    if (vc) joinVoiceChannel(vc.id);
+                    else toast("Sesli kanal yok.", "info");
+                }
+                return;
+            }
+        }
         if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === "k") {
             if (!document.getElementById("modal-backdrop")?.classList.contains("hidden")) return;
             e.preventDefault();
@@ -18426,9 +18560,14 @@ function showDirectCallPanel(mode, call) {
         <strong>${escapeHtml(title)}</strong>
         <span>${escapeHtml(status)}</span>
       </div>
+      ${mode === "active" ? `<div class="direct-call-video" id="direct-call-video-area">
+        <video id="direct-call-local-video" muted autoplay playsinline class="hidden" style="width:100%;max-height:160px;border-radius:10px;background:#000;object-fit:cover;"></video>
+        <video id="direct-call-remote-video" autoplay playsinline class="hidden" style="width:100%;max-height:200px;border-radius:10px;background:#000;object-fit:cover;"></video>
+      </div>` : ""}
       <div class="direct-call-actions">
         ${mode === "active" ? `<button class="direct-call-action" data-action="return">Gorusmeye Don</button>` : ""}
         ${mode === "ringing" ? `<button class="direct-call-action" data-action="chat">Sohbeti Ac</button>` : ""}
+        ${mode === "active" ? `<button class="direct-call-action" data-action="camera">Kamera</button>` : ""}
         ${mode === "incoming" ? `<button class="direct-call-action accept" data-action="accept">Kabul Et</button><button class="direct-call-action danger" data-action="decline">Reddet</button>` : ""}
         ${mode !== "incoming" ? `<button class="direct-call-action danger" data-action="end">Kapat</button>` : ""}
       </div>`;
@@ -18439,12 +18578,52 @@ function showDirectCallPanel(mode, call) {
         if (action === "end") endDirectCall();
         if (action === "return") openDirectCallView(call);
         if (action === "chat") openDM(call.peerId, call.peerName, call.peerAvatarColor, call.peerAvatarImage);
+        if (action === "camera") {
+            if (state.cameraStream) { stopCameraShare(); toast("Kamera kapandi.", "info"); }
+            else {
+                startCameraShare();
+                setTimeout(updateDirectCallVideo, 800);
+            }
+        }
     };
+    if (mode === "active") {
+        window.clearInterval(panel._vidInt);
+        panel._vidInt = window.setInterval(updateDirectCallVideo, 1000);
+    }
     document.body.appendChild(panel);
 }
 
+function updateDirectCallVideo() {
+    if (!state.directCall || state.directCall.status !== "active") return;
+    const panel = document.getElementById("direct-call-panel");
+    if (!panel) return;
+    const camBtn = panel.querySelector('[data-action="camera"]');
+    if (camBtn) camBtn.classList.toggle("active", !!state.cameraStream);
+    const local = document.getElementById("direct-call-local-video");
+    const remote = document.getElementById("direct-call-remote-video");
+    if (!local || !remote) return;
+    if (state.cameraStream) {
+        if (local.srcObject !== state.cameraStream) local.srcObject = state.cameraStream;
+        local.classList.remove("hidden");
+    } else {
+        local.classList.add("hidden");
+    }
+    const rv = state.remoteMedia && state.remoteMedia[state.directCall.peerId];
+    const rStream = rv && rv.srcObject;
+    if (rStream) {
+        if (remote.srcObject !== rStream) remote.srcObject = rStream;
+        remote.classList.remove("hidden");
+    } else {
+        remote.classList.add("hidden");
+    }
+}
+
 function removeDirectCallPanel() {
-    document.getElementById("direct-call-panel")?.remove();
+    const panel = document.getElementById("direct-call-panel");
+    if (panel) {
+        window.clearInterval(panel._vidInt);
+        panel.remove();
+    }
 }
 
 function startDirectCall(peerId) {
@@ -18537,6 +18716,7 @@ function endDirectCall(notify = true) {
     state.directCall = null;
     stopDirectCallTone();
     removeDirectCallPanel();
+    if (state.cameraStream && typeof stopCameraShare === "function") stopCameraShare();
     if (wasInCallChannel) leaveVoiceChannel();
     renderDMCallStrip();
 }

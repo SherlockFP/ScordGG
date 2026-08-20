@@ -206,6 +206,10 @@ class P2PMesh {
                 this.cb.onMessage?.(msg.from, msg);
                 break;
 
+            case "dm_typing":
+                this.cb.onMessage?.(msg.from, msg);
+                break;
+
             case "room_deleted":
                 // Sunucu tarafında silindi: yeniden bağlanma döngüsüne girmeden
                 // app.js'e haber ver, sonra kendimizi kapat.
