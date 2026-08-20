@@ -3409,10 +3409,14 @@ function _renderMessagesImpl(serverId, channelId) {
 
     area.innerHTML = "";
     let lastAuthor = null;
+    const ckey = serverId + ":" + cid;
+    delete _lastRenderedDay[ckey];
 
     const pins = server?.pinned_messages || [];
     messages.forEach(msg => {
         const grouped = msg.authorId === lastAuthor && !msg.replyTo;
+        const sep = _maybeDateSeparator(ckey, msg.timestamp);
+        if (sep) area.appendChild(sep);
         const copy = { ...msg };
         if (pins.find(p => p.id === msg.id)) copy.isPinned = true;
         appendMessageDOM(copy, grouped, serverId, { scrollToBottom: true });
@@ -3439,6 +3443,35 @@ function hydrateMessageReactions(bubbleEl, msg) {
     updateReactionBar(msg.id, norm);
 }
 
+let _lastRenderedDay = {};
+
+function _dateKey(ts) {
+    const d = new Date(ts);
+    return d.getFullYear() + "-" + (d.getMonth() + 1) + "-" + d.getDate();
+}
+
+function _dateLabel(ts) {
+    const d = new Date(ts);
+    const startOfDay = t => new Date(t.getFullYear(), t.getMonth(), t.getDate()).getTime();
+    const diff = Math.round((startOfDay(new Date()) - startOfDay(d)) / 86400000);
+    if (diff === 0) return "Bugün";
+    if (diff === 1) return "Dün";
+    return d.toLocaleDateString("tr-TR", { day: "numeric", month: "long", year: "numeric" });
+}
+
+function _maybeDateSeparator(key, ts) {
+    if (!ts) return null;
+    const k = _dateKey(ts);
+    if (_lastRenderedDay[key] === k) return null;
+    _lastRenderedDay[key] = k;
+    const div = document.createElement("div");
+    div.className = "date-separator";
+    const label = document.createElement("span");
+    label.textContent = _dateLabel(ts);
+    div.appendChild(label);
+    return div;
+}
+
 function appendMessageDOM(msg, grouped = false, serverId = null, opts = {}) {
     // Check if author is blocked
     if (state.blockedPeers?.includes(msg.authorId)) return;
@@ -3446,6 +3479,10 @@ function appendMessageDOM(msg, grouped = false, serverId = null, opts = {}) {
     const forceBottom = opts.scrollToBottom === true;
     const area = document.getElementById("messages-area");
     const sid = serverId || state.activeServerId;
+    if (area && msg.timestamp) {
+        const sep = _maybeDateSeparator(sid + ":" + (msg.channelId || state.activeChannelId), msg.timestamp);
+        if (sep) area.appendChild(sep);
+    }
     const isSelf = msg.authorId === state.peerId;
     const el = document.createElement("div");
     el.className = "message message-bubble msg-row" + (isSelf ? " msg-row--self" : " msg-row--other") + (grouped ? " grouped" : "");
@@ -3677,7 +3714,7 @@ async function sendMessage() {
         finalJoinText = await translateText(text, state.targetLang);
     }
 
-    const msg = {
+const msg = {
         type: "chat",
         channelId: state.activeChannelId,
         text: finalJoinText,
@@ -3686,6 +3723,7 @@ async function sendMessage() {
         avatarColor: state.avatarColor,
         avatarImage: state.avatarImage,
         time: now(),
+        timestamp: Date.now(),
         id: genId(),
         isPinned: false
     };
@@ -8078,6 +8116,7 @@ async function removeFriend(peerId) {
 function renderDMMessages(peerId) {
     const area = document.getElementById("dm-messages-area");
     area.innerHTML = "";
+    delete _lastRenderedDay["dm:" + peerId];
     const messages = state.dms[peerId] || [];
 
     if (messages.length === 0) {
@@ -8091,6 +8130,8 @@ function renderDMMessages(peerId) {
     }
 
     messages.forEach(msg => {
+        const sep = _maybeDateSeparator("dm:" + peerId, msg.timestamp);
+        if (sep) area.appendChild(sep);
         const row = document.createElement("div");
         row.className = "dm-msg-row" + (msg.authorId === state.peerId ? " dm-msg-own" : "");
 
@@ -8137,7 +8178,8 @@ function sendDM() {
         avatarColor: state.avatarColor,
         avatarImage: state.avatarImage,
         text,
-        time: now()
+        time: now(),
+        timestamp: Date.now()
     };
     if (!state.dms) state.dms = {};
     if (!state.dms[state.activeDM]) state.dms[state.activeDM] = [];

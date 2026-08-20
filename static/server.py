@@ -1650,6 +1650,7 @@ async def save_history_message(room_id: str, body: dict, request: Request):
     if ch_id not in room.messages:
         room.messages[ch_id] = []
     
+    msg["timestamp"] = msg.get("timestamp") or int(time.time() * 1000)
     # Store last 10000 messages per channel
     room.messages[ch_id].append(msg)
     if len(room.messages[ch_id]) > 10000:
@@ -2472,7 +2473,8 @@ async def signaling_ws(websocket: WebSocket, room_id: str, peer_id: str):
 
             elif msg_type == "broadcast":
                 # Generic broadcast (e.g. nick changes)
-                msg["from"] = peer_id
+                if isinstance(msg.get("data"), dict) and "timestamp" not in msg["data"]:
+                    msg["data"]["timestamp"] = int(time.time() * 1000)
                 await broadcast_to_room(room, msg, exclude=peer_id)
 
             elif msg_type == "voice_join":
