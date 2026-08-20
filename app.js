@@ -7845,6 +7845,8 @@ function showDMMainView(peerId, name, avatarColor, avatarImage) {
     document.getElementById("chat-view")?.classList.add("hidden");
     document.getElementById("voice-view")?.classList.add("hidden");
     document.querySelector("#home-view .home-hero")?.classList.add("hidden");
+    document.getElementById("scord-friends-directory")?.classList.add("hidden");
+    document.getElementById("scord-server-discovery")?.classList.add("hidden");
     view.classList.remove("hidden");
     document.getElementById("sidebar-server-name").textContent = "Direkt Mesajlar";
     document.querySelectorAll(".rail-icon").forEach(el => el.classList.remove("active"));
@@ -18448,8 +18450,9 @@ function removeDirectCallPanel() {
 function startDirectCall(peerId) {
     if (!peerId || peerId === state.peerId) return;
     if (!state.mesh) {
-        toast("Arama icin once baglanman gerekiyor.", "warning");
-        return;
+        const roomId = state.activeServerId || (state.servers[0] && state.servers[0].id);
+        if (!roomId) { toast("Arama icin once bir sunucuya katil.", "warning"); return; }
+        connectToRoom(roomId);
     }
     if (state.directCall?.status === "active" || state.directCall?.status === "ringing") {
         toast("Zaten devam eden bir arama var.", "info");
@@ -18472,11 +18475,24 @@ function startDirectCall(peerId) {
         participants: [state.peerId, peerId],
     };
     state.directCall = call;
-    sendServerEvent({ type: "dm_call_offer", target: peerId, call });
     startDirectCallTone("ringing");
     showDirectCallPanel("ringing", call);
     renderDMCallStrip();
     toast(`${peer.name} araniyor...`, "info");
+    // Retry the offer until the signaling WS is open (covers just-connected
+    // mesh and targets that come online after the call started).
+    const offer = () => sendServerEvent({ type: "dm_call_offer", target: peerId, call });
+    if (state.mesh?.ws?.readyState === WebSocket.OPEN) {
+        offer();
+    } else {
+        let tries = 0;
+        const t = setInterval(() => {
+            tries++;
+            if (state.directCall?.callId !== call.callId) { clearInterval(t); return; }
+            if (state.mesh?.ws?.readyState === WebSocket.OPEN) { clearInterval(t); offer(); return; }
+            if (tries > 10) clearInterval(t);
+        }, 1000);
+    }
 }
 
 async function acceptDirectCall(callId) {

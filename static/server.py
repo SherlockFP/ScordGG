@@ -80,6 +80,12 @@ PLATFORM_ADMIN_USERNAMES = {
 }
 PLATFORM_ADMIN_IDS: Set[str] = set()
 
+# Global peer socket registry + queued direct calls. dm_call_* messages are
+# routed globally (not per-room) so calls reach friends in other rooms or
+# offline friends who connect later (queued offers are delivered on join).
+_PEER_SOCKETS: Dict[str, "WebSocket"] = {}
+_PENDING_CALLS: Dict[str, list] = {}
+
 DEFAULT_ROLE_PERMISSIONS = {
     "owner": {
         "manage_server", "manage_roles", "manage_channels", "kick_members",
@@ -2382,6 +2388,14 @@ async def signaling_ws(websocket: WebSocket, room_id: str, peer_id: str):
     room.peers[peer_id] = websocket
     room.peer_info[peer_id] = {"username": username, "avatar_color": avatar_color}
     room.last_seen[peer_id] = time.time()
+    _PEER_SOCKETS[peer_id] = websocket
+    pending = _PENDING_CALLS.pop(peer_id, None)
+    if pending:
+        for m in pending:
+            try:
+                await websocket.send_text(json.dumps(m))
+            except Exception:
+                pass
     _upsert_server_member(room_id, peer_id, _account_name(account), room.role_for(peer_id))
     log.info(f"Peer {peer_id} ({username}) joined room {room_id}")
 
@@ -2420,7 +2434,19 @@ async def signaling_ws(websocket: WebSocket, room_id: str, peer_id: str):
                 target = msg.get("target")
                 if target:
                     msg["from"] = peer_id
-                    await send_to_peer(room, target, msg)
+                    call_id = (msg.get("call") or {}).get("callId") or msg.get("callId")
+                    ws = _PEER_SOCKETS.get(target)
+                    if ws is not None and ws.client_state == WebSocketState.CONNECTED:
+                        await ws.send_text(json.dumps(msg))
+                    elif msg_type == "dm_call_offer":
+                        _PENDING_CALLS.setdefault(target, []).append(msg)
+                    if msg_type in ("dm_call_answer", "dm_call_end") and call_id:
+                        kept = [m for m in _PENDING_CALLS.get(target, [])
+                                if (m.get("call") or {}).get("callId") != call_id and m.get("callId") != call_id]
+                        if kept:
+                            _PENDING_CALLS[target] = kept
+                        else:
+                            _PENDING_CALLS.pop(target, None)
 
             elif msg_type == "dm_relay":
                 target = msg.get("target")
@@ -2605,6 +2631,7 @@ async def signaling_ws(websocket: WebSocket, room_id: str, peer_id: str):
         if room.peers.get(peer_id) is websocket:
             room.peers.pop(peer_id, None)
             room.peer_info.pop(peer_id, None)
+            _PEER_SOCKETS.pop(peer_id, None)
             _remove_peer_from_voice(room, peer_id)
             log.info(f"Peer {peer_id} left room {room_id}")
             await broadcast_to_room(room, {
