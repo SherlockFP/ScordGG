@@ -506,13 +506,7 @@
       e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
       // If already sharing, stop it
       if (window.state && (window.state.screenStream || (window.state.mesh && window.state.mesh.screenStream))) {
-        if (typeof window.state.mesh.stopScreenShare === "function") window.state.mesh.stopScreenShare();
-        var streams = window.state.screenStream;
-        if (streams && typeof streams.getTracks === "function") streams.getTracks().forEach(function(t){t.stop()});
-        window.state.screenStream = null;
-        if (window.state.mesh) window.state.mesh.screenStream = null;
-        var btn = document.getElementById("voice-screen-btn");
-        if (btn) btn.classList.remove("active");
+        if (typeof window.stopLocalScreenShare === "function") window.stopLocalScreenShare();
         if (typeof window.playDiscordSFX === "function") window.playDiscordSFX("screen_stop");
         return false;
       }

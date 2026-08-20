@@ -2776,20 +2776,26 @@ async function startScreenShare() {
 // yerleri bu ismi global fonksiyon olarak bekliyordu ama hiç tanımlanmamıştı —
 // state.mesh.stopScreenShare() (p2p.js, artık video+audio sender'larının
 // tümünü temizliyor) üzerinden tek noktadan kapatma sağlanır.
+function stopLocalScreenShare() {
+    if (state.mesh && state.mesh.screenStream) { state.mesh.stopScreenShare(); }
+    if (state.screenStream) { state.screenStream.getTracks().forEach(t => t.stop()); state.screenStream = null; }
+    if (state.mesh) state.mesh.screenStream = null;
+    if (state.localVideoEl) { state.localVideoEl.srcObject = null; state.localVideoEl.remove(); state.localVideoEl = null; }
+    const btn = document.getElementById("voice-screen-btn");
+    if (btn) btn.classList.remove("active");
+    const preview = document.getElementById("local-screen-preview");
+    if (preview) preview.classList.add("hidden");
+    if (state.mesh) state.mesh.broadcast({ type: "screen_status", sharing: false, channelId: state.voiceChannelId || state.activeChannelId });
+    if (state.activeServerId && state.voiceChannelId) { renderVoiceParticipants(state.activeServerId, state.voiceChannelId); }
+}
+window.stopLocalScreenShare = stopLocalScreenShare;
+
 function stopScreenShare() {
     // Kapatma sesi — tüm global stop yolları (vt.onended dahil) buradan geçer.
     if (typeof window.playDiscordSFX === "function") {
         try { window.playDiscordSFX("screen_stop"); } catch (e) { /* noop */ }
     }
-    if (state.mesh && state.mesh.screenStream) {
-        state.mesh.stopScreenShare();
-    }
-    if (state.screenStream) {
-        state.screenStream.getTracks().forEach(t => t.stop());
-        state.screenStream = null;
-    }
-    const btn = document.getElementById("voice-screen-btn");
-    if (btn) btn.classList.remove("active");
+    stopLocalScreenShare();
 }
 window.stopScreenShare = stopScreenShare;
 
@@ -18929,10 +18935,54 @@ function sendVoiceEphemeralChat() {
     if (input) input.value = "";
 }
 
+function showVoiceChatPopup(msg) {
+    if (!msg || msg.authorId === state.peerId) return;
+    if (voiceChatKey(msg.serverId, msg.channelId) !== voiceChatKey()) return;
+    const voiceView = document.getElementById("voice-view");
+    if (!voiceView) return;
+    let stack = document.getElementById("voice-chat-popups");
+    if (!stack) {
+        stack = document.createElement("div");
+        stack.id = "voice-chat-popups";
+        stack.className = "voice-chat-popups";
+        voiceView.appendChild(stack);
+    }
+    const pill = document.createElement("div");
+    pill.className = "voice-chat-popup";
+    const name = document.createElement("strong");
+    name.textContent = (msg.author || "Kullanici") + ": ";
+    const text = document.createElement("span");
+    const raw = (msg.text || "").trim();
+    text.textContent = raw.length > 40 ? raw.slice(0, 40) + "…" : raw;
+    pill.append(name, text);
+    pill.addEventListener("click", () => {
+        clearTimeout(pill._fadeTimer);
+        pill.remove();
+        openVoiceEphemeralChat();
+    });
+    stack.appendChild(pill);
+    while (stack.children.length > 3) stack.firstElementChild.remove();
+    pill._fadeTimer = setTimeout(() => {
+        pill.classList.add("fading");
+        setTimeout(() => pill.remove(), 400);
+    }, 4000);
+}
+
+function openVoiceEphemeralChat() {
+    const panel = document.getElementById("voice-ephemeral-chat");
+    if (!panel) return;
+    panel.classList.remove("collapsed");
+    const btn = panel.querySelector("#voice-chat-toggle");
+    if (btn) btn.textContent = "Kapat";
+    const input = panel.querySelector("#voice-chat-input");
+    if (input) input.focus();
+}
+
 const _v24HandleIncomingP2P = window.handleIncomingP2P || handleIncomingP2P;
 handleIncomingP2P = window.handleIncomingP2P = function (fromPeerId, data, roomId) {
     if (data?.type === "voice_ephemeral_chat") {
         addVoiceEphemeralChatMessage(data.payload);
+        showVoiceChatPopup(data.payload);
         return;
     }
     if (data?.type === "server_system") {
@@ -23364,7 +23414,7 @@ function showScordFriendsDirectory() {
             '<div class="scord-friends-directory__toolbar"><label class="scord-friends-directory__search"><span>⌕</span><input id="scord-directory-search" type="search" placeholder="Arkadaşlarda ara" value="' + escapeHtml(query) + '"></label><span class="scord-friends-directory__count">' + list.length + ' kişi</span></div>' +
             '<nav class="scord-friends-directory__tabs" aria-label="Arkadaş filtreleri">' + tabs.map(function (tab, i) { return '<button type="button" class="' + (i === 0 ? "is-active" : "") + '">' + tab + (tab === "Bekleyen" && pending.length ? ' <b>' + pending.length + '</b>' : '') + '</button>'; }).join("") + '</nav>' +
             '<section class="scord-friends-directory__section"><div class="scord-friends-directory__section-title"><span>ÇEVRİMİÇİ — ' + online.length + '</span><span class="scord-directory-line"></span></div><div id="scord-directory-friend-list" class="scord-friends-directory__list">' +
-            (list.length ? list.map(function (f) { return '<button type="button" class="scord-friends-directory__row" data-peer-id="' + escapeHtml(f.peerId || "") + '"><span class="scord-directory-avatar" data-name="' + escapeHtml(displayName(f)) + '" data-color="' + escapeHtml(f.avatarColor || "#5865f2") + '">' + escapeHtml(initials(displayName(f))) + '</span><span class="scord-directory-copy"><strong>' + escapeHtml(displayName(f)) + '</strong><small>' + escapeHtml(f.note || "Sohbete hazır") + '</small></span><span class="scord-directory-status online"></span><span class="scord-directory-chat">💬</span></button>'; }).join("") : '<div class="scord-friends-directory__empty"><strong>Henüz arkadaş yok</strong><span>İlk bağlantını kurmak için Arkadaş Ekle’ye dokun.</span></div>') +
+            (list.length ? list.map(function (f) { return '<button type="button" class="scord-friends-directory__row" data-peer-id="' + escapeHtml(f.peerId || "") + '" data-name="' + escapeHtml(displayName(f)) + '" data-color="' + escapeHtml(f.avatarColor || "#5865f2") + '" data-image="' + escapeHtml(f.avatarImage || "") + '"><span class="scord-directory-avatar" data-name="' + escapeHtml(displayName(f)) + '" data-color="' + escapeHtml(f.avatarColor || "#5865f2") + '">' + escapeHtml(initials(displayName(f))) + '</span><span class="scord-directory-copy"><strong>' + escapeHtml(displayName(f)) + '</strong><small>' + escapeHtml(f.note || "Sohbete hazır") + '</small></span><span class="scord-directory-status online"></span><span class="scord-directory-chat">💬</span></button>'; }).join("") : '<div class="scord-friends-directory__empty"><strong>Henüz arkadaş yok</strong><span>İlk bağlantını kurmak için Arkadaş Ekle’ye dokun.</span></div>') +
             '</div></section></main><aside class="scord-friends-directory__aside"><div class="scord-friends-directory__aside-title">Şimdi aktif <span>' + online.length + '</span></div><div class="scord-friends-directory__active-list">' +
             (online.length ? online.slice(0, 8).map(function (p) { return '<div class="scord-active-card"><span class="scord-directory-avatar" data-name="' + escapeHtml(displayName(p)) + '" data-color="' + escapeHtml(p.avatarColor || "#5865f2") + '">' + escapeHtml(initials(displayName(p))) + '</span><span><strong>' + escapeHtml(displayName(p)) + '</strong><small>SCORD’da aktif</small></span><i></i></div>'; }).join("") : '<div class="scord-friends-directory__empty scord-friends-directory__empty--aside"><span class="scord-directory-pulse"></span><strong>Henüz kimse yok</strong><span>Arkadaşların çevrimiçi olduğunda burada görünecek.</span></div>') +
             '</div><div class="scord-friends-directory__tip"><span>✦</span><div><strong>SCORD ipucu</strong><small>Arkadaş isteklerini ve bildirimlerini tek merkezden yönet.</small></div></div></aside></div>';
@@ -23373,9 +23423,10 @@ function showScordFriendsDirectory() {
         view.querySelector("#scord-directory-discover")?.addEventListener("click", showServerDiscoveryView);
         view.querySelector("#scord-directory-search")?.addEventListener("input", function (e) { query = e.target.value; render(); var input = document.getElementById("scord-directory-search"); input?.focus(); input?.setSelectionRange(query.length, query.length); });
         view.querySelectorAll(".scord-friends-directory__row").forEach(function (row) {
-            row.addEventListener("click", function () {
-                var id = row.dataset.peerId; var f = friends.find(function (item) { return item.peerId === id; });
-                if (f) openDM(id, displayName(f), f.avatarColor, f.avatarImage);
+row.addEventListener("click", function () {
+                var id = row.dataset.peerId; var name = row.dataset.name; var color = row.dataset.color || "#5865f2"; var image = row.dataset.image;
+                if (id && name) { openDM(String(id), name, color, image || null); }
+                else { var f = friends.find(function (item) { return String(item.peerId) === String(id); }); if (f) openDM(String(id), displayName(f), f.avatarColor, f.avatarImage); }
             });
         });
         view.querySelectorAll(".scord-directory-avatar").forEach(function (av) { applyAvatarToElement(av, av.dataset.color, null, av.dataset.name); });
