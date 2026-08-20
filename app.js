@@ -900,8 +900,8 @@ function updateStatusBar() {
             <span class="status-text">${statusInfo.text}</span>
         </div>
         <div class="status-custom">
-            ${state.statusEmoji ? `<span class="status-emoji">${state.statusEmoji}</span>` : ""}
-            ${state.customStatus ? `<span class="custom-status-text">${state.customStatus}</span>` : ""}
+            ${state.statusEmoji ? `<span class="status-emoji">${escapeHtml(state.statusEmoji)}</span>` : ""}
+            ${state.customStatus ? `<span class="custom-status-text">${escapeHtml(state.customStatus)}</span>` : ""}
         </div>
         ${activityHtml}
     `;
@@ -979,8 +979,8 @@ function showStatusPicker() {
             <div class="custom-status-input">
                 <div class="status-picker-header">Özel Durum</div>
                 <div class="custom-status-input-row">
-                    <input type="text" id="custom-status-input" placeholder="Ne yapıyorsun?" maxlength="50" value="${state.customStatus}">
-                    <button type="button" class="emoji-picker-btn" id="status-emoji-btn" title="Emoji Seç">${state.statusEmoji || '😀'}</button>
+                    <input type="text" id="custom-status-input" placeholder="Ne yapıyorsun?" maxlength="50" value="${escapeHtml(state.customStatus)}">
+                    <button type="button" class="emoji-picker-btn" id="status-emoji-btn" title="Emoji Seç">${escapeHtml(state.statusEmoji || '😀')}</button>
                 </div>
             </div>
         </div>
@@ -1305,7 +1305,7 @@ function _renderMessageReactionsImpl(serverId, channelId, messageId) {
         if (userReacted) pill.classList.add('reacted');
 
         pill.innerHTML = `
-            <span class="reaction-emoji">${emoji}</span>
+            <span class="reaction-emoji">${escapeHtml(emoji)}</span>
             <span class="reaction-count">${users.size}</span>
         `;
 
@@ -1382,7 +1382,7 @@ function showReactionPicker(serverId, channelId, messageId) {
         if (query.length === 1) {
             // Replace grid with matching emojis
             const grid = picker.querySelector('.reaction-picker-grid');
-            grid.innerHTML = `<button class="reaction-emoji-btn" data-emoji="${query}">${query}</button>`;
+            grid.innerHTML = `<button class="reaction-emoji-btn" data-emoji="${escapeHtml(query)}">${escapeHtml(query)}</button>`;
             grid.querySelector('.reaction-emoji-btn').addEventListener('click', () => {
                 addReaction(serverId, channelId, messageId, query);
                 picker.remove();
@@ -1418,9 +1418,9 @@ function showReactionContextMenu(ev, serverId, channelId, messageId, emoji, user
     }).join(', ');
 
     menu.innerHTML = `
-        <div class="ctx-section">${emoji} - ${users.size} tepki</div>
+        <div class="ctx-section">${escapeHtml(emoji)} - ${users.size} tepki</div>
         <div class="ctx-item" style="font-size: 12px; color: var(--text-muted); max-width: 200px; word-break: break-all;">
-            ${userNames}
+            ${escapeHtml(userNames)}
         </div>
     `;
 
@@ -1653,14 +1653,14 @@ function renderThreadMessages(serverId, threadId) {
         parentEl.innerHTML = `
             <div class="thread-parent-header">Ana Mesaj</div>
             <div class="msg-row msg-row--other">
-                <div class="msg-avatar" style="background: ${parentMsg.avatarColor || '#7c3aed'}; color: white;">
-                    ${(parentMsg.avatarImage ? `<img src="${parentMsg.avatarImage}" alt="${parentMsg.author}" />` : (parentMsg.author || "?")[0].toUpperCase())}
+                <div class="msg-avatar" style="background: ${escapeHtml(parentMsg.avatarColor || '#7c3aed')}; color: white;">
+                    ${(parentMsg.avatarImage ? `<img src="${escapeHtml(parentMsg.avatarImage)}" alt="${escapeHtml(parentMsg.author)}" />` : escapeHtml((parentMsg.author || "?")[0].toUpperCase()))}
                 </div>
                 <div class="msg-stack">
                     <div class="msg-bubble msg-bubble--other">
                         <div class="msg-header">
-                            <span class="msg-author">${parentMsg.author}</span>
-                            <span class="msg-time">${parentMsg.time}</span>
+                            <span class="msg-author">${escapeHtml(parentMsg.author)}</span>
+                            <span class="msg-time">${escapeHtml(parentMsg.time)}</span>
                         </div>
                         <div class="msg-text">${parseMessageText(parentMsg.text, serverId)}</div>
                     </div>
@@ -3354,7 +3354,7 @@ function _renderMessagesImpl(serverId, channelId) {
         }
         area.innerHTML = `<div class="messages-welcome">
     <div class="messages-welcome-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none"><path d="M6.5 18.2 3.8 20l.8-3.7A8 8 0 1 1 6.5 18.2Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8 11.5h.01M12 11.5h.01M16 11.5h.01" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></div>
-    <h3># ${server?.channels.find(c => c.id === cid)?.name || channelId}</h3>
+    <h3># ${escapeHtml(server?.channels.find(c => c.id === cid)?.name || channelId)}</h3>
     <p>Bu kanalın başlangıcı. Merhaba! 👋</p>
   </div>`;
         if (server) {
@@ -6851,7 +6851,7 @@ function showMessageHistory(serverId, channelId, messageId) {
                 </div>
             </div>
             <div class="history-content">
-                <div class="history-author">${entry.author}</div>
+                <div class="history-author">${escapeHtml(entry.author)}</div>
                 <div class="history-text">${parseMessageText(entry.message.text, serverId)}</div>
             </div>
         `;
@@ -8797,23 +8797,23 @@ function showPinnedMessages() {
             item.innerHTML = `
                 <div class="pinned-item-header">
                     <div class="pinned-item-author">
-                        <div class="pinned-avatar" style="background: ${m.avatarColor || '#7c3aed'}; color: white;">
-                            ${m.avatarImage ? `<img src="${m.avatarImage}" alt="${m.author}" />` : (m.author || "?")[0].toUpperCase()}
+                        <div class="pinned-avatar" style="background: ${escapeHtml(m.avatarColor || '#7c3aed')}; color: white;">
+                            ${m.avatarImage ? `<img src="${escapeHtml(m.avatarImage)}" alt="${escapeHtml(m.author)}" />` : escapeHtml((m.author || "?")[0].toUpperCase())}
                         </div>
                         <div class="pinned-author-info">
-                            <div class="pinned-author-name">${m.author}</div>
-                            <div class="pinned-message-time">${m.time}</div>
+                            <div class="pinned-author-name">${escapeHtml(m.author)}</div>
+                            <div class="pinned-message-time">${escapeHtml(m.time)}</div>
                         </div>
                     </div>
                     <div class="pinned-item-actions">
                         ${isAuthor || canMod ? `
-                            <button class="pinned-action-btn" onclick="unpinMessage('${m.id}')" title="Sabitlemeyi kaldır">
+                            <button class="pinned-action-btn" onclick="unpinMessage('${escapeHtml(m.id)}')" title="Sabitlemeyi kaldır">
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
                                     <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
                                 </svg>
                             </button>
                         ` : ''}
-                        <button class="pinned-action-btn" onclick="scrollToChatMessage('${m.id}')" title="Mesaja git">
+                        <button class="pinned-action-btn" onclick="scrollToChatMessage('${escapeHtml(m.id)}')" title="Mesaja git">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
                                 <path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6-6-6z"/>
                             </svg>
@@ -8825,7 +8825,7 @@ function showPinnedMessages() {
                 </div>
                 ${m.attachment ? `
                     <div class="pinned-item-attachment">
-                        <img src="${m.attachment}" alt="Ek" class="pinned-attachment-img" onclick="this.classList.toggle('expanded')" />
+                        <img src="${escapeHtml(m.attachment)}" alt="Ek" class="pinned-attachment-img" onclick="this.classList.toggle('expanded')" />
                     </div>
                 ` : ''}
             `;
@@ -8842,7 +8842,7 @@ function showPinnedMessages() {
                         const pill = document.createElement("div");
                         pill.className = "pinned-reaction-pill";
                         pill.innerHTML = `
-                            <span class="pinned-reaction-emoji">${emoji}</span>
+                            <span class="pinned-reaction-emoji">${escapeHtml(emoji)}</span>
                             <span class="pinned-reaction-count">${users.size}</span>
                         `;
                         reactionBar.appendChild(pill);
@@ -9132,7 +9132,7 @@ function openUserProfile(peerId, username, avatarImage, avatarColor) {
             <div style="display:flex; gap:8px; align-items:center; margin-top:4px;">
                 ${roleBadge}
             </div>
-            <p style="margin:8px 0 0 0; font-family:monospace; color:var(--text-muted); font-size:12px; background: rgba(255,255,255,0.05); padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items:center; gap:6px; cursor:pointer;" onclick="copyUniqueId()" title="ID'yi kopyala">📋 ${escapeHtml(username)}#${discrim}</p>
+            <p style="margin:8px 0 0 0; font-family:monospace; color:var(--text-muted); font-size:12px; background: rgba(255,255,255,0.05); padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items:center; gap:6px; cursor:pointer;" onclick="copyUniqueId()" title="ID'yi kopyala">📋 ${escapeHtml(username)}#${escapeHtml(discrim)}</p>
         </div>
         <div style="padding:0 16px 16px 16px; display: flex; flex-direction: column; gap: 12px;">
             ${!isSelf ? `
@@ -9732,20 +9732,20 @@ async function refreshDiscoveryLegacy() {
             const card = document.createElement("div");
             card.className = "room-card";
             const icon = room.icon_url
-                ? `<img src="${room.icon_url}" alt="" loading="lazy" decoding="async" style="width:48px;height:48px;border-radius:12px;object-fit:cover;" />`
-                : `<div style="width:48px;height:48px;border-radius:12px;background:linear-gradient(135deg,#7c3aed,#4f46e5);display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700;color:#fff;">${(room.name || "?")[0].toUpperCase()}</div>`;
+                ? `<img src="${escapeHtml(room.icon_url)}" alt="" loading="lazy" decoding="async" style="width:48px;height:48px;border-radius:12px;object-fit:cover;" />`
+                : `<div style="width:48px;height:48px;border-radius:12px;background:linear-gradient(135deg,#7c3aed,#4f46e5);display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700;color:#fff;">${escapeHtml((room.name || "?")[0].toUpperCase())}</div>`;
             card.innerHTML = `
                 <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
                   ${icon}
                   <div>
-                    <div style="font-weight:700;font-size:16px;">${room.name}</div>
+                    <div style="font-weight:700;font-size:16px;">${escapeHtml(room.name)}</div>
                     <div style="font-size:12px;color:var(--text-muted);">${room.peer_count || 0} üye</div>
                   </div>
                 </div>
                 ${room.description ? `<p style="font-size:12.5px;color:var(--text-secondary);margin:0 0 10px;line-height:1.4;">${escapeHtml(room.description).slice(0, 160)}</p>` : ""}
                 <div style="display:flex;gap:8px;align-items:center;">
-                  <span style="font-size:12px;color:var(--text-muted);flex:1;">Kod: <b style="letter-spacing:2px;color:var(--accent);">${room.invite_code || ""}</b></span>
-                  <button class="btn-primary" style="padding:6px 14px;font-size:13px;" onclick="joinDiscoveryRoom('${room.room_id}', '${room.invite_code}')">Katıl</button>
+                  <span style="font-size:12px;color:var(--text-muted);flex:1;">Kod: <b style="letter-spacing:2px;color:var(--accent);">${escapeHtml(room.invite_code || "")}</b></span>
+                  <button class="btn-primary" style="padding:6px 14px;font-size:13px;" onclick="joinDiscoveryRoom('${escapeHtml(room.room_id)}', '${escapeHtml(room.invite_code)}')">Katıl</button>
                 </div>`;
             grid.appendChild(card);
         });
@@ -18454,7 +18454,7 @@ function startDirectCall(peerId) {
         if (!roomId) { toast("Arama icin once bir sunucuya katil.", "warning"); return; }
         connectToRoom(roomId);
     }
-    if (state.directCall?.status === "active" || state.directCall?.status === "ringing") {
+    if (state.directCall?.status === "active" || state.directCall?.status === "ringing" || state.directCall?.status === "incoming") {
         toast("Zaten devam eden bir arama var.", "info");
         return;
     }
@@ -18490,7 +18490,16 @@ function startDirectCall(peerId) {
             tries++;
             if (state.directCall?.callId !== call.callId) { clearInterval(t); return; }
             if (state.mesh?.ws?.readyState === WebSocket.OPEN) { clearInterval(t); offer(); return; }
-            if (tries > 10) clearInterval(t);
+            if (tries > 10) {
+                clearInterval(t);
+                if (state.directCall?.callId === call.callId) {
+                    toast("Baglanti kurulamadi, arama iptal edildi.", "error");
+                    state.directCall = null;
+                    stopDirectCallTone();
+                    removeDirectCallPanel();
+                    renderDMCallStrip();
+                }
+            }
         }, 1000);
     }
 }
@@ -18506,6 +18515,7 @@ async function acceptDirectCall(callId) {
     sendServerEvent({ type: "dm_call_answer", target: call.fromId, callId: call.callId, accepted: true, channelId: call.channelId });
     stopDirectCallTone();
     showDirectCallPanel("active", state.directCall);
+    renderDMCallStrip();
     await joinVoiceChannel(call.channelId);
 }
 
@@ -23584,10 +23594,8 @@ setTimeout(function() {
     if (_origSDC) {
         window.startDirectCall = function(peerId) {
             if (!peerId || peerId === state.peerId) return;
-            if (!state.mesh) { toast("Baglanman gerekiyor.", "warning"); return; }
-            if (state.directCall?.status === "active" || state.directCall?.status === "ringing") { toast("Zaten bir arama var.", "info"); return; }
-            state.mesh.broadcast({ type: "direct_call", to: peerId, callId: "dc_" + Date.now() + "_" + state.peerId, fromName: state.username });
-            toast("Araniyor...", "info");
+            if (state.directCall?.status === "active" || state.directCall?.status === "ringing" || state.directCall?.status === "incoming") { toast("Zaten bir arama var.", "info"); return; }
+            return _origSDC.call(this, peerId);
         };
     }
 })();
@@ -24341,7 +24349,12 @@ setInterval(function() {
                 if (pid === state.peerId) {
                     video.muted = true;
                 } else {
-                    video.muted = false;
+                    // Respect block/deafen/mute-state instead of force-unmuting all
+                    const server = state.servers.find(s => s.id === state.activeServerId);
+                    const myChannelPeers = (server && state.voiceChannelId && server.voiceMembers?.[state.voiceChannelId])
+                        ? server.voiceMembers[state.voiceChannelId].map(m => m.peer_id) : [];
+                    const shouldHear = myChannelPeers.includes(pid) && !(state.blockedPeers || []).includes(pid) && !state.deafened;
+                    video.muted = !shouldHear;
                     video.volume = state.userVolumes?.[pid] ?? 1;
                     // Force play if paused (browser autoplay fix)
                     if (video.paused) video.play().catch(function(){});
