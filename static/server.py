@@ -21,7 +21,7 @@ import hashlib
 import secrets
 import importlib.util
 from contextlib import contextmanager
-from typing import Dict, Set, Optional, Any
+from typing import Callable, Dict, Set, Optional, Any
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException
@@ -513,6 +513,7 @@ def _server_member_count(room_id: str) -> int:
             row = conn.execute("SELECT COUNT(*) FROM server_members WHERE room_id = ?", (room_id,)).fetchone()
             return int(row[0]) if row else 0
     except sqlite3.Error:
+        log.exception(f"Member count query failed for room {room_id}; reporting 0")
         return 0
 
 
@@ -639,8 +640,14 @@ def schedule_save_db(delay_sec: float = 1.2):
     def _flush():
         global _db_save_timer
         with _db_save_lock:
-            save_db()
-            _db_save_timer = None
+            try:
+                save_db()
+            except Exception:
+                # Nothing to propagate to: the request that queued this write is
+                # already answered. Log loudly so the failure is not invisible.
+                log.exception("Deferred server state save failed — in-memory state is ahead of SQLite")
+            finally:
+                _db_save_timer = None
 
     with _db_save_lock:
         if _db_save_timer:
@@ -698,7 +705,7 @@ def _load_db_legacy():
                     rooms[rid] = room
                 log.warning(f"Recovered {len(rooms)} rooms from backup {bak_file}")
             except Exception as be:
-                log.error(f"Backup {bak_file} also corrupted — {len(rooms)} rooms lost. Fix or delete {DATABASE_FILE} and restart.")
+                log.error(f"Backup {bak_file} also corrupted ({be}) — {len(rooms)} rooms lost. Fix or delete {DATABASE_FILE} and restart.")
         else:
             log.error(f"No backup found — rooms in {DATABASE_FILE} are lost. Fix or delete the file and restart.")
 
@@ -727,65 +734,77 @@ def _room_from_snapshot(rid: str, data: dict) -> "Room":
 
 
 def save_db():
-    """Persist all durable SCORD server state in one SQLite transaction."""
-    try:
-        now = time.time()
-        snapshots = [(rid, room, room.to_persist_dict()) for rid, room in rooms.items()]
-        with _db() as conn:
-            existing = {row[0] for row in conn.execute("SELECT room_id FROM servers").fetchall()}
-            live_ids = {rid for rid, _, _ in snapshots}
-            for stale_id in existing - live_ids:
-                conn.execute("DELETE FROM servers WHERE room_id = ?", (stale_id,))
-            for rid, room, payload in snapshots:
-                conn.execute("""
-                    INSERT INTO servers (
-                        room_id, name, owner_id, owner_username, created_at, updated_at,
-                        description, invite_code, icon_url, is_public, state_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(room_id) DO UPDATE SET
-                        name = excluded.name,
-                        owner_id = excluded.owner_id,
-                        owner_username = excluded.owner_username,
-                        created_at = excluded.created_at,
-                        updated_at = excluded.updated_at,
-                        description = excluded.description,
-                        invite_code = excluded.invite_code,
-                        icon_url = excluded.icon_url,
-                        is_public = excluded.is_public,
-                        state_json = excluded.state_json
-                """, (
-                    rid, room.name, room.owner_id, room.owner_username, room.created_at, now,
-                    room.description, room.invite_code, room.icon_url, int(room.is_public),
-                    json.dumps(payload, ensure_ascii=False),
-                ))
-                if room.owner_id:
-                    conn.execute("""
-                        INSERT INTO server_members (room_id, peer_id, username, role, joined_at, last_seen)
-                        VALUES (?, ?, ?, 'owner', ?, ?)
-                        ON CONFLICT(room_id, peer_id) DO UPDATE SET
-                            username = excluded.username,
-                            role = 'owner',
-                            last_seen = excluded.last_seen
-                    """, (rid, room.owner_id, room.owner_username or "", room.created_at, now))
-                # Each persisted room has at least one durable invite record.
-                # INSERT OR IGNORE preserves usage/expiry metadata for a code.
-                conn.execute(
-                    "INSERT OR IGNORE INTO server_invites (invite_code, room_id, created_by, created_at) VALUES (?, ?, ?, ?)",
-                    (room.invite_code, rid, room.owner_id or "", now),
-                )
-            for rid in sorted(deleted_room_ids)[-DELETED_TOMBSTONE_CAP:]:
-                conn.execute(
-                    "INSERT OR REPLACE INTO deleted_servers (room_id, deleted_at) VALUES (?, ?)",
-                    (rid, now),
-                )
+    """Persist all durable SCORD server state in one SQLite transaction.
+
+    Raises on failure: a caller that reported success to a client while the
+    write was lost is worse than a visible error.
+    """
+    now = time.time()
+    snapshots = [(rid, room, room.to_persist_dict()) for rid, room in rooms.items()]
+    with _db() as conn:
+        existing = {row[0] for row in conn.execute("SELECT room_id FROM servers").fetchall()}
+        live_ids = {rid for rid, _, _ in snapshots}
+        for stale_id in existing - live_ids:
+            conn.execute("DELETE FROM servers WHERE room_id = ?", (stale_id,))
+        for rid, room, payload in snapshots:
             conn.execute("""
-                DELETE FROM deleted_servers WHERE room_id NOT IN (
-                    SELECT room_id FROM deleted_servers ORDER BY deleted_at DESC LIMIT ?
-                )
-            """, (DELETED_TOMBSTONE_CAP,))
-        log.info(f"Server state saved to SQLite ({len(snapshots)} servers)")
+                INSERT INTO servers (
+                    room_id, name, owner_id, owner_username, created_at, updated_at,
+                    description, invite_code, icon_url, is_public, state_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(room_id) DO UPDATE SET
+                    name = excluded.name,
+                    owner_id = excluded.owner_id,
+                    owner_username = excluded.owner_username,
+                    created_at = excluded.created_at,
+                    updated_at = excluded.updated_at,
+                    description = excluded.description,
+                    invite_code = excluded.invite_code,
+                    icon_url = excluded.icon_url,
+                    is_public = excluded.is_public,
+                    state_json = excluded.state_json
+            """, (
+                rid, room.name, room.owner_id, room.owner_username, room.created_at, now,
+                room.description, room.invite_code, room.icon_url, int(room.is_public),
+                json.dumps(payload, ensure_ascii=False),
+            ))
+            if room.owner_id:
+                conn.execute("""
+                    INSERT INTO server_members (room_id, peer_id, username, role, joined_at, last_seen)
+                    VALUES (?, ?, ?, 'owner', ?, ?)
+                    ON CONFLICT(room_id, peer_id) DO UPDATE SET
+                        username = excluded.username,
+                        role = 'owner',
+                        last_seen = excluded.last_seen
+                """, (rid, room.owner_id, room.owner_username or "", room.created_at, now))
+            # Each persisted room has at least one durable invite record.
+            # INSERT OR IGNORE preserves usage/expiry metadata for a code.
+            conn.execute(
+                "INSERT OR IGNORE INTO server_invites (invite_code, room_id, created_by, created_at) VALUES (?, ?, ?, ?)",
+                (room.invite_code, rid, room.owner_id or "", now),
+            )
+        for rid in sorted(deleted_room_ids)[-DELETED_TOMBSTONE_CAP:]:
+            conn.execute(
+                "INSERT OR REPLACE INTO deleted_servers (room_id, deleted_at) VALUES (?, ?)",
+                (rid, now),
+            )
+        conn.execute("""
+            DELETE FROM deleted_servers WHERE room_id NOT IN (
+                SELECT room_id FROM deleted_servers ORDER BY deleted_at DESC LIMIT ?
+            )
+        """, (DELETED_TOMBSTONE_CAP,))
+    log.info(f"Server state saved to SQLite ({len(snapshots)} servers)")
+
+
+def _persist_or_503(context: str, rollback: Optional[Callable[[], None]] = None) -> None:
+    """Save synchronously for a request that must not claim a lost write."""
+    try:
+        save_db()
     except Exception as exc:
-        log.error(f"Failed to save server database: {exc}")
+        log.exception(f"Failed to persist {context}")
+        if rollback is not None:
+            rollback()
+        raise HTTPException(status_code=503, detail="persist_failed") from exc
 
 
 def load_db():
@@ -799,7 +818,14 @@ def load_db():
             rooms[row["room_id"]] = _room_from_snapshot(row["room_id"], json.loads(row["state_json"]))
             loaded += 1
     except Exception as exc:
-        log.error(f"Failed to load SQLite server state: {exc}")
+        # Booting with a partial snapshot is unsafe: the next save_db() deletes
+        # every server row that is missing from memory. Fail fast instead.
+        rooms.clear()
+        deleted_room_ids.clear()
+        raise RuntimeError(
+            f"Failed to load SQLite server state from {ACCOUNTS_DB_FILE}: {exc}. "
+            "Restore or remove the database file before starting the server."
+        ) from exc
 
     if loaded or not os.path.exists(DATABASE_FILE):
         log.info(f"Loaded {loaded} servers from SQLite")
@@ -813,8 +839,8 @@ def load_db():
             rooms[rid] = _room_from_snapshot(rid, payload)
         save_db()
         log.info(f"Migrated {len(rooms)} legacy rooms from rooms.json to SQLite")
-    except Exception as exc:
-        log.error(f"Legacy rooms.json migration failed: {exc}")
+    except Exception:
+        log.exception("Legacy rooms.json migration failed")
         rooms.clear()
         deleted_room_ids.clear()
         _load_db_legacy()
@@ -1113,7 +1139,8 @@ async def broadcast_to_room(room: Room, message: dict, exclude: str | None = Non
                 await ws.send_text(data)
             else:
                 dead.append(peer_id)
-        except Exception:
+        except Exception as exc:
+            log.warning(f"Dropping peer {peer_id} from room {room.room_id}: broadcast failed ({exc})")
             dead.append(peer_id)
     for pid in dead:
         room.peers.pop(pid, None)
@@ -1565,7 +1592,7 @@ def create_room(body: dict, request: Request):
     room = Room(room_id, name, owner_id, _account_name(account))
     room.owner_key = secrets.token_urlsafe(32)
     rooms[room_id] = room
-    save_db()
+    _persist_or_503(f"new room {room_id}", rollback=lambda: rooms.pop(room_id, None))
     _upsert_server_member(room_id, owner_id, _account_name(account), "owner")
     log.info(f"Room created: {name!r} ({room_id}) by {owner_id}")
     return {"room_id": room_id, "invite_code": room.invite_code, "owner_key": room.owner_key}
@@ -2107,9 +2134,11 @@ async def delete_room(room_id: str, owner_id: str, request: Request):
     for ws in list(room.peers.values()):
         try:
             await ws.close(code=4004, reason="room_deleted")
-        except Exception:
-            pass
-    save_db()
+        except Exception as exc:
+            log.debug(f"Closing socket of deleted room {room_id} failed: {exc}")
+    # No rollback: the peers are already disconnected. A 503 tells the client the
+    # tombstone is not durable yet so it can retry the delete.
+    _persist_or_503(f"deletion of room {room_id}")
     log.info(f"Room deleted: {room_id} by {owner_id}")
     return {"success": True}
 
@@ -2183,8 +2212,16 @@ def restore_room(room_id: str, body: dict, request: Request):
     if body.get("invite_code"):
         room.invite_code = body["invite_code"]
     room.normalize_permissions()
+    previous = rooms.get(room_id)
     rooms[room_id] = room
-    save_db()
+
+    def _undo_restore() -> None:
+        if previous is None:
+            rooms.pop(room_id, None)
+        else:
+            rooms[room_id] = previous
+
+    _persist_or_503(f"restore of room {room_id}", rollback=_undo_restore)
     log.info(f"Room restored from client cache: {name!r} ({room_id})")
     return {"success": True, "room": room.to_dict()}
 
@@ -2384,19 +2421,24 @@ async def signaling_ws(websocket: WebSocket, room_id: str, peer_id: str):
     if old_socket is not None and old_socket is not websocket:
         try:
             await old_socket.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            log.debug(f"Closing stale socket of peer {peer_id} failed: {exc}")
     room.peers[peer_id] = websocket
     room.peer_info[peer_id] = {"username": username, "avatar_color": avatar_color}
     room.last_seen[peer_id] = time.time()
     _PEER_SOCKETS[peer_id] = websocket
     pending = _PENDING_CALLS.pop(peer_id, None)
     if pending:
-        for m in pending:
+        undelivered = []
+        for index, m in enumerate(pending):
             try:
                 await websocket.send_text(json.dumps(m))
-            except Exception:
-                pass
+            except Exception as exc:
+                log.warning(f"Queued call delivery to {peer_id} failed ({exc}); keeping {len(pending) - index} for the next join")
+                undelivered = pending[index:]
+                break
+        if undelivered:
+            _PENDING_CALLS.setdefault(peer_id, []).extend(undelivered)
     _upsert_server_member(room_id, peer_id, _account_name(account), room.role_for(peer_id))
     log.info(f"Peer {peer_id} ({username}) joined room {room_id}")
 
@@ -2628,8 +2670,8 @@ async def signaling_ws(websocket: WebSocket, room_id: str, peer_id: str):
 
     except WebSocketDisconnect:
         pass
-    except Exception as e:
-        log.warning(f"Peer {peer_id} error: {e}")
+    except Exception:
+        log.exception(f"Signaling loop for peer {peer_id} in room {room_id} crashed")
     finally:
         # Conditional cleanup (reconnect race): if this peer_id was re-registered
         # with a NEW socket, only the new socket owns the registration. Popping /
@@ -2719,6 +2761,12 @@ def shutdown_event():
     if timer:
         timer.cancel()
         timer.join(timeout=1)
+        # A cancelled debounce timer means its queued write never ran; flush it
+        # here instead of dropping the pending changes on the floor.
+        try:
+            save_db()
+        except Exception:
+            log.exception("Final server state save on shutdown failed")
 
 if __name__ == "__main__":
     import uvicorn
