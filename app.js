@@ -2174,7 +2174,16 @@ function syncProfileField(fields) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
-    }).catch(e => console.warn("[Account] profile sync failed:", e));
+    }).then(res => {
+        if (res.ok) return;
+        // localStorage already holds the new value, so a rejected write would
+        // otherwise look saved until the next login on another device.
+        console.warn("[Account] profile sync rejected:", res.status);
+        toast("Profil değişikliği sunucuya kaydedilemedi — tekrar dene.", "error");
+    }).catch(e => {
+        console.warn("[Account] profile sync failed:", e);
+        toast("Profil değişikliği sunucuya kaydedilemedi — bağlantını kontrol et.", "error");
+    });
     // Bağlı peer'lara da anında yay — üye listesindeki avatar/bio canlı güncellensin.
     if (state.mesh) {
         state.mesh.broadcast({
@@ -2249,7 +2258,7 @@ async function initSetup() {
                         location.reload();
                     }
                 })
-                .catch(() => { });
+                .catch(e => console.warn("[Account] session verification failed:", e));
             return;
         }
     }
@@ -3848,6 +3857,7 @@ async function translateText(text, target = "tr") {
     try {
         const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${target}&dt=t&q=${encodeURIComponent(text)}`;
         const res = await fetch(url);
+        if (!res.ok) throw new Error(`Translate HTTP ${res.status}`);
         const json = await res.json();
         if (json && json[0]) {
             return json[0].map(x => x[0]).join("");
@@ -7545,12 +7555,16 @@ function openServerSettingsModal() {
         else delete srv.channel_backgrounds[state.activeChannelId];
         // Server API'ye kaydet
         try {
-            await scordFetch(`${API_BASE}/rooms/${srv.id}/channel_background`, {
+            const res = await scordFetch(`${API_BASE}/rooms/${srv.id}/channel_background`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ channel_id: state.activeChannelId, url: url || null }),
             });
-        } catch (e) {}
+            if (!res.ok) return;  // scordFetch already reported the status
+        } catch (e) {
+            console.warn("[Channel] background save failed:", e);
+            return;
+        }
         applyChannelBackground(srv.id, state.activeChannelId);
         if (state.mesh) {
             state.mesh.broadcast({
@@ -9461,9 +9475,10 @@ async function searchGifs(q) {
     try {
         const query = encodeURIComponent(q || "excited");
         const res = await fetch(`https://tenor.googleapis.com/v2/search?q=${query}&key=LIVDTRZ9ORH6&limit=12`);
+        if (!res.ok) throw new Error(`Tenor HTTP ${res.status}`);
         const data = await res.json();
         results.innerHTML = "";
-        data.results.forEach(g => {
+        (data.results || []).forEach(g => {
             const img = document.createElement("img");
             img.src = g.media_formats.tinygif.url;
             img.onclick = () => {
@@ -16506,6 +16521,7 @@ async function getMockGifs(category, query = '') {
         }
         
         const response = await fetch(url);
+        if (!response.ok) throw new Error(`Giphy HTTP ${response.status}`);
         const data = await response.json();
         
         if (data.data && data.data.length > 0) {
@@ -25739,7 +25755,12 @@ console.log("[V25] Screen picker + unified settings + server redesign + P2P tuni
                 body: JSON.stringify(report),
             });
             if (response.ok) report.status = "submitted";
-        } catch { /* endpoint is optional until the moderation API is deployed */ }
+            else console.warn("[Report] server rejected report:", response.status);
+        } catch (e) {
+            // Endpoint is optional until the moderation API is deployed; the
+            // report stays queued locally, but the reason must be visible.
+            console.warn("[Report] submit failed, keeping local queue:", e);
+        }
         recordSocialNotification({ kind: "report", title: "Rapor kaydedildi", body: "Mesaj raporun yöneticiler için sıraya alındı.", serverId: report.serverId, channelId: report.channelId, messageId: report.messageId, fingerprint: `report:${report.id}` });
         hideModal();
         toast(report.status === "submitted" ? "Rapor yöneticilere gönderildi." : "Rapor cihazında güvenle sıraya alındı.", "success");

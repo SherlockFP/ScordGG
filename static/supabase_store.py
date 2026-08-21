@@ -57,10 +57,17 @@ def _request(method: str, path: str, payload: Any | None = None) -> Any:
 
 
 def _table_rows(conn: sqlite3.Connection, table: str) -> list[dict[str, Any]]:
+    """Read a table, treating only a missing table as empty.
+
+    Any other SQLite error propagates: pushing a silently truncated snapshot
+    would overwrite the remote mirror with incomplete data.
+    """
     try:
         return [dict(row) for row in conn.execute(f"SELECT * FROM {table}").fetchall()]
-    except sqlite3.OperationalError:
-        return []
+    except sqlite3.OperationalError as error:
+        if "no such table" in str(error).lower():
+            return []
+        raise
 
 
 def _snapshot_checksum(snapshot: dict[str, Any]) -> str:
@@ -120,8 +127,8 @@ def schedule_push(database_file: str, delay: float = 1.25) -> None:
         global _timer
         try:
             push_snapshot(database_file)
-        except Exception as error:  # remote persistence must never crash realtime traffic
-            log.warning("Supabase snapshot sync failed: %s", error)
+        except Exception:  # remote persistence must never crash realtime traffic
+            log.exception("Supabase snapshot sync failed")
         finally:
             with _timer_lock:
                 _timer = None
