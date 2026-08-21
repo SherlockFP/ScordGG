@@ -16,6 +16,7 @@ import sqlite3
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -58,9 +59,13 @@ def _request(method: str, path: str, payload: Any | None = None) -> Any:
 
 def _table_rows(conn: sqlite3.Connection, table: str) -> list[dict[str, Any]]:
     try:
-        return [dict(row) for row in conn.execute(f"SELECT * FROM {table}").fetchall()]
+        return [dict(row) for row in conn.execute(f'SELECT * FROM "{table}"').fetchall()]
     except sqlite3.OperationalError:
         return []
+
+
+def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {str(row[1]) for row in conn.execute(f'PRAGMA table_info("{table}")').fetchall()}
 
 
 def _snapshot_checksum(snapshot: dict[str, Any]) -> str:
@@ -147,7 +152,8 @@ def restore_if_empty(database_file: str) -> bool:
     if account_count or server_count:
         return False
 
-    rows = _request("GET", f"scord_state_snapshots?id=eq.{SNAPSHOT_ID}&select=payload&limit=1") or []
+    snapshot_filter = urllib.parse.quote(SNAPSHOT_ID, safe="")
+    rows = _request("GET", f"scord_state_snapshots?id=eq.{snapshot_filter}&select=payload&limit=1") or []
     if not rows or not isinstance(rows[0].get("payload"), dict):
         return False
     snapshot = rows[0]["payload"]
@@ -164,13 +170,21 @@ def restore_if_empty(database_file: str) -> bool:
     try:
         conn.execute("PRAGMA foreign_keys = OFF")
         for table in table_order:
+            known_columns = _table_columns(conn, table)
+            if not known_columns:
+                continue
             for row in snapshot.get(table, []):
                 if not isinstance(row, dict) or not row:
                     continue
-                columns = list(row)
+                # Snapshot payloads are remote input, so only columns that exist in the
+                # local schema may reach the statement text.
+                columns = [column for column in row if column in known_columns]
+                if not columns:
+                    continue
                 placeholders = ",".join("?" for _ in columns)
+                quoted = ",".join(f'"{column}"' for column in columns)
                 conn.execute(
-                    f"INSERT OR REPLACE INTO {table} ({','.join(columns)}) VALUES ({placeholders})",
+                    f'INSERT OR REPLACE INTO "{table}" ({quoted}) VALUES ({placeholders})',
                     [row[column] for column in columns],
                 )
         conn.commit()

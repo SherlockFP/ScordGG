@@ -774,6 +774,18 @@ function escapeHtml(s) {
     return d.innerHTML;
 }
 
+// Colors and image sources come from other peers' accounts, so they must never be
+// interpolated into style/src attributes unchecked.
+function safeCssColor(value) {
+    const v = String(value == null ? "" : value).trim();
+    return /^(#[0-9a-f]{3,8}|[a-z]{3,20}|rgba?\([\d.,\s%]+\)|hsla?\([\d.,\s%deg]+\))$/i.test(v) ? v : "";
+}
+
+function safeImageSrc(value) {
+    const v = String(value == null ? "" : value).trim();
+    return /^(https?:\/\/|data:image\/[a-z+.-]+;base64,|\/)/i.test(v) ? v : "";
+}
+
 // Status System Functions
 const STATUS_TYPES = {
     online: { color: "#3ba55c", text: "Çevrimiçi", icon: "🟢" },
@@ -1688,8 +1700,8 @@ function createThreadMessageDOM(msg, serverId) {
     // innerHTML kullanıldığı için tırnaklar dahil tam escape
     const esc = (s) => escapeHtml(s).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
     el.innerHTML = `
-        <div class="msg-avatar" style="background: ${msg.avatarColor || '#7c3aed'}; color: white;">
-            ${(msg.avatarImage ? `<img src="${esc(msg.avatarImage)}" alt="${esc(msg.author)}" />` : (msg.author || "?")[0].toUpperCase())}
+        <div class="msg-avatar" style="background: ${esc(safeCssColor(msg.avatarColor) || '#7c3aed')}; color: white;">
+            ${(msg.avatarImage ? `<img src="${esc(safeImageSrc(msg.avatarImage))}" alt="${esc(msg.author)}" />` : esc(String(msg.author || "?")[0].toUpperCase()))}
         </div>
         <div class="msg-stack">
             <div class="msg-bubble${isSelf ? " msg-bubble--self" : " msg-bubble--other"}">
@@ -7449,12 +7461,12 @@ function openServerSettingsModal() {
         row.style.cssText = "display:flex; align-items:center; gap:12px; background:var(--bg-overlay); padding:10px; border-radius:8px;";
 
         const ava = document.createElement("div");
-        ava.style.cssText = `width:36px; height:36px; border-radius:50%; background-color:${m.avatar_color || '#7c3aed'}; background-image:url(${m.avatar_image || ''}); background-size:cover; display:flex; align-items:center; justify-content:center; color:#fff; font-weight:700;`;
+        ava.style.cssText = `width:36px; height:36px; border-radius:50%; background-color:${safeCssColor(m.avatar_color) || '#7c3aed'}; background-image:url("${safeImageSrc(m.avatar_image)}"); background-size:cover; display:flex; align-items:center; justify-content:center; color:#fff; font-weight:700;`;
         ava.textContent = !m.avatar_image ? initials(m.username) : "";
 
         const info = document.createElement("div");
         info.style.cssText = "flex:1; min-width:0;";
-        info.innerHTML = `<div style="font-weight:600; font-size:14px; text-overflow:ellipsis; overflow:hidden;">${escapeHtml(m.username)}</div><div style="font-size:11px; color:var(--text-muted);">${m.peer_id}</div>`;
+        info.innerHTML = `<div style="font-weight:600; font-size:14px; text-overflow:ellipsis; overflow:hidden;">${escapeHtml(m.username)}</div><div style="font-size:11px; color:var(--text-muted);">${escapeHtml(m.peer_id)}</div>`;
 
         const actions = document.createElement("div");
         actions.style.cssText = "display:flex; align-items:center; gap:8px;";
@@ -8372,8 +8384,8 @@ function renderMentionSuggestions(input, atIndex, mentionText) {
         <div class="mention-item ${idx === _mentionActiveIndex ? "active" : ""}" 
              data-member-id="${escapeHtml(member.peer_id)}"
              data-username="${escapeHtml(member.username)}">
-            <div class="mention-avatar" style="background-color: ${escapeHtml(member.avatar_color)}">
-                ${initials(member.username)}
+            <div class="mention-avatar" style="background-color: ${escapeHtml(safeCssColor(member.avatar_color))}">
+                ${escapeHtml(initials(member.username))}
             </div>
             <span class="mention-name">${escapeHtml(member.username)}</span>
         </div>
@@ -9295,13 +9307,13 @@ function openUserProfile(peerId, username, avatarImage, avatarColor) {
 
     // Create Profile HTML
     const body = `
-        <div class="profile-banner-rich" style="height:80px; background:${avatarColor || '#7c3aed'}; border-radius: 8px 8px 0 0; position: relative;">
+        <div class="profile-banner-rich" style="height:80px; background:${escapeHtml(safeCssColor(avatarColor) || '#7c3aed')}; border-radius: 8px 8px 0 0; position: relative;">
             <div style="position:absolute; right:12px; top:12px;">
                 ${!isSelf ? `<button class="mbot-btn ${isBlocked ? '' : 'mbot-btn--danger'}" onclick="toggleBlockStatus('${peerId}', '${escapeHtml(username).replace(/'/g, "\\u0027").replace(/"/g, "\\u0022")}')" title="${isBlocked ? 'Engeli Kaldır' : 'Engelle'}" style="width:32px;height:32px;font-size:12px;">${isBlocked ? '🔓' : '🚫'}</button>` : ''}
             </div>
         </div>
-        <div class="profile-avatar" style="width:90px; height:90px; border-radius:50%; margin-top:-45px; margin-left:16px; border:6px solid var(--bg-elevated); background-color:${avatarColor || '#7c3aed'}; background-image:url(${(avatarImage || '').replace(/["'()\\]/g, '')}); background-size:cover; background-position:center; display:flex; align-items:center; justify-content:center; font-size:36px; color:#fff; position: relative; z-index: 2;">
-            ${!avatarImage ? initials(username) : ""}
+        <div class="profile-avatar" style="width:90px; height:90px; border-radius:50%; margin-top:-45px; margin-left:16px; border:6px solid var(--bg-elevated); background-color:${escapeHtml(safeCssColor(avatarColor) || '#7c3aed')}; background-image:url(&quot;${escapeHtml(safeImageSrc(avatarImage).replace(/["'()\\]/g, ''))}&quot;); background-size:cover; background-position:center; display:flex; align-items:center; justify-content:center; font-size:36px; color:#fff; position: relative; z-index: 2;">
+            ${!avatarImage ? escapeHtml(initials(username)) : ""}
         </div>
         <div style="padding:16px 16px 8px 16px;">
             <h2 style="margin:0 0 4px 0; font-size: 20px;">${escapeHtml(username)}</h2>
@@ -10194,55 +10206,29 @@ window.startApp = function () {
 
 // Enhanced mention parsing in parseMessageText
 const _origParseMessageText = window.parseMessageText;
+const EVERYONE_TOKEN = "\uE010";
+const HERE_TOKEN = "\uE011";
+const EVERYONE_MENTION_HTML = `<span class="mention mention-everyone" data-mention="everyone" title="Everyone" style="background:rgba(239,68,68,0.2);color:#fca5a5;">@everyone</span>`;
+const HERE_MENTION_HTML = `<span class="mention mention-here" data-mention="here" title="Here" style="background:rgba(34,197,94,0.2);color:#86efac;">@here</span>`;
+
+// @everyone / @here are layered on top of the escaping renderer: the raw text is
+// tokenized with private-use placeholders, rendered (which escapes everything and
+// handles @user mentions, links and spoilers), then the placeholders are swapped
+// for markup. Never interpolate message text into HTML here.
 window.parseMessageText = function (text, serverId) {
     if (!text) return "";
     const sid = serverId !== undefined ? serverId : state.activeServerId;
-
-    // First handle @everyone and @here
-    let result = String(text);
-    const server = state.servers.find(s => s.id === sid);
-
-    // @everyone mention
-    result = result.replace(/@everyone/g, (match) => {
-        return `<span class="mention mention-everyone" data-mention="everyone" title="Everyone" style="background:rgba(239,68,68,0.2);color:#fca5a5;">@everyone</span>`;
-    });
-
-    // @here mention
-    result = result.replace(/@here/g, (match) => {
-        return `<span class="mention mention-here" data-mention="here" title="Here" style="background:rgba(34,197,94,0.2);color:#86efac;">@here</span>`;
-    });
-
-    // @user mentions (handle usernames with spaces)
-    if (server && server.members) {
-        const members = server.members;
-        // Sort by length descending to match longer names first
-        const sortedNames = [...new Set(members.map(m => m.username).filter(Boolean))].sort((a, b) => b.length - a.length);
-
-        sortedNames.forEach(name => {
-            const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-            const regex = new RegExp(`(^|\\s)@${escaped}(?!\\w)`, "g");
-            result = result.replace(regex, (full, lead) => {
-                const member = members.find(m => m.username === name);
-                return `${lead}<span class="mention" data-peer="${member?.peer_id || ""}" style="background:rgba(99,102,241,0.2);color:#c7d2fe;cursor:pointer;">@${escapeHtml(name)}</span>`;
-            });
-        });
-    }
-
-    // Handle URLs and other formatting
-    const urlRegex = /(https?:\/\/[^\s]+)/g;
-    return result.split(urlRegex).map(part => {
-        if (part.match(urlRegex)) {
-            if (part.match(/\.(jpeg|jpg|gif|png|webp)($|\?)/i)) {
-                return `<a href="${part}" target="_blank" class="rich-link"><img src="${part}" class="chat-embed-img" alt="" loading="lazy" decoding="async" /></a>`;
-            }
-            const ytMatch = part.match(/(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:watch\?(?:[^#]*&)?v=|embed\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
-            if (ytMatch) {
-                return `<div class="chat-embed-video"><iframe src="https://www.youtube.com/embed/${ytMatch[1]}" frameborder="0" allowfullscreen></iframe></div>`;
-            }
-            return `<a href="${part}" target="_blank" class="chat-link">${part}</a>`;
-        }
-        return part;
-    }).join("");
+    const tokenized = String(text)
+        .split(EVERYONE_TOKEN).join("")
+        .split(HERE_TOKEN).join("")
+        .replace(/@everyone/g, EVERYONE_TOKEN)
+        .replace(/@here/g, HERE_TOKEN);
+    const rendered = _origParseMessageText
+        ? _origParseMessageText(tokenized, sid)
+        : escapeHtml(tokenized);
+    return rendered
+        .split(EVERYONE_TOKEN).join(EVERYONE_MENTION_HTML)
+        .split(HERE_TOKEN).join(HERE_MENTION_HTML);
 };
 
 // Mention click handler
@@ -10906,21 +10892,21 @@ function renderMembersSettings(server) {
         const currentRole = server.peer_roles?.[member.peer_id] || 'member';
         const roles = server.roles || {};
         const roleOptions = Object.entries(roles).map(([roleId, roleData]) =>
-            `<option value="${roleId}" ${currentRole === roleId ? 'selected' : ''}>${escapeHtml(roleData.name)}</option>`
+            `<option value="${escapeHtml(roleId)}" ${currentRole === roleId ? 'selected' : ''}>${escapeHtml(roleData.name)}</option>`
         ).join('');
 
         html += `
             <div class="role-item">
-                <div style="width:32px;height:32px;border-radius:50%;background:${member.avatar_color || '#7c3aed'};display:flex;align-items:center;justify-content:center;font-size:14px;color:#fff;font-weight:700;">
-                    ${initials(member.username)}
+                <div style="width:32px;height:32px;border-radius:50%;background:${escapeHtml(safeCssColor(member.avatar_color) || '#7c3aed')};display:flex;align-items:center;justify-content:center;font-size:14px;color:#fff;font-weight:700;">
+                    ${escapeHtml(initials(member.username))}
                 </div>
                 <span style="flex:1;font-size:14px;color:var(--text-primary);">${escapeHtml(member.username)}</span>
                 ${server.ownerId === state.peerId ? `
-                    <select class="member-role-select" onchange="updateMemberRole('${member.peer_id}', this.value)">
+                    <select class="member-role-select" onchange="updateMemberRole('${escapeHtml(member.peer_id)}', this.value)">
                         <option value="member">Üye</option>
                         ${roleOptions}
                     </select>
-                ` : `<span style="font-size:12px;color:var(--text-muted);">${roles[currentRole]?.name || 'Üye'}</span>`}
+                ` : `<span style="font-size:12px;color:var(--text-muted);">${escapeHtml(roles[currentRole]?.name || 'Üye')}</span>`}
             </div>
         `;
     });
@@ -11008,11 +10994,11 @@ function loadRolesContent() {
             <div class="role-item ${isUsed ? 'used' : ''}">
                 <div class="role-info">
                     <div class="role-header">
-                        <div class="role-icon">${role.icon}</div>
-                        <div class="role-name">${role.name}</div>
-                        <div class="role-color" style="background: ${role.color}"></div>
+                        <div class="role-icon">${escapeHtml(role.icon)}</div>
+                        <div class="role-name">${escapeHtml(role.name)}</div>
+                        <div class="role-color" style="background: ${escapeHtml(safeCssColor(role.color))}"></div>
                     </div>
-                    <div class="role-description">${role.description}</div>
+                    <div class="role-description">${escapeHtml(role.description)}</div>
                 </div>
             </div>
         `;
@@ -11026,12 +11012,12 @@ function loadRolesContent() {
                     <div class="role-info">
                         <div class="role-header">
                             <div class="role-icon">🎨</div>
-                            <div class="role-name">${roleData.name || roleId}</div>
-                            <div class="role-color" style="background: ${roleData.color || '#6b7280'}"></div>
+                            <div class="role-name">${escapeHtml(roleData.name || roleId)}</div>
+                            <div class="role-color" style="background: ${escapeHtml(safeCssColor(roleData.color) || '#6b7280')}"></div>
                         </div>
                         <div class="role-actions">
-                            <button class="role-action-btn" onclick="editRole('${roleId.replace(/'/g, "\\u0027").replace(/"/g, "\\u0022")}')">✏️</button>
-                            <button class="role-action-btn" onclick="deleteRole('${roleId.replace(/'/g, "\\u0027").replace(/"/g, "\\u0022")}')">🗑️</button>
+                            <button class="role-action-btn" onclick="editRole('${escapeHtml(roleId).replace(/'/g, "\\u0027").replace(/"/g, "\\u0022")}')">✏️</button>
+                            <button class="role-action-btn" onclick="deleteRole('${escapeHtml(roleId).replace(/'/g, "\\u0027").replace(/"/g, "\\u0022")}')">🗑️</button>
                         </div>
                     </div>
                 </div>
@@ -11082,7 +11068,7 @@ function loadPermissionsContent() {
                     <div class="permission-role-list">
                         ${Object.entries(roles).map(([roleId, roleData]) => {
             const hasPermission = roleData.permissions?.includes(perm.id);
-            return `<span class="permission-role ${hasPermission ? 'has-permission' : ''}">${roleData.name || roleId}</span>`;
+            return `<span class="permission-role ${hasPermission ? 'has-permission' : ''}">${escapeHtml(roleData.name || roleId)}</span>`;
         }).join('')}
                     </div>
                 </div>
@@ -11110,23 +11096,23 @@ function loadRoleMembersContent() {
         html += `
             <div class="role-group">
                 <div class="role-group-header">
-                    <div class="role-badge" style="background: ${roleData.color || '#6b7280'}">
-                        <span class="role-badge-icon">${roleData.icon || '🎭'}</span>
-                        <span class="role-badge-name">${roleData.name || roleId}</span>
+                    <div class="role-badge" style="background: ${escapeHtml(safeCssColor(roleData.color) || '#6b7280')}">
+                        <span class="role-badge-icon">${escapeHtml(roleData.icon || '🎭')}</span>
+                        <span class="role-badge-name">${escapeHtml(roleData.name || roleId)}</span>
                     </div>
                     <div class="role-member-count">${roleMembers.length} üye</div>
                 </div>
                 <div class="role-members">
                     ${roleMembers.map(member => `
                         <div class="role-member-item">
-                            <div class="member-avatar" style="background: ${member.avatar_color}">
-                                ${member.avatar_image ? `<img src="${member.avatar_image}" alt="${member.username}" />` : member.username[0].toUpperCase()}
+                            <div class="member-avatar" style="background: ${escapeHtml(safeCssColor(member.avatar_color))}">
+                                ${member.avatar_image ? `<img src="${escapeHtml(safeImageSrc(member.avatar_image))}" alt="${escapeHtml(member.username)}" />` : escapeHtml(String(member.username || "?")[0].toUpperCase())}
                             </div>
                             <div class="member-info">
-                                <div class="member-name">${member.username}</div>
-                                <div class="member-status ${getMemberStatus(member.peer_id)}">${getMemberStatusText(member.peer_id)}</div>
+                                <div class="member-name">${escapeHtml(member.username)}</div>
+                                <div class="member-status ${getMemberStatus(member.peer_id)}">${escapeHtml(getMemberStatusText(member.peer_id))}</div>
                             </div>
-                            <button class="member-action-btn" onclick="changeMemberRole('${member.peer_id}')">🔄</button>
+                            <button class="member-action-btn" onclick="changeMemberRole('${escapeHtml(member.peer_id)}')">🔄</button>
                         </div>
                     `).join('')}
                 </div>
@@ -12491,12 +12477,12 @@ function loadCategoryPermissionsContent() {
         html += `
             <div class="role-permission-item">
                 <div class="role-permission-header">
-                    <div class="role-badge" style="background: ${roleData.color || '#6b7280'}">
-                        <span class="role-badge-icon">${roleData.icon || '🎭'}</span>
-                        <span class="role-badge-name">${roleData.name || roleId}</span>
+                    <div class="role-badge" style="background: ${escapeHtml(safeCssColor(roleData.color) || '#6b7280')}">
+                        <span class="role-badge-icon">${escapeHtml(roleData.icon || '🎭')}</span>
+                        <span class="role-badge-name">${escapeHtml(roleData.name || roleId)}</span>
                     </div>
                     <div class="role-permission-actions">
-                        <button class="permission-toggle-btn" onclick="toggleRoleCategoryPermissions('${roleId}')">⚙️</button>
+                        <button class="permission-toggle-btn" onclick="toggleRoleCategoryPermissions('${escapeHtml(roleId)}')">⚙️</button>
                     </div>
                 </div>
                 <div class="role-permissions">
@@ -16490,22 +16476,14 @@ function getRecentGifs() {
     }
 }
 
-// Giphy API - Gerçek GIF verisi
-const GIPHY_API_KEY = 'Gl1GZQ4BJpmGk2eMN4eM0oO0mO6i1nX6'; // Public beta key
-
+// Giphy API - sunucu tarafı proxy üzerinden (anahtar backend env'de tutulur)
 async function getMockGifs(category, query = '') {
     try {
-        let url = '';
-        
-        if (category === 'search' && query) {
-            // Search Giphy
-            url = `https://api.giphy.com/v1/gifs/search?api_key=${GIPHY_API_KEY}&q=${encodeURIComponent(query)}&limit=20&rating=g`;
-        } else {
-            // Trending GIFs
-            url = `https://api.giphy.com/v1/gifs/trending?api_key=${GIPHY_API_KEY}&limit=20&rating=g`;
-        }
-        
-        const response = await fetch(url);
+        const params = new URLSearchParams({ category: category === 'search' && query ? 'search' : 'trending' });
+        if (category === 'search' && query) params.set('q', query);
+
+        const response = await scordFetch(`${API_BASE}/giphy?${params.toString()}`);
+        if (!response || !response.ok) return [];
         const data = await response.json();
         
         if (data.data && data.data.length > 0) {
@@ -18386,7 +18364,7 @@ function showRichUserMenu(peerId, username, x, y) {
     menu.style.top = `${Math.min(y, window.innerHeight - 330)}px`;
     menu.innerHTML = `
       <div class="rich-user-menu-head">
-        <div class="rich-user-menu-avatar">${initials(username)}</div>
+        <div class="rich-user-menu-avatar">${escapeHtml(initials(username))}</div>
         <div><strong>${escapeHtml(username || "Kullanici")}</strong><span>${escapeHtml(role)}</span></div>
       </div>
       <button data-action="profile">Profili ac</button>
@@ -18430,9 +18408,9 @@ openUserProfile = window.openUserProfile = function (peerId, username, avatarIma
     const canModerate = !isSelf && server && (server.ownerId === state.peerId || roleAllows(server, "force_disconnect", state.voiceChannelId || state.activeChannelId));
     const body = `
       <div class="profile-pro-card">
-        <div class="profile-pro-banner" style="background:linear-gradient(135deg, ${avatarColor || "#5865f2"}, #111827);"></div>
+        <div class="profile-pro-banner" style="background:linear-gradient(135deg, ${escapeHtml(safeCssColor(avatarColor) || "#5865f2")}, #111827);"></div>
         <div class="profile-pro-main">
-          <div class="profile-pro-avatar" style="background-color:${avatarColor || "#5865f2"};background-image:url(${avatarImage || ""})">${avatarImage ? "" : initials(username)}</div>
+          <div class="profile-pro-avatar" style="background-color:${escapeHtml(safeCssColor(avatarColor) || "#5865f2")};background-image:url(&quot;${escapeHtml(safeImageSrc(avatarImage).replace(/["'()\\]/g, ''))}&quot;)">${avatarImage ? "" : escapeHtml(initials(username))}</div>
           <div class="profile-pro-title">
             <h2>${escapeHtml(username || "Kullanici")}</h2>
             <span>${escapeHtml(role)} - ${escapeHtml(serverName)}</span>
