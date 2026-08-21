@@ -155,6 +155,56 @@ class ProductFoundationTests(unittest.TestCase):
         audit = self.client.get(f"/api/rooms/{room_id}/audit-log", headers=self.auth(owner)).json()["entries"]
         self.assertIn("member_timed_out", [entry["action"] for entry in audit])
 
+    def test_owner_operations_reject_anonymous_and_unprivileged_callers(self):
+        owner = self.register("Keeper", "keeper@example.com")
+        outsider = self.register("Stranger", "stranger@example.com")
+        created = self.create_room(owner)
+        room_id = created["room_id"]
+        legacy_id = f"{room_id}-legacy"
+        legacy = self.server.Room(legacy_id, "Legacy QA", owner["peer_id"], owner["username"])
+        legacy.owner_key = None
+        self.server.rooms[legacy_id] = legacy
+
+        for target in (room_id, legacy_id):
+            self.assertEqual(
+                self.client.post(f"/api/rooms/{target}/channels", json={"name": "pwned"}).status_code,
+                403,
+            )
+            self.assertEqual(
+                self.client.post(
+                    f"/api/rooms/{target}/channels",
+                    json={"name": "pwned"},
+                    headers=self.auth(outsider),
+                ).status_code,
+                403,
+            )
+            self.assertEqual(
+                self.client.delete(f"/api/rooms/{target}?owner_id={owner['peer_id']}").status_code,
+                401,
+            )
+            outsider_delete = self.client.delete(
+                f"/api/rooms/{target}?owner_id={owner['peer_id']}",
+                headers=self.auth(outsider),
+            )
+            self.assertNotIn("success", outsider_delete.json())
+            self.assertIn(target, self.server.rooms)
+
+        self.assertEqual(
+            self.client.post(
+                f"/api/rooms/{legacy_id}/channels",
+                json={"name": "allowed"},
+                headers=self.auth(owner),
+            ).status_code,
+            200,
+        )
+        self.assertEqual(
+            self.client.post(
+                f"/api/rooms/{room_id}/channels",
+                json={"name": "allowed", "owner_key": created["owner_key"]},
+            ).status_code,
+            200,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

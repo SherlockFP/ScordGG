@@ -1298,7 +1298,10 @@ def update_account(body: dict):
     limits = {"avatar_image": 300_000, "banner_url": 300_000}
     for key in ("avatar_image", "avatar_color", "bio", "banner_url", "banner_color"):
         if key in body:
-            fields[key] = str(body[key])[:limits.get(key, 8000)]
+            if key in ("avatar_image", "banner_url"):
+                fields[key] = (_safe_media_url(body[key]) or "")[:limits[key]]
+            else:
+                fields[key] = str(body[key])[:limits.get(key, 8000)]
     if not fields:
         return {"success": True, **_account_private(row)}
     with _db() as conn:
@@ -1560,7 +1563,7 @@ def create_room(body: dict, request: Request):
     if not account:
         raise HTTPException(status_code=401, detail="unauthorized")
     room_id = str(uuid.uuid4())
-    name = body.get("name", "Unnamed Server")
+    name = _validated_room_name(body.get("name"), "Unnamed Server")
     owner_id = account["peer_id"]
     room = Room(room_id, name, owner_id, _account_name(account))
     room.owner_key = secrets.token_urlsafe(32)
@@ -1570,24 +1573,31 @@ def create_room(body: dict, request: Request):
     log.info(f"Room created: {name!r} ({room_id}) by {owner_id}")
     return {"room_id": room_id, "invite_code": room.invite_code, "owner_key": room.owner_key}
 
-def _owner_key_ok(room, body: dict | None, query, request: Request | None = None):
+def _owner_key_ok(room, body: dict | None, query, request: Request | None = None, permission: str = "manage_server"):
     """Owner-op gate: gizli owner_key (body JSON'daki `owner_key` veya ?owner_key=).
-    Legacy odalar (owner_key None) geçer — eski davranış korunur. Anahtar yanlış/eksikse 403."""
+
+    owner_key'i olmayan legacy/template odalar için anonim yazma serbest değildir:
+    oturum token'ı ve ilgili rol izni gerekir. Aksi halde 403.
+    """
+    account = None
     if request is not None:
         auth = request.headers.get("authorization") or ""
         token = body.get("token") if body else ""
         if not token and auth.lower().startswith("bearer "):
             token = auth[7:].strip()
+        if not token:
+            token = request.query_params.get("token", "")
         account = _account_by_token(token)
         if account and _is_platform_admin(account["peer_id"]):
             return
-    if room.owner_key is None:
-        return  # legacy
     supplied = body.get("owner_key") if body else None
-    if not supplied:
+    if not supplied and query is not None:
         supplied = query.get("owner_key")
-    if not isinstance(supplied, str) or not secrets.compare_digest(supplied, room.owner_key):
-        raise HTTPException(status_code=403, detail="forbidden")
+    if room.owner_key and isinstance(supplied, str) and secrets.compare_digest(supplied, room.owner_key):
+        return
+    if account and room.has_permission(account["peer_id"], permission):
+        return
+    raise HTTPException(status_code=403, detail="forbidden")
 
 
 @app.post("/api/rooms/{room_id}/pin")
@@ -1612,12 +1622,60 @@ def toggle_pin(room_id: str, body: dict, request: Request):
     schedule_save_db()
     return {"pinned": room.pinned_messages}
 
+MAX_MESSAGE_TEXT_LEN = 4000
+MAX_MESSAGE_BYTES = 64 * 1024
+MAX_ROOM_NAME_LEN = 100
+
+
+def _validated_message(msg: object) -> dict:
+    """Reject malformed/oversized history payloads before they enter room state."""
+    if not isinstance(msg, dict):
+        raise HTTPException(status_code=422, detail="invalid_message")
+    msg_id = msg.get("id")
+    if not isinstance(msg_id, str) or not msg_id or len(msg_id) > 128:
+        raise HTTPException(status_code=422, detail="invalid_message_id")
+    text = msg.get("text")
+    if text is not None:
+        if not isinstance(text, str):
+            raise HTTPException(status_code=422, detail="invalid_message_text")
+        msg["text"] = text[:MAX_MESSAGE_TEXT_LEN]
+    if len(json.dumps(msg, ensure_ascii=False, default=str).encode("utf-8")) > MAX_MESSAGE_BYTES:
+        raise HTTPException(status_code=413, detail="message_too_large")
+    return msg
+
+
+def _safe_media_url(value: object) -> str | None:
+    """Allow only http(s), inline images and same-origin paths for client-rendered media."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise HTTPException(status_code=422, detail="invalid_url")
+    url = value.strip()
+    if not url:
+        return None
+    if len(url) > 2 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="url_too_large")
+    lowered = url.lower()
+    if lowered.startswith(("http://", "https://", "/")) or lowered.startswith("data:image/"):
+        return url
+    raise HTTPException(status_code=422, detail="invalid_url")
+
+
+def _validated_room_name(value: object, fallback: str) -> str:
+    if value is None:
+        return fallback
+    if not isinstance(value, str) or not value.strip():
+        raise HTTPException(status_code=422, detail="invalid_name")
+    return value.strip()[:MAX_ROOM_NAME_LEN]
+
+
 @app.post("/api/rooms/{room_id}/messages")
 async def save_history_message(room_id: str, body: dict, request: Request):
     if room_id not in rooms: return {"error": "Not found"}
     room = rooms[room_id]
     msg = body.get("message")
     if not msg: return {"error": "No message"}
+    msg = _validated_message(msg)
     account = _request_account(request, body)
     if not account or msg.get("authorId") != account["peer_id"]:
         raise HTTPException(status_code=403, detail="forbidden")
@@ -1667,7 +1725,7 @@ async def update_icon(room_id: str, body: dict, request: Request):
     account = _request_account(request, body)
     if not account or not room.has_permission(account["peer_id"], "manage_server"):
         raise HTTPException(status_code=403, detail="forbidden")
-    room.icon_url = body.get("url")
+    room.icon_url = _safe_media_url(body.get("url"))
     schedule_save_db()
     # Broadcast icon update to all connected peers
     await broadcast_to_room(room, {
@@ -1778,9 +1836,9 @@ async def update_room_settings(room_id: str, body: dict, request: Request):
     room = rooms[room_id]
     _owner_key_ok(room, body, request.query_params, request)
     if body.get("name"):
-        room.name = body["name"]
+        room.name = _validated_room_name(body["name"], room.name)
     if "icon_url" in body:
-        room.icon_url = body["icon_url"]
+        room.icon_url = _safe_media_url(body["icon_url"])
     if "description" in body:
         room.description = str(body["description"])[:500]
     if "is_public" in body:
@@ -2090,14 +2148,19 @@ def get_room_by_code(invite_code: str, request: Request):
 async def delete_room(room_id: str, owner_id: str, request: Request):
     if room_id not in rooms: return {"error": "Not found"}
     room = rooms[room_id]
-    # Yeni odalar: owner_key şart. Legacy odalar (owner_key yok): eski owner_id kontrolü.
-    if room.owner_key is not None:
-        _owner_key_ok(room, None, request.query_params, request)
+    # Yeni odalar: owner_key şart. Her durumda oturum sahibi owner (veya platform
+    # admin) olmalı; query'deki owner_id tek başına yetki kanıtı değildir.
     auth = request.headers.get("authorization") or ""
     token = auth[7:].strip() if auth.lower().startswith("bearer ") else request.query_params.get("token", "")
     account = _account_by_token(token)
-    if room.owner_id != owner_id and not (account and _is_platform_admin(account["peer_id"])):
+    if not account:
+        raise HTTPException(status_code=401, detail="unauthorized")
+    is_admin = _is_platform_admin(account["peer_id"])
+    if room.owner_key is not None and not is_admin:
+        _owner_key_ok(room, None, request.query_params, request)
+    if room.owner_id != account["peer_id"] and not is_admin:
         return {"error": "Unauthorized"}
+    owner_id = account["peer_id"]
     del rooms[room_id]
     deleted_room_ids.add(room_id)
     # Zombie client'lar─▒ temizle: ba─ƒl─▒ herkese silindi─ƒini s├╢yle, sonra soketi kapat.
@@ -2193,7 +2256,7 @@ def add_channel(room_id: str, body: dict, request: Request):
     if room_id not in rooms:
         return {"error": "Not found"}
     room = rooms[room_id]
-    _owner_key_ok(room, body, request.query_params, request)
+    _owner_key_ok(room, body, request.query_params, request, permission="manage_channels")
     new_ch = {
         "id": str(uuid.uuid4())[:8],
         "name": body.get("name", "new-channel"),
@@ -2208,7 +2271,7 @@ async def delete_channel(room_id: str, channel_id: str, request: Request, reques
     if room_id not in rooms:
         return {"error": "Not found"}
     room = rooms[room_id]
-    _owner_key_ok(room, None, request.query_params, request)
+    _owner_key_ok(room, None, request.query_params, request, permission="manage_channels")
     channel = next((c for c in room.channels if c["id"] == channel_id), None)
     if not channel:
         return {"error": "Channel not found"}
@@ -2232,7 +2295,7 @@ async def rename_channel(room_id: str, channel_id: str, body: dict, request: Req
     if room_id not in rooms:
         return {"error": "Not found"}
     room = rooms[room_id]
-    _owner_key_ok(room, body, request.query_params, request)
+    _owner_key_ok(room, body, request.query_params, request, permission="manage_channels")
     channel = next((c for c in room.channels if c["id"] == channel_id), None)
     if not channel:
         return {"error": "Channel not found"}
@@ -2255,7 +2318,7 @@ def add_role(room_id: str, body: dict, request: Request):
     if room_id not in rooms:
         return {"error": "Not found"}
     room = rooms[room_id]
-    _owner_key_ok(room, body, request.query_params, request)
+    _owner_key_ok(room, body, request.query_params, request, permission="manage_roles")
     role_id = body.get("name", "new-role").lower()
     room.roles[role_id] = {
         "name": body.get("name", "New Role"),
@@ -2271,7 +2334,7 @@ def update_role(room_id: str, role_id: str, body: dict, request: Request):
     if room_id not in rooms:
         return {"error": "Not found"}
     room = rooms[room_id]
-    _owner_key_ok(room, body, request.query_params, request)
+    _owner_key_ok(room, body, request.query_params, request, permission="manage_roles")
     if role_id not in room.roles:
         return {"error": "Role not found"}
     
@@ -2288,7 +2351,7 @@ def assign_role(room_id: str, body: dict, request: Request):
     if room_id not in rooms:
         return {"error": "Not found"}
     room = rooms[room_id]
-    _owner_key_ok(room, body, request.query_params, request)
+    _owner_key_ok(room, body, request.query_params, request, permission="manage_roles")
     peer_id = body.get("peer_id")
     role_id = body.get("role_id")
     if peer_id and role_id in room.roles:
@@ -2344,6 +2407,29 @@ def yt_search(q: str):
     except Exception as e:
         log.warning(f"YT search error: {e}")
     return {"id": None}
+
+
+@app.get("/api/giphy")
+def giphy_proxy(request: Request, category: str = "trending", q: str = ""):
+    """Proxy Giphy requests so the API key stays on the server (env SCORD_GIPHY_API_KEY)."""
+    if not _request_account(request):
+        raise HTTPException(status_code=401, detail="unauthorized")
+    api_key = os.environ.get("SCORD_GIPHY_API_KEY", "").strip()
+    if not api_key:
+        return {"data": []}
+    query = urllib.parse.urlencode(
+        {"api_key": api_key, "limit": "20", "rating": "g"}
+        | ({"q": q[:120]} if category == "search" and q else {})
+    )
+    endpoint = "search" if category == "search" and q else "trending"
+    try:
+        req = urllib.request.Request(f"https://api.giphy.com/v1/gifs/{endpoint}?{query}")
+        with urllib.request.urlopen(req, timeout=5) as response:
+            payload = json.loads(response.read().decode("utf-8", "replace"))
+    except Exception as e:
+        log.warning(f"Giphy proxy error: {e}")
+        return {"data": []}
+    return {"data": payload.get("data", []) if isinstance(payload, dict) else []}
 
 # ΓöÇΓöÇ WebSocket signaling ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
