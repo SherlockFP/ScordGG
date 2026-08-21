@@ -486,10 +486,30 @@ def _clear_login_attempts(request: Request):
 
 
 def _request_account(request: Request, body: dict | None = None) -> Optional[sqlite3.Row]:
-    body = body or {}
+    return _account_by_token(_request_token(request, body))
+
+
+def _request_token(
+    request: Request,
+    body: dict | None = None,
+    query_token: str | None = None,
+) -> str:
+    """Extract a request token, preserving body/header/query precedence."""
     auth = request.headers.get("authorization") or ""
-    token = body.get("token") or (auth[7:].strip() if auth.lower().startswith("bearer ") else "")
-    return _account_by_token(token)
+    header_token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+    body_token = body.get("token") if body else ""
+    return body_token or header_token or query_token or ""
+
+
+def _require_request_account(
+    request: Request,
+    body: dict | None = None,
+    query_token: str | None = None,
+) -> sqlite3.Row:
+    account = _account_by_token(_request_token(request, body, query_token))
+    if not account:
+        raise HTTPException(status_code=401, detail="unauthorized")
+    return account
 
 
 def _upsert_server_member(room_id: str, peer_id: str, username: str, role: str = "member"):
@@ -657,21 +677,7 @@ def _load_db_legacy():
             data = json.load(f)
         deleted_room_ids.update(data.pop("_deleted", []))
         for rid, rdata in data.items():
-            room = Room(rid, rdata["name"], rdata.get("owner_id", "unknown"), rdata.get("owner_username", ""))
-            room.owner_key = rdata.get("owner_key")
-            room.created_at = rdata.get("created_at", room.created_at)
-            room.channels = rdata.get("channels", room.channels)
-            room.roles = rdata.get("roles", room.roles)
-            room.channel_permissions = rdata.get("channel_permissions", room.channel_permissions)
-            room.peer_roles = rdata.get("peer_roles", room.peer_roles)
-            room.pinned_messages = rdata.get("pinned_messages", [])
-            room.messages = rdata.get("messages", {})
-            room.channel_backgrounds = rdata.get("channel_backgrounds", {})
-            room.icon_url = rdata.get("icon_url", None)
-            room.description = rdata.get("description", "")
-            room.invite_code = rdata.get("invite_code", str(uuid.uuid4())[:6].upper())
-            room.normalize_permissions()
-            rooms[rid] = room
+            rooms[rid] = _room_from_snapshot(rid, rdata)
         log.info(f"Database loaded from {DATABASE_FILE} ({len(rooms)} rooms)")
     except Exception as e:
         log.error(f"Failed to load db from {DATABASE_FILE}: {e}")
@@ -681,21 +687,7 @@ def _load_db_legacy():
                 with open(bak_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 for rid, rdata in data.items():
-                    room = Room(rid, rdata["name"], rdata.get("owner_id", "unknown"), rdata.get("owner_username", ""))
-                    room.owner_key = rdata.get("owner_key")
-                    room.created_at = rdata.get("created_at", room.created_at)
-                    room.channels = rdata.get("channels", room.channels)
-                    room.roles = rdata.get("roles", room.roles)
-                    room.channel_permissions = rdata.get("channel_permissions", room.channel_permissions)
-                    room.peer_roles = rdata.get("peer_roles", room.peer_roles)
-                    room.pinned_messages = rdata.get("pinned_messages", [])
-                    room.messages = rdata.get("messages", {})
-                    room.channel_backgrounds = rdata.get("channel_backgrounds", {})
-                    room.icon_url = rdata.get("icon_url", None)
-                    room.description = rdata.get("description", "")
-                    room.invite_code = rdata.get("invite_code", str(uuid.uuid4())[:6].upper())
-                    room.normalize_permissions()
-                    rooms[rid] = room
+                    rooms[rid] = _room_from_snapshot(rid, rdata)
                 log.warning(f"Recovered {len(rooms)} rooms from backup {bak_file}")
             except Exception as be:
                 log.error(f"Backup {bak_file} also corrupted — {len(rooms)} rooms lost. Fix or delete {DATABASE_FILE} and restart.")
@@ -967,23 +959,9 @@ class Room:
         """Data to be saved to disk (metadata only)."""
         self.normalize_permissions()
         return {
-            "room_id": self.room_id,
-            "name": self.name,
-            "owner_id": self.owner_id,
-            "owner_username": self.owner_username,
-            "created_at": self.created_at,
+            **self._shared_dict(),
             "owner_key": self.owner_key,
-            "channels": self.channels,
-            "roles": self.roles,
-            "channel_permissions": self.channel_permissions,
-            "peer_roles": self.peer_roles,
-            "pinned_messages": self.pinned_messages,
             "messages": self.messages,
-            "channel_backgrounds": self.channel_backgrounds,
-            "icon_url": self.icon_url,
-            "description": self.description,
-            "is_public": self.is_public,
-            "invite_code": self.invite_code,
             "channel_slow_modes": self.channel_slow_modes,
         }
 
@@ -1007,23 +985,9 @@ class Room:
         """Data to be sent to frontend (includes transient state)."""
         self.normalize_permissions()
         return {
-            "room_id": self.room_id,
-            "name": self.name,
-            "owner_id": self.owner_id,
-            "owner_username": self.owner_username,
-            "created_at": self.created_at,
+            **self._shared_dict(),
             "administrators": self.administrator_snapshot(),
             "peer_count": max(_server_member_count(self.room_id), len(self.peers), 1),
-            "channels": self.channels,
-            "roles": self.roles,
-            "channel_permissions": self.channel_permissions,
-            "peer_roles": self.peer_roles,
-            "pinned_messages": self.pinned_messages,
-            "channel_backgrounds": self.channel_backgrounds,
-            "icon_url": self.icon_url,
-            "description": self.description,
-            "is_public": self.is_public,
-            "invite_code": self.invite_code,
             "messages": self.messages, # Sent for history sync
             "peers": [
                 {
@@ -1038,6 +1002,25 @@ class Room:
                 for ch, members in self.voice_members.items()
             },
             "music_session": self.music_session,
+        }
+
+    def _shared_dict(self):
+        return {
+            "room_id": self.room_id,
+            "name": self.name,
+            "owner_id": self.owner_id,
+            "owner_username": self.owner_username,
+            "created_at": self.created_at,
+            "channels": self.channels,
+            "roles": self.roles,
+            "channel_permissions": self.channel_permissions,
+            "peer_roles": self.peer_roles,
+            "pinned_messages": self.pinned_messages,
+            "channel_backgrounds": self.channel_backgrounds,
+            "icon_url": self.icon_url,
+            "description": self.description,
+            "is_public": self.is_public,
+            "invite_code": self.invite_code,
         }
 
     def normalize_permissions(self):
@@ -1277,10 +1260,7 @@ def logout_account(body: dict):
 def get_account_me(request: Request, token: str = ""):
     # Token ├Âncelikle Authorization: Bearer <token> header'─▒ndan (URL loglar─▒na
     # s─▒zmaz); eski istemciler i├ºin query param fallback'i korunur.
-    auth = request.headers.get("authorization") or ""
-    if auth.lower().startswith("bearer "):
-        token = auth[7:].strip() or token
-    row = _account_by_token(token)
+    row = _account_by_token(_request_token(request, query_token=token))
     if not row:
         return {"error": "unauthorized"}
     return {"success": True, **_account_private(row)}
@@ -1554,11 +1534,7 @@ def get_runtime_config():
 @app.post("/api/rooms")
 def create_room(body: dict, request: Request):
     """Create a new P2P room (server). Returns the room_id + secret owner_key."""
-    auth = request.headers.get("authorization") or ""
-    token = body.get("token") or (auth[7:].strip() if auth.lower().startswith("bearer ") else "")
-    account = _account_by_token(token)
-    if not account:
-        raise HTTPException(status_code=401, detail="unauthorized")
+    account = _require_request_account(request, body)
     room_id = str(uuid.uuid4())
     name = body.get("name", "Unnamed Server")
     owner_id = account["peer_id"]
@@ -1574,11 +1550,7 @@ def _owner_key_ok(room, body: dict | None, query, request: Request | None = None
     """Owner-op gate: gizli owner_key (body JSON'daki `owner_key` veya ?owner_key=).
     Legacy odalar (owner_key None) geçer — eski davranış korunur. Anahtar yanlış/eksikse 403."""
     if request is not None:
-        auth = request.headers.get("authorization") or ""
-        token = body.get("token") if body else ""
-        if not token and auth.lower().startswith("bearer "):
-            token = auth[7:].strip()
-        account = _account_by_token(token)
+        account = _account_by_token(_request_token(request, body))
         if account and _is_platform_admin(account["peer_id"]):
             return
     if room.owner_key is None:
@@ -2093,9 +2065,7 @@ async def delete_room(room_id: str, owner_id: str, request: Request):
     # Yeni odalar: owner_key şart. Legacy odalar (owner_key yok): eski owner_id kontrolü.
     if room.owner_key is not None:
         _owner_key_ok(room, None, request.query_params, request)
-    auth = request.headers.get("authorization") or ""
-    token = auth[7:].strip() if auth.lower().startswith("bearer ") else request.query_params.get("token", "")
-    account = _account_by_token(token)
+    account = _account_by_token(_request_token(request, query_token=request.query_params.get("token", "")))
     if room.owner_id != owner_id and not (account and _is_platform_admin(account["peer_id"])):
         return {"error": "Unauthorized"}
     del rooms[room_id]
@@ -2147,11 +2117,7 @@ def restore_room(room_id: str, body: dict, request: Request):
     """
     if room_id in deleted_room_ids:
         return {"error": "deleted"}
-    auth = request.headers.get("authorization") or ""
-    token = body.get("token") or (auth[7:].strip() if auth.lower().startswith("bearer ") else "")
-    account = _account_by_token(token)
-    if not account:
-        raise HTTPException(status_code=401, detail="unauthorized")
+    account = _require_request_account(request, body)
     if room_id in rooms:
         _owner_key_ok(rooms[room_id], body, request.query_params, request)
         return {"success": True, "room": rooms[room_id].to_dict()}

@@ -97,7 +97,7 @@ var __rawState = {
     targetLang: "tr",
     theme: "sapphire",
     recentVoiceToasts: new Set(),
-    userVolumes: (() => { try { return JSON.parse(localStorage.getItem("scord_user_volumes") || "{}"); } catch (e) { return {}; } })(),
+    userVolumes: readLocalStorageJson("scord_user_volumes", {}),
     /** @type {{ messageId: string, author: string, authorId: string, text: string } | null} */
     replyTo: null,
     _p2pOutbox: [],
@@ -701,7 +701,7 @@ function applyScordAppearance() {
     // Kayıtlı kullanıcı ayarlarını geri yükle ve GERÇEKTEN uygula.
     // (Önceden scord_settings sadece yazılıyordu, açılışta hiç okunmuyordu —
     // yazı boyutu / kompakt mod / animasyon / ses efektleri kalıcı değildi.)
-    try { state.settings = { ...(state.settings || {}), ...(JSON.parse(localStorage.getItem("scord_settings") || "{}")) }; } catch (e) { }
+    state.settings = { ...(state.settings || {}), ...readLocalStorageJson("scord_settings", {}) };
     applyUserSettingEffects();
 }
 
@@ -723,7 +723,7 @@ window.applyUserSettingEffects = applyUserSettingEffects;
 function setUserSetting(key, value) {
     if (!state.settings) state.settings = {};
     state.settings[key] = value;
-    try { localStorage.setItem("scord_settings", JSON.stringify(state.settings)); } catch (e) { }
+    writeLocalStorageJson("scord_settings", state.settings);
     applyUserSettingEffects();
 }
 window.setUserSetting = setUserSetting;
@@ -772,6 +772,92 @@ function escapeHtml(s) {
     const d = document.createElement("div");
     d.textContent = String(s);
     return d.innerHTML;
+}
+
+function readLocalStorageJson(key, fallback) {
+    try {
+        const raw = localStorage.getItem(key);
+        return raw == null ? fallback : JSON.parse(raw);
+    } catch (e) {
+        return fallback;
+    }
+}
+
+function writeLocalStorageJson(key, value) {
+    try {
+        localStorage.setItem(key, JSON.stringify(value));
+    } catch (e) { }
+}
+
+function getOwnerKeys() {
+    return readLocalStorageJson("scordOwnerKeys", {});
+}
+
+function getOwnerKey(serverId) {
+    return getOwnerKeys()[serverId] || "";
+}
+
+function setOwnerKey(serverId, key) {
+    const keys = getOwnerKeys();
+    if (key) keys[serverId] = key;
+    else delete keys[serverId];
+    writeLocalStorageJson("scordOwnerKeys", keys);
+}
+
+function deleteOwnerKey(serverId) {
+    setOwnerKey(serverId, "");
+}
+
+function upsertVoiceMember(server, channelId, memberData) {
+    if (!server.voiceMembers) server.voiceMembers = {};
+    if (!server.voiceMembers[channelId]) server.voiceMembers[channelId] = [];
+    const member = server.voiceMembers[channelId].find(m => m.peer_id === memberData.peer_id);
+    if (member) Object.assign(member, memberData);
+    else server.voiceMembers[channelId].push({ ...memberData });
+    return member || server.voiceMembers[channelId][server.voiceMembers[channelId].length - 1];
+}
+
+function buildSelfVoiceJoinPayload(channelId) {
+    return {
+        type: "voice_join",
+        channelId,
+        username: state.username,
+        avatarColor: state.avatarColor,
+        avatarImage: state.avatarImage,
+        isSharingScreen: !!getLocalShareStream(),
+        isSharingCamera: !!state.cameraStream
+    };
+}
+
+function ensureSelfPeer(peerList) {
+    if (!peerList.some(m => m.peer_id === state.peerId)) {
+        peerList.push({
+            peer_id: state.peerId,
+            username: state.username,
+            avatar_color: state.avatarColor,
+            avatar_image: state.avatarImage,
+        });
+    }
+    return peerList;
+}
+
+function bindServerSettingsNav(panel) {
+    panel.querySelectorAll(".scord-server-settings-nav button[data-page]").forEach(btn => {
+        btn.onclick = () => {
+            panel.querySelectorAll(".scord-server-settings-nav button").forEach(b => b.classList.remove("active"));
+            panel.querySelectorAll(".srv-page").forEach(p => p.classList.add("hidden"));
+            btn.classList.add("active");
+            panel.querySelector(`#srv-${btn.dataset.page}`)?.classList.remove("hidden");
+        };
+    });
+}
+
+function appendContextMenuItem(container, icon, label, action, danger = false) {
+    const item = document.createElement("div");
+    item.className = "ctx-item" + (danger ? " danger" : "");
+    item.innerHTML = `<span class="ctx-icon">${icon}</span>${escapeHtml(label)}`;
+    item.onclick = () => { closeContextMenu(); action(); };
+    container.appendChild(item);
 }
 
 // Status System Functions
@@ -1117,14 +1203,14 @@ const ACTIVITY_TYPES = {
 
 function setGameActivity(game, icon = "🎮") {
     state.gameActivity = { game, icon, color: ACTIVITY_TYPES.playing.color };
-    localStorage.setItem("scord_game_activity", JSON.stringify(state.gameActivity));
+    writeLocalStorageJson("scord_game_activity", state.gameActivity);
     broadcastActivityUpdate();
     updateStatusBar();
 }
 
 function setSpotifyActivity(song, artist, album = "", icon = "🎵") {
     state.spotifyActivity = { song, artist, album, icon, color: ACTIVITY_TYPES.listening.color };
-    localStorage.setItem("scord_spotify_activity", JSON.stringify(state.spotifyActivity));
+    writeLocalStorageJson("scord_spotify_activity", state.spotifyActivity);
     broadcastActivityUpdate();
     updateStatusBar();
 }
@@ -1443,7 +1529,7 @@ function saveReactionsToStorage(serverId) {
         });
     });
 
-    localStorage.setItem(`scord_reactions_${serverId}`, JSON.stringify(serializable));
+    writeLocalStorageJson(`scord_reactions_${serverId}`, serializable);
 }
 
 function loadReactionsFromStorage(serverId) {
@@ -1779,7 +1865,7 @@ function saveThreadsToStorage(serverId) {
     const server = state.servers.find(s => s.id === serverId);
     if (!server || !server.threads) return;
 
-    localStorage.setItem(`scord_threads_${serverId}`, JSON.stringify(server.threads));
+    writeLocalStorageJson(`scord_threads_${serverId}`, server.threads);
 }
 
 function loadThreadsFromStorage(serverId) {
@@ -1881,7 +1967,7 @@ function toggleChannelMuteLocal(serverId, channelId) {
         set.push(channelId);
         toast("Kanal sessize alındı (sadece bu cihaz).", "info");
     }
-    localStorage.setItem(chMuteStorageKey(serverId), JSON.stringify(set));
+    writeLocalStorageJson(chMuteStorageKey(serverId), set);
     updateChannelSidebar(serverId);
 }
 
@@ -1920,13 +2006,7 @@ function showChannelContextMenu(ev, channel, serverId) {
     menu.style.left = `${Math.min(x, window.innerWidth - 260)}px`;
     menu.style.top = `${Math.min(y, window.innerHeight - 280)}px`;
 
-    const addItem = (icon, label, action) => {
-        const item = document.createElement("div");
-        item.className = "ctx-item";
-        item.innerHTML = `<span class="ctx-icon">${icon}</span>${escapeHtml(label)}`;
-        item.onclick = () => { closeContextMenu(); action(); };
-        menu.appendChild(item);
-    };
+    const addItem = (icon, label, action) => appendContextMenuItem(menu, icon, label, action);
 
     if (channel.type === "text") {
         addItem("✓", "Okundu olarak işaretle", () => markChannelRead(serverId, channel.id));
@@ -1996,13 +2076,7 @@ function showServerContextMenu(ev, server) {
     menu.style.left = `${Math.min(ev.clientX, window.innerWidth - 260)}px`;
     menu.style.top = `${Math.min(ev.clientY, window.innerHeight - 220)}px`;
 
-    const addItem = (icon, label, action, danger = false) => {
-        const item = document.createElement("div");
-        item.className = "ctx-item" + (danger ? " danger" : "");
-        item.innerHTML = `<span class="ctx-icon">${icon}</span>${label}`;
-        item.onclick = () => { closeContextMenu(); action(); };
-        menu.appendChild(item);
-    };
+    const addItem = (icon, label, action, danger = false) => appendContextMenuItem(menu, icon, label, action, danger);
 
     const title = document.createElement("div");
     title.className = "ctx-section";
@@ -4017,11 +4091,7 @@ async function createServer(name) {
     const room_id = created.room_id;
     const inviteCode = created.invite_code || "";
     if (created.owner_key) {
-        try {
-            const keys = JSON.parse(localStorage.getItem("scordOwnerKeys") || "{}");
-            keys[room_id] = created.owner_key;
-            localStorage.setItem("scordOwnerKeys", JSON.stringify(keys));
-        } catch (e) {}
+        setOwnerKey(room_id, created.owner_key);
     }
 
     console.log("[Create] Server created:", room_id);
@@ -4095,11 +4165,11 @@ async function submitAddChannel(serverId, type) {
     const name = nameInput.value.trim().toLowerCase().replace(/\s+/g, '-');
     if (!name) return toast("Bir kanal adı girmelisin.", "error");
 
-    const keys = JSON.parse(localStorage.getItem("scordOwnerKeys") || "{}");
+    const ownerKey = getOwnerKey(serverId);
     const res = await scordFetch(`${API_BASE}/rooms/${serverId}/channels`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, type, ...(keys[serverId] ? { owner_key: keys[serverId] } : {}) })
+        body: JSON.stringify({ name, type, ...(ownerKey ? { owner_key: ownerKey } : {}) })
     });
     const newCh = await res.json();
 
@@ -4127,8 +4197,8 @@ async function deleteChannel(serverId, channelId) {
     if (!confirm(`"#${channel.name}" kanalını silmek istediğine emin misin?`)) return;
 
     try {
-        const keys = JSON.parse(localStorage.getItem("scordOwnerKeys") || "{}");
-        const res = await scordFetch(`${API_BASE}/rooms/${serverId}/channels/${channelId}${keys[serverId] ? `?owner_key=${encodeURIComponent(keys[serverId])}` : ""}`, { method: "DELETE" });
+        const ownerKey = getOwnerKey(serverId);
+        const res = await scordFetch(`${API_BASE}/rooms/${serverId}/channels/${channelId}${ownerKey ? `?owner_key=${encodeURIComponent(ownerKey)}` : ""}`, { method: "DELETE" });
         const data = await res.json();
         if (data.success || res.ok) {
             server.channels = server.channels.filter(c => c.id !== channelId);
@@ -4161,11 +4231,11 @@ async function renameChannel(serverId, channelId) {
     if (!newName || newName === channel.name) return;
 
     try {
-        const keys = JSON.parse(localStorage.getItem("scordOwnerKeys") || "{}");
+        const ownerKey = getOwnerKey(serverId);
         const res = await scordFetch(`${API_BASE}/rooms/${serverId}/channels/${channelId}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name: newName.toLowerCase().replace(/\s+/g, '-'), ...(keys[serverId] ? { owner_key: keys[serverId] } : {}) })
+            body: JSON.stringify({ name: newName.toLowerCase().replace(/\s+/g, '-'), ...(ownerKey ? { owner_key: ownerKey } : {}) })
         });
         const data = await res.json();
         if (data.success || res.ok) {
@@ -4216,14 +4286,7 @@ async function joinServer(roomId) {
         avatar_color: p.avatar_color,
         avatar_image: p.avatar_image ?? null,
     }));
-    if (!peerList.some(m => m.peer_id === state.peerId)) {
-        peerList.push({
-            peer_id: state.peerId,
-            username: state.username,
-            avatar_color: state.avatarColor,
-            avatar_image: state.avatarImage,
-        });
-    }
+    ensureSelfPeer(peerList);
     const server = {
         id: roomId,
         name: room.name,
@@ -4518,25 +4581,14 @@ function handleIncomingP2P(fromPeerId, data, roomId) {
                 ensureVoiceSessionHost(server, ch, fromPeerId, data.username);
             }
 
-            let member = server.voiceMembers[ch].find(m => m.peer_id === fromPeerId);
-
-            if (!member) {
-                member = {
-                    peer_id: fromPeerId,
-                    username: data.username,
-                    avatar_color: data.avatarColor,
-                    avatar_image: data.avatarImage,
-                    isSharingScreen: !!data.isSharingScreen,
-                    isSharingCamera: !!data.isSharingCamera
-                };
-                server.voiceMembers[ch].push(member);
-            } else {
-                member.username = data.username;
-                member.avatar_color = data.avatarColor;
-                member.avatar_image = data.avatarImage;
-                member.isSharingScreen = !!data.isSharingScreen;
-                member.isSharingCamera = !!data.isSharingCamera;
-            }
+            upsertVoiceMember(server, ch, {
+                peer_id: fromPeerId,
+                username: data.username,
+                avatar_color: data.avatarColor,
+                avatar_image: data.avatarImage,
+                isSharingScreen: !!data.isSharingScreen,
+                isSharingCamera: !!data.isSharingCamera
+            });
 
             updateChannelSidebar(roomId);
             if (state.activeChannelId === ch || state.voiceChannelId === ch) {
@@ -4577,26 +4629,14 @@ function handleIncomingP2P(fromPeerId, data, roomId) {
         const server = state.servers.find(s => s.id === roomId);
         if (server && server.voiceMembers) {
             const ch = canonicalVoiceChannelId(server, data.channelId);
-            if (!server.voiceMembers[ch]) server.voiceMembers[ch] = [];
-
-            let member = server.voiceMembers[ch].find(m => m.peer_id === fromPeerId);
-            if (!member) {
-                member = {
-                    peer_id: fromPeerId,
-                    username: data.username,
-                    avatar_color: data.avatarColor,
-                    avatar_image: data.avatarImage,
-                    isSharingScreen: !!data.isSharingScreen,
-                    isSharingCamera: !!data.isSharingCamera
-                };
-                server.voiceMembers[ch].push(member);
-            } else {
-                member.username = data.username;
-                member.avatar_color = data.avatarColor;
-                member.avatar_image = data.avatarImage;
-                member.isSharingScreen = !!data.isSharingScreen;
-                member.isSharingCamera = !!data.isSharingCamera;
-            }
+            upsertVoiceMember(server, ch, {
+                peer_id: fromPeerId,
+                username: data.username,
+                avatar_color: data.avatarColor,
+                avatar_image: data.avatarImage,
+                isSharingScreen: !!data.isSharingScreen,
+                isSharingCamera: !!data.isSharingCamera
+            });
 
             if (state.activeChannelId === ch || state.voiceChannelId === ch) renderVoiceParticipants(roomId, ch);
             updateMuteStates();
@@ -4927,15 +4967,7 @@ function handlePeerJoined(peerId, info, roomId) {
     renderServerRail();
 
     if (state.voiceChannelId && state.mesh) {
-        const voicePayload = {
-            type: "voice_join",
-            channelId: state.voiceChannelId,
-            username: state.username,
-            avatarColor: state.avatarColor,
-            avatarImage: state.avatarImage,
-            isSharingScreen: !!getLocalShareStream(),
-            isSharingCamera: !!state.cameraStream
-        };
+        const voicePayload = buildSelfVoiceJoinPayload(state.voiceChannelId);
         sendServerEvent(voicePayload);
         state.mesh.broadcastSignal?.(voicePayload);
     }
@@ -5158,15 +5190,7 @@ function handlePeerConnected(peerId, roomId) {
     if (state.voiceChannelId) {
         // BUG-1/2 Fix: Send a full voice_join (not just voice_state_sync) so the
         // newcomer sees us in the voice channel member list and gets a toast notification.
-        state.mesh.sendTo(peerId, {
-            type: "voice_join",
-            channelId: state.voiceChannelId,
-            username: state.username,
-            avatarColor: state.avatarColor,
-            avatarImage: state.avatarImage,
-            isSharingScreen: !!getLocalShareStream(),
-            isSharingCamera: !!state.cameraStream
-        });
+        state.mesh.sendTo(peerId, buildSelfVoiceJoinPayload(state.voiceChannelId));
     }
 
     // BUG-1 Fix: Also push all other known voice members in our channel to the newcomer
@@ -7018,7 +7042,7 @@ function saveMessageHistoryToStorage(serverId) {
     const server = state.servers.find(s => s.id === serverId);
     if (!server || !server.messageHistory) return;
 
-    localStorage.setItem(`scord_message_history_${serverId}`, JSON.stringify(server.messageHistory));
+    writeLocalStorageJson(`scord_message_history_${serverId}`, server.messageHistory);
 }
 
 function loadMessageHistoryFromStorage(serverId) {
@@ -7124,18 +7148,18 @@ function leaveServer(serverId) {
     // Clean all localStorage keys for this server
     try { localStorage.removeItem("scord_server_" + serverId); } catch (e) {}
     try {
-        var saved = JSON.parse(localStorage.getItem("scord_saved_servers") || "[]");
+        var saved = readLocalStorageJson("scord_saved_servers", []);
         var filtered = saved.filter(function (s) { return s.id !== serverId; });
         if (saved.length !== filtered.length) {
-            localStorage.setItem("scord_saved_servers", JSON.stringify(filtered));
+            writeLocalStorageJson("scord_saved_servers", filtered);
         }
     } catch (e) {}
     // Add to left servers list so it never reappears
     try {
-        var leftList = JSON.parse(localStorage.getItem("scord_left_servers") || "[]");
+        var leftList = readLocalStorageJson("scord_left_servers", []);
         if (leftList.indexOf(serverId) === -1) {
             leftList.push(serverId);
-            localStorage.setItem("scord_left_servers", JSON.stringify(leftList));
+            writeLocalStorageJson("scord_left_servers", leftList);
         }
     } catch (e) {}
     // If identity store exists, also clean it
@@ -7146,7 +7170,7 @@ function leaveServer(serverId) {
             var idData = JSON.parse(localStorage.getItem(idKey));
             if (idData && idData.servers) {
                 idData.servers = idData.servers.filter(function (s) { return s.id !== serverId; });
-                localStorage.setItem(idKey, JSON.stringify(idData));
+                writeLocalStorageJson(idKey, idData);
             }
         }
         var legacyNick = localStorage.getItem("scord_username");
@@ -7156,7 +7180,7 @@ function leaveServer(serverId) {
             var legacyData = JSON.parse(localStorage.getItem(legacyKey));
             if (legacyData && legacyData.servers) {
                 legacyData.servers = legacyData.servers.filter(function (s) { return s.id !== serverId; });
-                localStorage.setItem(legacyKey, JSON.stringify(legacyData));
+                writeLocalStorageJson(legacyKey, legacyData);
             }
         }
     } catch (e) {}
@@ -7175,7 +7199,7 @@ function toggleBlockStatus(peerId, username) {
         state.blockedPeers.push(peerId);
         toast(`@${username} engellendi. Artık mesajlarını ve sesini duymayacaksın.`, "info");
     }
-    localStorage.setItem("scord_blocked_peers", JSON.stringify(state.blockedPeers));
+    writeLocalStorageJson("scord_blocked_peers", state.blockedPeers);
     const blockRequest = idx === -1
         ? scordFetch(`${API_BASE}/friends/${encodeURIComponent(peerId)}/block`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) })
         : scordFetch(`${API_BASE}/friends/${encodeURIComponent(peerId)}/block`, { method: "DELETE" });
@@ -7267,7 +7291,7 @@ function saveSettings() {
             noiseSuppression, echoCancellation,
             inputMode, pttKey
         };
-        localStorage.setItem("scord_voice_settings", JSON.stringify(state.voiceSettings));
+        writeLocalStorageJson("scord_voice_settings", state.voiceSettings);
     }
 
     // Apply PTT track state immediately if talking
@@ -7311,7 +7335,7 @@ function saveSettings() {
         chatLevel,
         messageSound: notifMsgSound
     };
-    localStorage.setItem("scord_notif_settings", JSON.stringify(state.notifSettings));
+    writeLocalStorageJson("scord_notif_settings", state.notifSettings);
 
     // Save compact mode
     const compact = document.getElementById("settings-compact")?.checked ?? false;
@@ -7565,11 +7589,11 @@ function openServerSettingsModal() {
         const srv = state.servers.find(s => s.id === state.activeServerId);
         if (!srv || srv.ownerId !== state.peerId) return;
         try {
-        const keys = JSON.parse(localStorage.getItem("scordOwnerKeys") || "{}");
+        const ownerKey = getOwnerKey(srv.id);
         const res = await scordFetch(`${API_BASE}/rooms/${srv.id}/invite_rotate`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ owner_id: state.peerId, ...(keys[srv.id] ? { owner_key: keys[srv.id] } : {}) }),
+                body: JSON.stringify({ owner_id: state.peerId, ...(ownerKey ? { owner_key: ownerKey } : {}) }),
             });
             const data = await res.json();
             if (data.invite_code) {
@@ -7622,7 +7646,7 @@ function saveServerSettings() {
 
     // Server'a kaydet (API)
     if (typeof API_BASE !== "undefined") {
-        const keys = JSON.parse(localStorage.getItem("scordOwnerKeys") || "{}");
+        const ownerKey = getOwnerKey(server.id);
         scordFetch(`${API_BASE}/rooms/${server.id}/settings`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -7633,7 +7657,7 @@ function saveServerSettings() {
                 peer_roles: server.peer_roles,
                 channel_permissions: server.channel_permissions || {},
                 voicePermissionMode: server.voicePermissionMode,
-                ...(keys[server.id] ? { owner_key: keys[server.id] } : {}),
+                ...(ownerKey ? { owner_key: ownerKey } : {}),
             }),
         }).catch(() => {});
     }
@@ -7699,7 +7723,7 @@ function addToRecentDMs(peerId, name, avatarColor, avatarImage) {
     state.recentDMs.unshift({ peerId, name, avatarColor, avatarImage });
     if (state.recentDMs.length > 50) state.recentDMs.pop();
 
-    localStorage.setItem("scord_recent_dms", JSON.stringify(state.recentDMs));
+    writeLocalStorageJson("scord_recent_dms", state.recentDMs);
     if (!state.activeServerId) renderHomeSidebar();
 }
 
@@ -7855,7 +7879,7 @@ function createSidebarItem(name, color, image, onclick, peerId = "") {
             if (state.recentDMs) {
                 state.recentDMs = state.recentDMs.filter(dm => dm.peerId !== peerId);
                 const storageKey = state.peerId ? `scord_recent_dms_${state.peerId}` : "scord_recent_dms";
-                localStorage.setItem(storageKey, JSON.stringify(state.recentDMs));
+                writeLocalStorageJson(storageKey, state.recentDMs);
             }
             
             if (state.activeDM === peerId) {
@@ -8076,7 +8100,7 @@ async function loadPersistentFriends() {
             tag: friend.discriminator || merged.get(friend.peer_id)?.tag || "",
         }));
         state.friends = Array.from(merged.values());
-        localStorage.setItem("scord_friends", JSON.stringify(state.friends));
+        writeLocalStorageJson("scord_friends", state.friends);
         if (!state.activeServerId && typeof renderHomeSidebar === "function") renderHomeSidebar();
     } catch (e) {
         console.warn("[Friends] persistent sync failed:", e);
@@ -8101,13 +8125,13 @@ async function addFriend(peerId, name) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ target_peer_id: peerId }),
     }).catch(e => console.warn("[Friends] persist failed:", e));
-    localStorage.setItem("scord_friends", JSON.stringify(state.friends));
+    writeLocalStorageJson("scord_friends", state.friends);
     toast(`${name} arkadaş olarak eklendi! ✨`, "success");
 }
 
 async function removeFriend(peerId) {
     state.friends = state.friends.filter(f => f.peerId !== peerId);
-    localStorage.setItem("scord_friends", JSON.stringify(state.friends));
+    writeLocalStorageJson("scord_friends", state.friends);
     try { await scordFetch(`${API_BASE}/friends/${encodeURIComponent(peerId)}`, { method: "DELETE" }); } catch (e) { console.warn("[Friends] remove persist failed:", e); }
     if (!state.activeServerId) renderHomeSidebar();
     toast("Arkadaş listesinden çıkarıldı.", "info");
@@ -9079,7 +9103,7 @@ function savePinnedMessagesToStorage(serverId) {
     const server = state.servers.find(s => s.id === serverId);
     if (!server || !server.pinned_messages) return;
 
-    localStorage.setItem(`scord_pinned_${serverId}`, JSON.stringify(server.pinned_messages));
+    writeLocalStorageJson(`scord_pinned_${serverId}`, server.pinned_messages);
 }
 
 function loadPinnedMessagesFromStorage(serverId) {
@@ -9130,7 +9154,7 @@ function setPeerVolume(peerId, value) {
     if (!state.userVolumes) state.userVolumes = {};
     const volume = Math.max(0, Math.min(200, Number(value) || 0));
     state.userVolumes[peerId] = volume;
-    localStorage.setItem("scord_user_volumes", JSON.stringify(state.userVolumes));
+    writeLocalStorageJson("scord_user_volumes", state.userVolumes);
     const video = state.remoteMedia?.[peerId];
     if (video) video.volume = volume / 100;
 }
@@ -9349,7 +9373,7 @@ function saveFriendsToStorage() {
         avatarColor: f.avatarColor,
         avatarImage: f.avatarImage
     }));
-    localStorage.setItem("scord_friends", JSON.stringify(friendsData));
+    writeLocalStorageJson("scord_friends", friendsData);
 }
 
 // P2P Callback for when native browser screen sharing stops
@@ -9418,13 +9442,11 @@ function updateTheme(themeName) {
 async function deleteServer(serverId) {
     if (!confirm("Bu sunucuyu kalıcı olarak silmek istediğine emin misin? Bu işlem geri alınamaz!")) return;
     try {
-        const keys = JSON.parse(localStorage.getItem("scordOwnerKeys") || "{}");
-        const ownerKey = keys[serverId] || "";
+        const ownerKey = getOwnerKey(serverId);
         const res = await scordFetch(`${API_BASE}/rooms/${encodeURIComponent(serverId)}?owner_id=${encodeURIComponent(state.peerId)}${ownerKey ? `&owner_key=${encodeURIComponent(ownerKey)}` : ""}`, { method: "DELETE" });
         const data = await res.json();
         if (data.success) {
-            delete keys[serverId];
-            try { localStorage.setItem("scordOwnerKeys", JSON.stringify(keys)); } catch (e) {}
+            deleteOwnerKey(serverId);
             toast("Sunucu başarıyla silindi.", "success");
             state.servers = state.servers.filter(s => s.id !== serverId);
             if (state.activeServerId === serverId) state.activeServerId = null;
@@ -9721,7 +9743,7 @@ function saveServerToStorage(server) {
             savedServers.splice(0, savedServers.length - 50);
         }
 
-        localStorage.setItem('scord_saved_servers', JSON.stringify(savedServers));
+        writeLocalStorageJson('scord_saved_servers', savedServers);
         console.log("[Storage] Server saved:", server.name);
     } catch (e) {
         console.error("[Storage] Failed to save server:", e);
@@ -9742,7 +9764,7 @@ function removeServerFromStorage(serverId) {
     try {
         const savedServers = loadServersFromStorage();
         const filtered = savedServers.filter(s => s.id !== serverId);
-        localStorage.setItem('scord_saved_servers', JSON.stringify(filtered));
+        writeLocalStorageJson('scord_saved_servers', filtered);
         console.log("[Storage] Server removed:", serverId);
     } catch (e) {
         console.error("[Storage] Failed to remove server:", e);
@@ -9783,14 +9805,7 @@ async function joinByInviteCode(code) {
             avatar_image: p.avatar_image ?? null,
         }));
 
-        if (!peerList.some(m => m.peer_id === state.peerId)) {
-            peerList.push({
-                peer_id: state.peerId,
-                username: state.username,
-                avatar_color: state.avatarColor,
-                avatar_image: state.avatarImage,
-            });
-        }
+        ensureSelfPeer(peerList);
 
         const server = {
             id: data.room_id,
@@ -11233,7 +11248,7 @@ function saveRoleChanges() {
     if (!server) return;
 
     // Save roles to server state and potentially to backend
-    localStorage.setItem(`scord_roles_${server.id}`, JSON.stringify(server.roles));
+    writeLocalStorageJson(`scord_roles_${server.id}`, server.roles);
 
     // Broadcast role changes to other members
     if (state.mesh) {
@@ -11650,7 +11665,7 @@ async function reconcileServerRegistry() {
         if (!server) continue;
         try {
             const payload = _localServerToRestorePayload(server);
-            const ok = (JSON.parse(localStorage.getItem("scordOwnerKeys") || "{}")[id] || "");
+            const ok = getOwnerKey(id);
             if (ok) payload.owner_key = ok;
             const res = await fetch(`${API_BASE}/rooms/${encodeURIComponent(id)}/restore`, {
                 method: "POST",
@@ -11703,7 +11718,7 @@ async function handleRoomNotFound(roomId) {
     if ((result.unknown || []).includes(roomId)) {
         try {
             const payload = _localServerToRestorePayload(server);
-            const ok = (JSON.parse(localStorage.getItem("scordOwnerKeys") || "{}")[roomId] || "");
+            const ok = getOwnerKey(roomId);
             if (ok) payload.owner_key = ok;
             const res = await fetch(`${API_BASE}/rooms/${encodeURIComponent(roomId)}/restore`, {
                 method: "POST",
@@ -11815,19 +11830,17 @@ function roleAllows(server, permission, channelId) {
     if (!server) return false;
     if (myRoleId(server) === "owner") return true;
     const roleId = myRoleId(server);
-    const role = server.roles?.[roleId] || server.roles?.member || {};
-    let allowed = !!role.permissions?.[permission];
-    const overrides = server.channel_permissions?.[channelId];
-    const roleOverride = overrides?.[roleId] || overrides?.member;
-    if (roleOverride?.deny?.includes(permission)) allowed = false;
-    if (roleOverride?.allow?.includes(permission)) allowed = true;
-    return allowed;
+    return resolveRoleChannelPermission(server, roleId, permission, channelId);
 }
 
 function peerAllows(server, peerId, permission, channelId) {
     if (!server || !peerId) return false;
     if (server.ownerId === peerId || server.owner_id === peerId) return true;
     const roleId = server.peer_roles?.[peerId] || "member";
+    return resolveRoleChannelPermission(server, roleId, permission, channelId);
+}
+
+function resolveRoleChannelPermission(server, roleId, permission, channelId) {
     const role = server.roles?.[roleId] || server.roles?.member || {};
     let allowed = !!role.permissions?.[permission];
     const overrides = server.channel_permissions?.[channelId];
@@ -11846,15 +11859,7 @@ joinVoiceChannel = window.joinVoiceChannel = async function (channelId) {
     }
     await _v21JoinVoiceChannel(channelId);
     if (state.voiceChannelId) {
-        sendServerEvent({
-            type: "voice_join",
-            channelId: state.voiceChannelId,
-            username: state.username,
-            avatarColor: state.avatarColor,
-            avatarImage: state.avatarImage,
-            isSharingScreen: !!getLocalShareStream(),
-            isSharingCamera: !!state.cameraStream
-        });
+        sendServerEvent(buildSelfVoiceJoinPayload(state.voiceChannelId));
     }
 };
 
@@ -12203,7 +12208,7 @@ saveSettings = window.saveSettings = function () {
     const autoGainControl = document.getElementById("settings-auto-gain")?.checked ?? false;
     const gateThreshold = Number(document.getElementById("settings-gate-threshold")?.value || state.voiceSettings?.gateThreshold || 12);
     state.voiceSettings = { ...(state.voiceSettings || {}), autoGainControl, gateThreshold, gateAttack: 0.012, gateRelease: 0.09 };
-    localStorage.setItem("scord_voice_settings", JSON.stringify(state.voiceSettings));
+    writeLocalStorageJson("scord_voice_settings", state.voiceSettings);
 };
 
 openServerSettingsPanel = window.openServerSettingsPanel = function () {
@@ -12247,14 +12252,7 @@ openServerSettingsPanel = window.openServerSettingsPanel = function () {
         ${isOwner ? `<section id="srv-danger" class="srv-page hidden"><h2>Sunucuyu Kapat</h2><div class="srv-danger-zone"><h3>Kalici silme</h3><p>Bu sunucu herkesten kaldirilir ve geri alinamaz. Sadece sunucu sahibi kapatabilir.</p><button class="btn-primary" style="background:var(--red);border:none;width:max-content" onclick="deleteServer('${server.id}')">Sunucuyu Kapat</button></div></section>` : ""}
         <footer><button class="btn-primary" onclick="saveProfessionalServerSettings()">Kaydet</button></footer>
       </main>`;
-    panel.querySelectorAll(".scord-server-settings-nav button[data-page]").forEach(btn => {
-        btn.onclick = () => {
-            panel.querySelectorAll(".scord-server-settings-nav button").forEach(b => b.classList.remove("active"));
-            panel.querySelectorAll(".srv-page").forEach(p => p.classList.add("hidden"));
-            btn.classList.add("active");
-            panel.querySelector(`#srv-${btn.dataset.page}`)?.classList.remove("hidden");
-        };
-    });
+    bindServerSettingsNav(panel);
 };
 
 closeServerSettingsPanel = window.closeServerSettingsPanel = function () {
@@ -12273,11 +12271,11 @@ saveProfessionalServerSettings = window.saveProfessionalServerSettings = functio
     if (desc !== undefined) server.description = desc;
     server.is_public = isPublic;
     // Sunucuya kalıcı yaz (isim/ikon/açıklama)
-    const keys = JSON.parse(localStorage.getItem("scordOwnerKeys") || "{}");
+    const ownerKey = getOwnerKey(server.id);
     scordFetch(`${API_BASE}/rooms/${server.id}/settings`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: server.name, icon_url: server.icon_url, description: server.description || "", is_public: server.is_public, ...(keys[server.id] ? { owner_key: keys[server.id] } : {}) }),
+        body: JSON.stringify({ name: server.name, icon_url: server.icon_url, description: server.description || "", is_public: server.is_public, ...(ownerKey ? { owner_key: ownerKey } : {}) }),
     }).catch(() => { });
     if (!server.roles) server.roles = {};
     if (!server.roles.member) server.roles.member = { name: "Uye", color: "#94a3b8", permissions: {} };
@@ -12645,7 +12643,7 @@ function saveChannelCategories() {
     if (!server) return;
 
     // Save categories to server state and localStorage
-    localStorage.setItem(`scord_channel_categories_${server.id}`, JSON.stringify(server.channelCategories));
+    writeLocalStorageJson(`scord_channel_categories_${server.id}`, server.channelCategories);
 
     // Broadcast category changes to other members
     if (state.mesh) {
@@ -12888,10 +12886,10 @@ function saveServerBoostsToStorage(serverId) {
     const server = state.servers.find(s => s.id === serverId);
     if (!server) return;
 
-    localStorage.setItem(`scord_server_boosts_${serverId}`, JSON.stringify({
+    writeLocalStorageJson(`scord_server_boosts_${serverId}`, {
         boosts: server.boosts || 0,
         boostHistory: server.boostHistory || []
-    }));
+    });
 }
 
 function loadServerBoostsFromStorage(serverId) {
@@ -13215,7 +13213,7 @@ function saveCustomEmojis() {
     if (!server) return;
 
     // Save custom emojis to server state and localStorage
-    localStorage.setItem(`scord_custom_emojis_${server.id}`, JSON.stringify(server.customEmojis || []));
+    writeLocalStorageJson(`scord_custom_emojis_${server.id}`, server.customEmojis || []);
 
     // Broadcast emoji changes to other members
     if (state.mesh) {
@@ -13665,7 +13663,7 @@ function updateMessageDensity(density) {
     // BUG FIX: yanlış anahtara (scord_message_density) ve CSS'in hiç
     // kullanmadığı bir attribute'a yazıyordu — ayar görünürde hiç işlemiyordu.
     localStorage.setItem('scord_msg_density', density);
-    localStorage.setItem('scord_settings', JSON.stringify(state.settings));
+    writeLocalStorageJson('scord_settings', state.settings);
     document.documentElement.setAttribute("data-msg-density", density);
     toast("Mesaj yogunlugu: " + density, "success");
 }
@@ -13744,7 +13742,7 @@ function removeAutoTheme() {
 
 function saveCustomTheme() {
     const customTheme = getThemeColors();
-    localStorage.setItem('scord_custom_theme', JSON.stringify(customTheme));
+    writeLocalStorageJson('scord_custom_theme', customTheme);
     toast('Özel tema kaydedildi', 'success');
 }
 
@@ -13753,7 +13751,7 @@ function saveThemeSettings() {
     saveCustomTheme();
 
     // Save settings
-    localStorage.setItem('scord_settings', JSON.stringify(state.settings || {}));
+    writeLocalStorageJson('scord_settings', state.settings || {});
 
     toast('Tema ayarları kaydedildi', 'success');
     hideModal();
@@ -14013,7 +14011,7 @@ function updateNotificationSetting(key, value) {
     state.notifSettings[key] = value;
 
     // Save to localStorage
-    localStorage.setItem('scord_notif_settings', JSON.stringify(state.notifSettings));
+    writeLocalStorageJson('scord_notif_settings', state.notifSettings);
 
     // Apply settings immediately
     if (key === 'desktop') {
@@ -14218,7 +14216,7 @@ function updateBadge() {
 
 function saveNotificationSettings() {
     // Save notification settings
-    localStorage.setItem('scord_notif_settings', JSON.stringify(state.notifSettings || {}));
+    writeLocalStorageJson('scord_notif_settings', state.notifSettings || {});
 
     toast('Bildirim ayarları kaydedildi', 'success');
     hideModal();
@@ -15212,7 +15210,7 @@ function saveVoiceRecording(recording) {
         recordings.shift();
     }
 
-    localStorage.setItem('scord_voice_recordings', JSON.stringify(recordings.map(r => ({
+    writeLocalStorageJson('scord_voice_recordings', recordings.map(r => ({
         id: r.id,
         name: r.name,
         duration: r.duration,
@@ -15220,7 +15218,7 @@ function saveVoiceRecording(recording) {
         quality: r.quality,
         format: r.format,
         dataUrl: r.blob ? URL.createObjectURL(r.blob) : null
-    }))));
+    })));
 }
 
 function getVoiceRecordings() {
@@ -15270,7 +15268,7 @@ function deleteVoiceRecording(recordingId) {
 
         if (index !== -1) {
             recordings.splice(index, 1);
-            localStorage.setItem('scord_voice_recordings', JSON.stringify(recordings));
+            writeLocalStorageJson('scord_voice_recordings', recordings);
             loadVoiceHistoryContent();
             toast('Kayıt silindi', 'success');
         }
@@ -15314,7 +15312,7 @@ function getVoiceRecordingSettings() {
 function updateVoiceSetting(key, value) {
     const settings = getVoiceRecordingSettings();
     settings[key] = value;
-    localStorage.setItem('scord_voice_settings', JSON.stringify(settings));
+    writeLocalStorageJson('scord_voice_settings', settings);
     toast('Ayar güncellendi', 'success');
 }
 
@@ -15674,7 +15672,7 @@ function saveScreenRecording(recording) {
         recordings.shift();
     }
 
-    localStorage.setItem('scord_screen_recordings', JSON.stringify(recordings.map(r => ({
+    writeLocalStorageJson('scord_screen_recordings', recordings.map(r => ({
         id: r.id,
         name: r.name,
         duration: r.duration,
@@ -15684,7 +15682,7 @@ function saveScreenRecording(recording) {
         frameRate: r.frameRate,
         sources: r.sources,
         dataUrl: r.blob ? URL.createObjectURL(r.blob) : null
-    }))));
+    })));
 }
 
 function getScreenRecordings() {
@@ -16142,7 +16140,7 @@ function saveUploadedFile(file) {
             uploadedFiles.pop();
         }
 
-        localStorage.setItem('scord_uploaded_files', JSON.stringify(uploadedFiles));
+        writeLocalStorageJson('scord_uploaded_files', uploadedFiles);
     };
     reader.readAsDataURL(file);
 }
@@ -16242,7 +16240,7 @@ function deleteFile(fileId, event) {
 
         if (index !== -1) {
             uploadedFiles.splice(index, 1);
-            localStorage.setItem('scord_uploaded_files', JSON.stringify(uploadedFiles));
+            writeLocalStorageJson('scord_uploaded_files', uploadedFiles);
             loadRecentFiles();
             toast('Dosya silindi', 'success');
         }
@@ -16477,7 +16475,7 @@ function saveRecentGif(gif) {
         recentGifs.pop();
     }
 
-    localStorage.setItem('scord_recent_gifs', JSON.stringify(recentGifs));
+    writeLocalStorageJson('scord_recent_gifs', recentGifs);
 }
 
 function getRecentGifs() {
@@ -16906,7 +16904,7 @@ function saveGameInvite(invite) {
         invites.shift();
     }
 
-    localStorage.setItem('scord_game_invites', JSON.stringify(invites));
+    writeLocalStorageJson('scord_game_invites', invites);
 }
 
 function getGameInvites() {
@@ -16929,7 +16927,7 @@ function acceptGameInvite(inviteId) {
         invite.acceptedAt = Date.now();
         invite.acceptedById = state.peerId;
 
-        localStorage.setItem('scord_game_invites', JSON.stringify(invites));
+        writeLocalStorageJson('scord_game_invites', invites);
 
         // Launch game or join session
         toast(`${invite.gameName} daveti kabul edildi!`, 'success');
@@ -16951,7 +16949,7 @@ function declineGameInvite(inviteId) {
         invite.declinedAt = Date.now();
         invite.declinedById = state.peerId;
 
-        localStorage.setItem('scord_game_invites', JSON.stringify(invites));
+        writeLocalStorageJson('scord_game_invites', invites);
 
         toast('Oyun daveti reddedildi', 'info');
     }
@@ -17198,7 +17196,7 @@ function saveEvent(event) {
         events.splice(0, events.length - 100);
     }
 
-    localStorage.setItem('scord_events', JSON.stringify(events));
+    writeLocalStorageJson('scord_events', events);
 }
 
 function getEvents() {
@@ -17342,7 +17340,7 @@ function joinEvent(eventId) {
     event.participants.push(state.peerId);
 
     // Save updated event
-    localStorage.setItem('scord_events', JSON.stringify(events));
+    writeLocalStorageJson('scord_events', events);
 
     toast('Etkinliğe katıldınız!', 'success');
 
@@ -17453,7 +17451,7 @@ function updateEvent(eventId) {
     };
 
     // Save updated events
-    localStorage.setItem('scord_events', JSON.stringify(events));
+    writeLocalStorageJson('scord_events', events);
 
     toast('Etkinlik güncellendi', 'success');
 
@@ -17471,7 +17469,7 @@ function deleteEvent(eventId) {
     if (eventIndex === -1) return;
 
     events.splice(eventIndex, 1);
-    localStorage.setItem('scord_events', JSON.stringify(events));
+    writeLocalStorageJson('scord_events', events);
 
     toast('Etkinlik silindi', 'success');
 
@@ -17661,7 +17659,7 @@ function savePoll(poll) {
         polls.shift();
     }
 
-    localStorage.setItem('scord_polls', JSON.stringify(polls));
+    writeLocalStorageJson('scord_polls', polls);
 }
 
 function getPolls() {
@@ -17868,7 +17866,7 @@ function submitPollVote(pollId) {
     poll.voters.push(state.peerId);
 
     // Save updated poll
-    localStorage.setItem('scord_polls', JSON.stringify(polls));
+    writeLocalStorageJson('scord_polls', polls);
 
     // Clear current votes
     delete currentPollVotes[pollId];
@@ -18028,7 +18026,7 @@ function saveWelcomeSettings() {
         channelId: document.getElementById('welcome-channel-select')?.value || 'welcome'
     };
 
-    localStorage.setItem('scord_welcome_settings', JSON.stringify(settings));
+    writeLocalStorageJson('scord_welcome_settings', settings);
 
     toast('Hoş geldin ayarları kaydedildi', 'success');
     hideModal();
@@ -18087,7 +18085,7 @@ function logWelcomeEvent(memberId, memberName) {
         welcomeLogs.shift();
     }
 
-    localStorage.setItem('scord_welcome_logs', JSON.stringify(welcomeLogs));
+    writeLocalStorageJson('scord_welcome_logs', welcomeLogs);
 }
 
 function getWelcomeLogs() {
@@ -19268,7 +19266,7 @@ function makeMusicDockDraggable() {
     });
     dock.addEventListener("pointerup", () => {
         if (!drag) return;
-        localStorage.setItem("scord_music_dock_pos", JSON.stringify({ left: dock.offsetLeft, top: dock.offsetTop }));
+        writeLocalStorageJson("scord_music_dock_pos", { left: dock.offsetLeft, top: dock.offsetTop });
         drag = null;
     });
 }
@@ -19480,14 +19478,7 @@ openServerSettingsPanel = window.openServerSettingsPanel = function () {
     if (rolesPage && !rolesPage.querySelector(".role-editor-card")) {
         rolesPage.innerHTML = `<h2>Roller ve Yetkiler</h2><button class="btn-secondary" onclick="createNewRole()">Yeni Rol Ekle</button>${renderAdvancedRoleEditor(server)}`;
     }
-    panel.querySelectorAll(".scord-server-settings-nav button[data-page]").forEach(btn => {
-        btn.onclick = () => {
-            panel.querySelectorAll(".scord-server-settings-nav button").forEach(b => b.classList.remove("active"));
-            panel.querySelectorAll(".srv-page").forEach(p => p.classList.add("hidden"));
-            btn.classList.add("active");
-            panel.querySelector(`#srv-${btn.dataset.page}`)?.classList.remove("hidden");
-        };
-    });
+    bindServerSettingsNav(panel);
     return result;
 };
 
@@ -20006,7 +19997,7 @@ console.log("[App] Performance + Mobile optimization loaded");
       var leftList = JSON.parse(localStorage.getItem("scord_left_servers") || "[]");
       if (leftList.indexOf(serverId) === -1) {
         leftList.push(serverId);
-        localStorage.setItem("scord_left_servers", JSON.stringify(leftList));
+        writeLocalStorageJson("scord_left_servers", leftList);
       }
     } catch (e) {}
     // Identity'deki servers listesini güncelle
@@ -20141,14 +20132,14 @@ console.log("[App] Performance + Mobile optimization loaded");
     // DM'i recent listesinden kaldır
     if (window.state.recentDMs) {
       window.state.recentDMs = window.state.recentDMs.filter(function (d) { return d.peerId !== peerId; });
-      localStorage.setItem("scord_recent_dms", JSON.stringify(window.state.recentDMs));
+      writeLocalStorageJson("scord_recent_dms", window.state.recentDMs);
     }
     // Mesaj geçmişini temizle
     if (window.state.dms) delete window.state.dms[peerId];
     try {
-      var stored = JSON.parse(localStorage.getItem("scord_dms") || "{}");
+      var stored = readLocalStorageJson("scord_dms", {});
       delete stored[peerId];
-      localStorage.setItem("scord_dms", JSON.stringify(stored));
+      writeLocalStorageJson("scord_dms", stored);
     } catch (e) {}
     if (window.state.activeDM === peerId) window.state.activeDM = null;
     // Sidebar'ı yenile
@@ -20162,14 +20153,14 @@ console.log("[App] Performance + Mobile optimization loaded");
     if (!window.state.dms) window.state.dms = {};
     delete window.state.dms[peerId];
     try {
-      var stored = JSON.parse(localStorage.getItem("scord_dms") || "{}");
+      var stored = readLocalStorageJson("scord_dms", {});
       delete stored[peerId];
-      localStorage.setItem("scord_dms", JSON.stringify(stored));
+      writeLocalStorageJson("scord_dms", stored);
     } catch (e) {}
     // Recent listesinden de kaldır
     if (window.state.recentDMs) {
       window.state.recentDMs = window.state.recentDMs.filter(function (d) { return d.peerId !== peerId; });
-      localStorage.setItem("scord_recent_dms", JSON.stringify(window.state.recentDMs));
+      writeLocalStorageJson("scord_recent_dms", window.state.recentDMs);
     }
     window.closeDMConversation(peerId);
     if (typeof toast === "function") toast("DM sohbeti silindi.", "info");
@@ -20178,7 +20169,7 @@ console.log("[App] Performance + Mobile optimization loaded");
   window.removeFriend = function removeFriend(peerId) {
     if (!window.state) return;
     window.state.friends = (window.state.friends || []).filter(function (f) { return f.peerId !== peerId; });
-    localStorage.setItem("scord_friends", JSON.stringify(window.state.friends));
+    writeLocalStorageJson("scord_friends", window.state.friends);
     if (!window.state.activeServerId && typeof renderHomeSidebar === "function") renderHomeSidebar();
     if (typeof toast === "function") toast("Arkadaş silindi.", "info");
   };
@@ -20729,13 +20720,13 @@ console.log("[App] Performance + Mobile optimization loaded");
           if (peerId) {
             if (window.state?.recentDMs) {
               window.state.recentDMs = window.state.recentDMs.filter(function (d) { return d.peerId !== peerId; });
-              localStorage.setItem("scord_recent_dms", JSON.stringify(window.state.recentDMs));
+              writeLocalStorageJson("scord_recent_dms", window.state.recentDMs);
             }
             if (window.state?.dms) delete window.state.dms[peerId];
             try {
               var stored = JSON.parse(localStorage.getItem("scord_dms") || "{}");
               delete stored[peerId];
-              localStorage.setItem("scord_dms", JSON.stringify(stored));
+              writeLocalStorageJson("scord_dms", stored);
             } catch (e) {}
             window.state.activeDM = null;
             if (!window.state.activeServerId && typeof renderHomeSidebar === "function") renderHomeSidebar();
@@ -20772,7 +20763,7 @@ console.log("[App] Performance + Mobile optimization loaded");
       _origODM.call(this, peerId, name, avatarColor, avatarImage);
       if (wasAlreadyRecent && window.state?.recentDMs) {
         window.state.recentDMs = oldRecent;
-        localStorage.setItem("scord_recent_dms", JSON.stringify(window.state.recentDMs));
+        writeLocalStorageJson("scord_recent_dms", window.state.recentDMs);
       }
     };
   }
@@ -20908,7 +20899,7 @@ console.log("[App] Performance + Mobile optimization loaded");
         var stored = JSON.parse(localStorage.getItem("scord_dms") || "{}");
         if (stored[peerId]) {
           stored[peerId] = stored[peerId].filter(function (m) { return m.id !== msg.id; });
-          localStorage.setItem("scord_dms", JSON.stringify(stored));
+          writeLocalStorageJson("scord_dms", stored);
         }
       }, true);
     }
@@ -20918,7 +20909,7 @@ console.log("[App] Performance + Mobile optimization loaded");
       var idx = window.state.blockedPeers.indexOf(peerId);
       if (idx !== -1) { window.state.blockedPeers.splice(idx, 1); toast("@" + username + " engeli kaldırıldı.", "success"); }
       else { window.state.blockedPeers.push(peerId); toast("@" + username + " engellendi.", "info"); }
-      localStorage.setItem("scord_blocked_peers", JSON.stringify(window.state.blockedPeers));
+      writeLocalStorageJson("scord_blocked_peers", window.state.blockedPeers);
     }, !isBlocked);
 
     addItem(dmMuted ? "🔔" : "🔇", dmMuted ? "Bildirimleri Aç" : "Sessize Al", function () {
@@ -20926,7 +20917,7 @@ console.log("[App] Performance + Mobile optimization loaded");
       var idx = muted.indexOf(peerId);
       if (idx !== -1) { muted.splice(idx, 1); toast("DM bildirimleri açıldı.", "success"); }
       else { muted.push(peerId); toast("DM sessize alındı.", "info"); }
-      localStorage.setItem("scord_dm_muted", JSON.stringify(muted));
+      writeLocalStorageJson("scord_dm_muted", muted);
     });
 
     addItem("❌", "Konuşmayı Sil", function () {
@@ -20934,10 +20925,10 @@ console.log("[App] Performance + Mobile optimization loaded");
       if (window.state?.dms) delete window.state.dms[peerId];
       var stored = JSON.parse(localStorage.getItem("scord_dms") || "{}");
       delete stored[peerId];
-      localStorage.setItem("scord_dms", JSON.stringify(stored));
+      writeLocalStorageJson("scord_dms", stored);
       if (window.state?.recentDMs) {
         window.state.recentDMs = window.state.recentDMs.filter(function (d) { return d.peerId !== peerId; });
-        localStorage.setItem("scord_recent_dms", JSON.stringify(window.state.recentDMs));
+        writeLocalStorageJson("scord_recent_dms", window.state.recentDMs);
       }
       window.state.activeDM = null;
       var ov = document.getElementById("dm-overlay");
@@ -20996,7 +20987,7 @@ console.log("[App] Performance + Mobile optimization loaded");
       if (!window.state) return;
       if (name) {
         window.state.gameActivity = { name: name, details: details, startTime: Date.now() };
-        localStorage.setItem("scord_game_activity", JSON.stringify(window.state.gameActivity));
+        writeLocalStorageJson("scord_game_activity", window.state.gameActivity);
         if (typeof toast === "function") toast("Oyun aktivitesi: " + name, "success");
         // Broadcast to peers
         if (window.state?.mesh) {
@@ -21240,7 +21231,7 @@ console.log("[App] Performance + Mobile optimization loaded");
             avatarColor: window.state.avatarColor,
             avatarImage: window.state.avatarImage
           };
-          try { localStorage.setItem(key, JSON.stringify(data)); } catch (e) {}
+          writeLocalStorageJson(key, data);
         }
         return result;
       };
@@ -21394,10 +21385,10 @@ console.log("[App] Performance + Mobile optimization loaded");
   function patchFriendRequestSystem() {
     // Arkadaş isteklerini yükle
     if (!window.state._friendRequests) {
-      try { window.state._friendRequests = JSON.parse(localStorage.getItem("scord_friend_requests") || "[]"); } catch (e) { window.state._friendRequests = []; }
+        window.state._friendRequests = readLocalStorageJson("scord_friend_requests", []);
     }
     if (!window.state._pendingRequests) {
-      try { window.state._pendingRequests = JSON.parse(localStorage.getItem("scord_pending_requests") || "[]"); } catch (e) { window.state._pendingRequests = []; }
+        window.state._pendingRequests = readLocalStorageJson("scord_pending_requests", []);
     }
 
     // + butonu ekle (ARKADAŞLAR kategorisinin yanına)
@@ -21442,7 +21433,7 @@ console.log("[App] Performance + Mobile optimization loaded");
       // Bekleyen istekleri kaydet
       if (!window.state._friendRequests) window.state._friendRequests = [];
       window.state._friendRequests.push({ peerId: targetPeerId, tag: targetTag, timestamp: Date.now() });
-      localStorage.setItem("scord_friend_requests", JSON.stringify(window.state._friendRequests));
+      writeLocalStorageJson("scord_friend_requests", window.state._friendRequests);
       if (typeof toast === "function") toast("Arkadaş isteği gönderildi!", "success");
     };
 
@@ -21456,7 +21447,7 @@ console.log("[App] Performance + Mobile optimization loaded");
           var exists = window.state._pendingRequests.some(function (r) { return r.from === data.from && r.username === data.username; });
           if (!exists) {
             window.state._pendingRequests.push({ from: data.from, username: data.username, tag: data.tag, timestamp: data.timestamp });
-            localStorage.setItem("scord_pending_requests", JSON.stringify(window.state._pendingRequests));
+            writeLocalStorageJson("scord_pending_requests", window.state._pendingRequests);
             if (typeof toast === "function") toast("📩 Arkadaşlık isteği: @" + data.username + "#" + data.tag, "info");
             // Kabul/reddet butonlarıyla bildirim göster
             window._showFriendRequestNotification(data.from, data.username, data.tag);
@@ -21471,11 +21462,11 @@ console.log("[App] Performance + Mobile optimization loaded");
             if (!window.state.friends) window.state.friends = [];
             if (!window.state.friends.some(function (f) { return f.peerId === acceptedBy; })) {
               window.state.friends.push({ peerId: acceptedBy, name: acceptedName, avatarColor: data.avatarColor || "#5865f2", avatarImage: data.avatarImage || null, tag: data.tag || "" });
-              localStorage.setItem("scord_friends", JSON.stringify(window.state.friends));
+              writeLocalStorageJson("scord_friends", window.state.friends);
               // Bekleyen istekten kaldır
               if (window.state._friendRequests) {
                 window.state._friendRequests = window.state._friendRequests.filter(function (r) { return r.peerId !== acceptedBy; });
-                localStorage.setItem("scord_friend_requests", JSON.stringify(window.state._friendRequests));
+                writeLocalStorageJson("scord_friend_requests", window.state._friendRequests);
               }
               if (typeof toast === "function") toast("✅ " + acceptedName + " arkadaşlık isteğini kabul etti!", "success");
               if (!window.state.activeServerId && typeof renderHomeSidebar === "function") renderHomeSidebar();
@@ -21487,7 +21478,7 @@ console.log("[App] Performance + Mobile optimization loaded");
           var rejectedBy = data.from || data.peerId;
           if (window.state._friendRequests) {
             window.state._friendRequests = window.state._friendRequests.filter(function (r) { return r.peerId !== rejectedBy; });
-            localStorage.setItem("scord_friend_requests", JSON.stringify(window.state._friendRequests));
+            writeLocalStorageJson("scord_friend_requests", window.state._friendRequests);
           }
           if (typeof toast === "function") toast("❌ Arkadaşlık isteği reddedildi.", "info");
           return;
@@ -21507,12 +21498,12 @@ console.log("[App] Performance + Mobile optimization loaded");
         if (!window.state.friends) window.state.friends = [];
         if (!window.state.friends.some(function (f) { return f.peerId === fromPeerId; })) {
           window.state.friends.push({ peerId: fromPeerId, name: username, avatarColor: "#5865f2", avatarImage: null, tag: tag || "" });
-          localStorage.setItem("scord_friends", JSON.stringify(window.state.friends));
+          writeLocalStorageJson("scord_friends", window.state.friends);
         }
         // Bekleyen istekten kaldır
         if (window.state._pendingRequests) {
           window.state._pendingRequests = window.state._pendingRequests.filter(function (r) { return r.from !== fromPeerId; });
-          localStorage.setItem("scord_pending_requests", JSON.stringify(window.state._pendingRequests));
+          writeLocalStorageJson("scord_pending_requests", window.state._pendingRequests);
         }
         // Kabul bildirimi gönder
         if (window.state.mesh) {
@@ -21527,7 +21518,7 @@ console.log("[App] Performance + Mobile optimization loaded");
     window._rejectFriendRequest = function (fromPeerId) {
       if (window.state._pendingRequests) {
         window.state._pendingRequests = window.state._pendingRequests.filter(function (r) { return r.from !== fromPeerId; });
-        localStorage.setItem("scord_pending_requests", JSON.stringify(window.state._pendingRequests));
+        writeLocalStorageJson("scord_pending_requests", window.state._pendingRequests);
       }
       if (window.state?.mesh) {
         window.state.mesh.broadcast({ type: "friend_request_rejected", from: window.state.peerId });
@@ -21717,7 +21708,7 @@ console.log("[App] Performance + Mobile optimization loaded");
             var saved = JSON.parse(localStorage.getItem("scord_saved_servers") || "[]");
             var filtered = saved.filter(function (s) { return leftServers.indexOf(s.id) === -1; });
             if (saved.length !== filtered.length) {
-              localStorage.setItem("scord_saved_servers", JSON.stringify(filtered));
+              writeLocalStorageJson("scord_saved_servers", filtered);
             }
           } catch (e) {}
         }
@@ -22791,7 +22782,7 @@ function warnUser(peerId, username, reason) {
     server.warnings[peerId].push(warning);
     
     // Save to localStorage
-    localStorage.setItem(`scord_warnings_${server.id}`, JSON.stringify(server.warnings));
+    writeLocalStorageJson(`scord_warnings_${server.id}`, server.warnings);
     
     // Broadcast
     if (state.mesh) {
@@ -22838,7 +22829,7 @@ function logModerationAction(action, target, reason) {
         server.modLogs = server.modLogs.slice(-100);
     }
     
-    localStorage.setItem(`scord_modlogs_${server.id}`, JSON.stringify(server.modLogs));
+    writeLocalStorageJson(`scord_modlogs_${server.id}`, server.modLogs);
 }
 window.logModerationAction = logModerationAction;
 
@@ -22944,7 +22935,7 @@ function toggleRolePermission(roleId, permissionId, granted) {
         server.roles[roleId].permissions = server.roles[roleId].permissions.filter(p => p !== permissionId);
     }
     
-    localStorage.setItem(`scord_roles_${server.id}`, JSON.stringify(server.roles));
+    writeLocalStorageJson(`scord_roles_${server.id}`, server.roles);
     sendServerEvent({ type: "role_update", roles: server.roles, peer_roles: server.peer_roles });
 }
 window.toggleRolePermission = toggleRolePermission;
@@ -23140,7 +23131,7 @@ function saveProfile() {
     USER_PROFILE.birthday = document.getElementById('profile-birthday').value;
     USER_PROFILE.connections = document.getElementById('profile-connections').value.split('\n').filter(c => c.trim());
     
-    localStorage.setItem('userProfile', JSON.stringify(USER_PROFILE));
+    writeLocalStorageJson('userProfile', USER_PROFILE);
     toast("Profil kaydedildi!", "success");
     document.querySelector('.modal-overlay')?.remove();
     updateProfileDisplay();
@@ -23172,7 +23163,7 @@ const BLOCK_SETTINGS = {
 };
 
 function saveBlockSettings() {
-    localStorage.setItem('blockSettings', JSON.stringify(BLOCK_SETTINGS));
+    writeLocalStorageJson('blockSettings', BLOCK_SETTINGS);
     toast("Engelleme ayarları kaydedildi", "success");
     document.querySelector('.modal-overlay')?.remove();
 }
@@ -23247,7 +23238,7 @@ function saveVideoSettings() {
     VIDEO_QUALITY.preferred = document.getElementById('video-quality-select').value;
     VIDEO_QUALITY.bandwidth = document.getElementById('video-bandwidth-select').value;
     VIDEO_QUALITY.frameRate = parseInt(document.getElementById('video-fps').value);
-    localStorage.setItem('videoQuality', JSON.stringify(VIDEO_QUALITY));
+    writeLocalStorageJson('videoQuality', VIDEO_QUALITY);
     applyVideoSettings();
     toast("Video ayarları kaydedildi", "success");
     document.querySelector('.modal-overlay')?.remove();
@@ -23513,7 +23504,7 @@ function showUserSettingsModal() {
         micSel.onchange = function () {
             state.voiceSettings = state.voiceSettings || {};
             state.voiceSettings.micId = micSel.value;
-            localStorage.setItem("scord_voice_settings", JSON.stringify(state.voiceSettings));
+            writeLocalStorageJson("scord_voice_settings", state.voiceSettings);
             toast("Mikrofon değişikliği bir sonraki ses kanalı katılımında uygulanır.", "info");
         };
     }
@@ -23531,7 +23522,7 @@ function showUserSettingsModal() {
         camSel.onchange = function () {
             state.voiceSettings = state.voiceSettings || {};
             state.voiceSettings.cameraId = camSel.value;
-            localStorage.setItem("scord_voice_settings", JSON.stringify(state.voiceSettings));
+            writeLocalStorageJson("scord_voice_settings", state.voiceSettings);
             toast("Kamera değişikliği bir sonraki kamera açılışında uygulanır.", "info");
         };
     }
@@ -23540,7 +23531,7 @@ function showUserSettingsModal() {
 function updateSetting(key, val) {
     if (!state.settings) state.settings = {};
     state.settings[key] = parseInt(val);
-    try { localStorage.setItem('scord_settings', JSON.stringify(state.settings)); } catch(e) {}
+    writeLocalStorageJson('scord_settings', state.settings);
     if (key === 'notificationVolume' && typeof updateNotificationVolume === 'function') { updateNotificationVolume(parseInt(val)); }
 }
 
@@ -23577,7 +23568,7 @@ async function addFriendByTag(tag) {
         const index = state.friends.findIndex(item => item.peerId === entry.peerId);
         if (index >= 0) state.friends[index] = entry;
         else state.friends.push(entry);
-        localStorage.setItem("scord_friends", JSON.stringify(state.friends));
+        writeLocalStorageJson("scord_friends", state.friends);
         hideModal();
         renderHomeSidebar();
         if (typeof showScordFriendsDirectory === "function" && !state.activeServerId) showScordFriendsDirectory();
@@ -25309,14 +25300,7 @@ window.openServerSettingsPanel = function () {
         </footer>
       </main>`;
 
-    panel.querySelectorAll(".scord-server-settings-nav button[data-page]").forEach(btn => {
-        btn.onclick = () => {
-            panel.querySelectorAll(".scord-server-settings-nav button").forEach(b => b.classList.remove("active"));
-            panel.querySelectorAll(".srv-page").forEach(p => p.classList.add("hidden"));
-            btn.classList.add("active");
-            panel.querySelector(`#srv-${btn.dataset.page}`)?.classList.remove("hidden");
-        };
-    });
+    bindServerSettingsNav(panel);
 
     // PC'den sunucu ikonu yükle
     const iconFile = document.getElementById("v25-server-icon-file");
@@ -25356,11 +25340,11 @@ window._v25RotateInvite = async function (serverId) {
     const server = currentServer();
     if (!server || (server.ownerId !== state.peerId && !isSuperAdmin())) return toast("Sadece sahip davet kodunu yenileyebilir.", "warning");
     try {
-        const keys = JSON.parse(localStorage.getItem("scordOwnerKeys") || "{}");
+        const ownerKey = getOwnerKey(serverId);
         const res = await scordFetch(`${API_BASE}/rooms/${serverId}/invite_rotate`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ owner_id: state.peerId, ...(keys[serverId] ? { owner_key: keys[serverId] } : {}) }),
+            body: JSON.stringify({ owner_id: state.peerId, ...(ownerKey ? { owner_key: ownerKey } : {}) }),
         });
         const data = await res.json();
         if (data.invite_code) {
@@ -25562,13 +25546,12 @@ console.log("[V25] Screen picker + unified settings + server redesign + P2P tuni
 
     function loadInbox() {
         if (Array.isArray(state.socialNotifications)) return state.socialNotifications;
-        try { state.socialNotifications = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"); }
-        catch { state.socialNotifications = []; }
+        state.socialNotifications = readLocalStorageJson(STORAGE_KEY, []);
         return state.socialNotifications;
     }
 
     function saveInbox() {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(loadInbox().slice(0, 60)));
+        writeLocalStorageJson(STORAGE_KEY, loadInbox().slice(0, 60));
     }
 
     function formatNotificationTime(timestamp) {
@@ -25700,7 +25683,7 @@ console.log("[V25] Screen picker + unified settings + server redesign + P2P tuni
         document.querySelectorAll("[data-unblock]").forEach(button => button.addEventListener("click", async () => {
             const id = button.dataset.unblock;
             state.blockedPeers = (state.blockedPeers || []).filter(peerId => peerId !== id);
-            localStorage.setItem("scord_blocked_peers", JSON.stringify(state.blockedPeers));
+            writeLocalStorageJson("scord_blocked_peers", state.blockedPeers);
             try { await scordFetch(`${API_BASE}/friends/${encodeURIComponent(id)}/block`, { method: "DELETE" }); }
             catch { /* Local block state remains available offline. */ }
             openSocialConnections();
@@ -25726,11 +25709,9 @@ console.log("[V25] Screen picker + unified settings + server redesign + P2P tuni
             createdAt: Date.now(),
             status: "queued",
         };
-        let stored = [];
-        try { stored = JSON.parse(localStorage.getItem(REPORTS_KEY) || "[]"); }
-        catch { stored = []; }
+        let stored = readLocalStorageJson(REPORTS_KEY, []);
         if (!stored.some(item => item.messageId === report.messageId && item.authorId === report.authorId)) stored.unshift(report);
-        localStorage.setItem(REPORTS_KEY, JSON.stringify(stored.slice(0, 40)));
+        writeLocalStorageJson(REPORTS_KEY, stored.slice(0, 40));
         try {
             const reportToken = state.authToken || localStorage.getItem("scord_token");
             const response = await fetch(`${API_BASE}/rooms/${encodeURIComponent(report.serverId)}/reports`, {
@@ -25787,20 +25768,20 @@ console.log("[V25] Screen picker + unified settings + server redesign + P2P tuni
                     avatarImage: friend.avatar_image,
                     tag: friend.discriminator || "",
                 }));
-                localStorage.setItem("scord_friends", JSON.stringify(state.friends));
+                writeLocalStorageJson("scord_friends", state.friends);
             }
             if (Array.isArray(data.incoming_requests)) {
                 state._pendingRequests = data.incoming_requests.map(request => ({ from: request.peer_id, username: request.username, tag: request.discriminator || "", timestamp: Number(request.created_at || Date.now()) * 1000 }));
-                localStorage.setItem("scord_pending_requests", JSON.stringify(state._pendingRequests));
+                writeLocalStorageJson("scord_pending_requests", state._pendingRequests);
             }
             if (Array.isArray(data.outgoing_requests)) {
                 state._friendRequests = data.outgoing_requests.map(request => ({ peerId: request.peer_id, username: request.username, tag: request.discriminator || "", timestamp: Number(request.created_at || Date.now()) * 1000 }));
-                localStorage.setItem("scord_friend_requests", JSON.stringify(state._friendRequests));
+                writeLocalStorageJson("scord_friend_requests", state._friendRequests);
             }
             if (Array.isArray(data.blocked)) {
                 state._blockedProfiles = data.blocked;
                 state.blockedPeers = Array.from(new Set([...(state.blockedPeers || []), ...data.blocked.map(profile => profile.peer_id)]));
-                localStorage.setItem("scord_blocked_peers", JSON.stringify(state.blockedPeers));
+                writeLocalStorageJson("scord_blocked_peers", state.blockedPeers);
             }
             updateSocialBadge();
         } catch (error) {
