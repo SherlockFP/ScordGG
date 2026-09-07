@@ -647,6 +647,7 @@ function showModal(title, bodyHTML, footerHTML) {
     const modal = document.getElementById("modal");
     modal?.classList.toggle("modal--wide-settings", typeof bodyHTML === "string" && bodyHTML.includes("scord-settings-shell"));
     modal?.classList.toggle("modal--profile", typeof bodyHTML === "string" && bodyHTML.includes("profile-pro-card"));
+    modal?.classList.toggle("modal--wide-social", typeof bodyHTML === "string" && (bodyHTML.includes("scord-social-inbox") || bodyHTML.includes("scord-connections")));
     const mb = document.getElementById("modal-body");
     if (mb) {
         mb.innerHTML = "";

@@ -722,6 +722,18 @@ html body #app .social-inbox-count {
   box-shadow: 0 5px 16px rgba(230,73,104,.28);
 }
 html body #app .social-inbox-count.hidden { display: none !important; }
+html body #modal.modal.modal--wide-social { width: min(700px,94vw) !important; }
+html body #modal-body > .scord-social-inbox,
+html body #modal-body > .scord-connections,
+html body #modal-body > .scord-report-form,
+html body #modal-body > .scord-poll-form { width: 100% !important; max-width: 100% !important; min-width: 0 !important; }
+html body #modal-body > .scord-social-inbox *,
+html body #modal-body > .scord-connections * { min-width: 0; }
+@media (max-width: 600px) {
+  html body .scord-connections-grid { grid-template-columns: minmax(0,1fr) !important; }
+  html body .scord-social-inbox-head { flex-direction: column; align-items: stretch !important; gap: 10px !important; }
+  html body .scord-social-inbox-actions { justify-content: flex-start !important; }
+}
 html body .scord-social-inbox,
 html body .scord-connections,
 html body .scord-report-form,

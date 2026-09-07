@@ -6106,6 +6106,26 @@ html[data-scord-chat="classic"] .msg-row-inner {
   overflow: hidden;
 }
 
+/* Open state: transparent glass so the voice participants stay visible
+   behind the chat. Theme-aware (follows --bg-elevated/--bg-mid), with a
+   plain transparent fallback where color-mix is unsupported. */
+.voice-ephemeral-chat:not(.collapsed) {
+  background: transparent;
+  background: color-mix(in srgb, var(--bg-elevated) 34%, transparent);
+  -webkit-backdrop-filter: blur(16px) saturate(1.3);
+  backdrop-filter: blur(16px) saturate(1.3);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+
+.voice-ephemeral-chat:not(.collapsed) .voice-chat-head {
+  background: transparent;
+  border-bottom-color: color-mix(in srgb, var(--border) 55%, transparent);
+}
+
+.voice-ephemeral-chat:not(.collapsed) .voice-chat-input {
+  background: color-mix(in srgb, var(--bg-mid) 60%, transparent);
+}
+
 .voice-ephemeral-chat.hidden {
   display: none !important;
 }
