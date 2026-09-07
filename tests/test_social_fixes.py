@@ -166,23 +166,27 @@ class SocialFixesTests(unittest.TestCase):
         outsider = self.register("Yabanci", "yabanci@example.com")
         created = self.client.post("/api/rooms", json={"name": "Oda"}, headers=self.auth(owner)).json()
         room_id = created["room_id"]
-        # Keyed rooms are already gated by owner_key (403 without it).
+        # Keyed rooms reject outsiders with a machine-readable error so
+        # clients purge the ghost copy instead of retrying forever.
         keyed = self.client.post(
             f"/api/rooms/{room_id}/restore",
             json={"token": outsider["token"], "name": "Oda"},
             headers=self.auth(outsider),
-        )
-        self.assertEqual(keyed.status_code, 403)
+        ).json()
+        self.assertEqual(keyed.get("error"), "forbidden")
+        self.assertNotIn("room", keyed)
         # Legacy rooms (no owner_key) must not leak history to non-members.
+        # The hardened owner gate rejects them with 403 before any state is
+        # returned; either way no room payload may leak.
         self.server.rooms[room_id].owner_key = None
-        leaked = self.client.post(
+        denied = self.client.post(
             f"/api/rooms/{room_id}/restore",
             json={"token": outsider["token"], "name": "Oda"},
             headers=self.auth(outsider),
         ).json()
-        self.assertEqual(leaked.get("error"), "not_a_member")
-        self.assertNotIn("room", leaked)
-        self.assertNotIn("messages", leaked)
+        self.assertEqual(denied.get("error"), "forbidden")
+        self.assertNotIn("room", denied)
+        self.assertNotIn("messages", denied)
 
     def test_my_rooms_lists_memberships(self):
         owner = self.register("Listeci", "listeci@example.com")
@@ -225,6 +229,43 @@ class SocialFixesTests(unittest.TestCase):
         self.assertTrue(alive.get("success"))
         gone = self.client.get("/api/account/me", headers={"Authorization": f"Bearer {third_login['token']}"}).json()
         self.assertEqual(gone.get("error"), "unauthorized")
+
+    def test_legacy_rooms_require_owner_for_mutation(self):
+        owner = self.register("Legacyci", "legacyci@example.com")
+        member = self.register("LegacyUye", "legacyuye@example.com")
+        created = self.client.post("/api/rooms", json={"name": "Oda"}, headers=self.auth(owner)).json()
+        room_id = created["room_id"]
+        invite = self.client.post(
+            f"/api/rooms/{room_id}/invites", json={}, headers=self.auth(owner)
+        ).json()["invite"]["invite_code"]
+        self.client.get(f"/api/rooms/join/{invite}", headers=self.auth(member))
+        # Simulate a pre-owner_key room: previously anyone (even anonymous)
+        # could inject channels/roles into such rooms.
+        self.server.rooms[room_id].owner_key = None
+        anon = self.client.post(f"/api/rooms/{room_id}/channels", json={"name": "x", "type": "text"})
+        self.assertEqual(anon.status_code, 403)
+        stranger = self.client.post(
+            f"/api/rooms/{room_id}/channels", json={"name": "x", "type": "text"}, headers=self.auth(member)
+        )
+        self.assertEqual(stranger.status_code, 403)
+        allowed = self.client.post(
+            f"/api/rooms/{room_id}/channels", json={"name": "duyuru", "type": "text"}, headers=self.auth(owner)
+        )
+        self.assertEqual(allowed.status_code, 200)
+
+    def test_message_text_is_capped(self):
+        owner = self.register("Kisaltmaci", "kisaltmaci@example.com")
+        created = self.client.post("/api/rooms", json={"name": "Oda"}, headers=self.auth(owner)).json()
+        room_id = created["room_id"]
+        channel_id = self.server.rooms[room_id].channels[0]["id"]
+        response = self.client.post(
+            f"/api/rooms/{room_id}/messages",
+            json={"message": {"id": "big-1", "channelId": channel_id, "authorId": owner["peer_id"], "text": "x" * 10000}},
+            headers=self.auth(owner),
+        )
+        self.assertEqual(response.status_code, 200)
+        stored = self.server.rooms[room_id].messages[channel_id][-1]
+        self.assertEqual(len(stored["text"]), 4000)
 
     def test_durable_dm_roundtrip(self):
         first = self.register("DmBir", "dmbir@example.com")

@@ -13456,8 +13456,21 @@ function initializeThemeTabs() {
     });
 }
 
+function customPreviewColors() {
+    try {
+        const saved = JSON.parse(localStorage.getItem('scord_custom_theme') || 'null');
+        if (saved && typeof saved === 'object') {
+            const keys = ['bgPrimary', 'bgSurface', 'bgHighlight', 'textMuted', 'accent', 'accentLight', 'textPrimary'];
+            const colors = keys.map(k => saved[k]).filter(v => typeof v === 'string' && v);
+            if (colors.length >= 3) return colors.slice(0, 7);
+        }
+    } catch (e) {}
+    return ['#3a3a4e', '#4a4a5e', '#5a5a6e', '#888899', '#7c3aed', '#a78bfa', '#e8e8f0'];
+}
+
 function loadThemePresetsContent() {
     const content = document.getElementById('theme-content');
+    if (!content) return;
     const currentTheme = state.theme || 'sapphire';
 
     const themes = [
@@ -13475,6 +13488,26 @@ function loadThemePresetsContent() {
     ];
 
     let html = '<div class="theme-presets-grid">';
+    // "Özel" card first: applies the persisted Renkler customization.
+    // (Without this, saved custom colors had no UI entry point at all.)
+    try {
+        const isCustomActive = currentTheme === 'custom';
+        const preview = customPreviewColors();
+        html += `
+            <div class="theme-preset ${isCustomActive ? 'active' : ''}" onclick="selectTheme('custom')">
+                <div class="theme-preset-header">
+                    <div class="theme-preset-icon">🎨</div>
+                    <div class="theme-preset-name">Özel</div>
+                    ${isCustomActive ? '<div class="theme-preset-badge">✓</div>' : ''}
+                </div>
+                <div class="theme-preset-colors">
+                    ${preview.map(color => `
+                        <div class="color-swatch" style="background: ${color}"></div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    } catch (e) {}
 
     themes.forEach(theme => {
         const isActive = currentTheme === theme.id;
@@ -13638,11 +13671,18 @@ function getThemeColors() {
 }
 
 function selectTheme(themeId) {
+    if (themeId === 'custom') {
+        applyCustomTheme();
+        try { loadThemePresetsContent(); } catch (e) {}
+        return;
+    }
+    // Any preset wins over the custom override.
+    try { localStorage.setItem('scord_use_custom_theme', '0'); } catch (e) {}
     state.theme = themeId;
     applyTheme(themeId);
 
-    // Update UI
-    loadThemePresetsContent();
+    // Update UI (modal may be closed when called programmatically)
+    try { loadThemePresetsContent(); } catch (e) {}
 
     // Save to localStorage
     localStorage.setItem('scord_theme', themeId);
@@ -13785,21 +13825,66 @@ function applyTheme(themeId) {
     };
 
     const theme = themes[themeId];
-    if (!theme) return;
-
-    // Apply theme colors
-    Object.entries(theme).forEach(([property, value]) => {
-        document.documentElement.style.setProperty(property, value);
-    });
+    if (theme) {
+        // Apply theme colors
+        Object.entries(theme).forEach(([property, value]) => {
+            document.documentElement.style.setProperty(property, value);
+        });
+    }
 
     // Update document class
     document.documentElement.className = themeId;
     document.documentElement.setAttribute("data-theme", themeId);
+
+    // Persisted custom override wins when the user opted in via Renkler.
+    // (Without this, saved custom colors were silently lost on every boot.)
+    try {
+        if (localStorage.getItem('scord_use_custom_theme') === '1') applyCustomThemeVars();
+    } catch (e) {}
+}
+
+function applyCustomThemeVars() {
+    let custom = null;
+    try { custom = JSON.parse(localStorage.getItem('scord_custom_theme') || 'null'); } catch (e) { return false; }
+    if (!custom || typeof custom !== 'object') return false;
+    const map = {
+        bgPrimary: '--bg-primary', bgSurface: '--bg-surface', bgHighlight: '--bg-highlight',
+        textPrimary: '--text-primary', textSecondary: '--text-secondary', textMuted: '--text-muted',
+        accent: '--accent', accentLight: '--accent-light'
+    };
+    let applied = 0;
+    Object.entries(map).forEach(([key, prop]) => {
+        if (typeof custom[key] === 'string' && custom[key]) {
+            document.documentElement.style.setProperty(prop, custom[key]);
+            applied++;
+        }
+    });
+    if (!applied) return false;
+    state.theme = 'custom';
+    document.documentElement.setAttribute('data-theme', 'custom');
+    return true;
+}
+
+function applyCustomTheme() {
+    if (applyCustomThemeVars()) {
+        try {
+            localStorage.setItem('scord_use_custom_theme', '1');
+            localStorage.setItem('scord_theme', 'custom');
+        } catch (e) {}
+        if (typeof loadThemePresetsContent === 'function') { try { loadThemePresetsContent(); } catch (e) {} }
+        toast('Özel teman uygulandı', 'success');
+        return true;
+    }
+    toast('Kayıtlı özel tema yok: önce Renkler sekmesinden ayarla ve Kaydet.', 'warning');
+    return false;
 }
 
 function updateThemeColor(property, value) {
     const cssProperty = `--${property.replace(/([A-Z])/g, '-$1').toLowerCase()}`;
     document.documentElement.style.setProperty(cssProperty, value);
+
+    // Editing colors means custom intent: keep overriding presets on boot.
+    try { localStorage.setItem('scord_use_custom_theme', '1'); } catch (e) {}
 
     // Save custom theme
     saveCustomTheme();
@@ -26048,6 +26133,7 @@ console.log("[V25] Screen picker + unified settings + server redesign + P2P tuni
     window.recordSocialNotification = recordSocialNotification;
     window.openSocialInbox = openSocialInbox;
     window.openSocialConnections = openSocialConnections;
+    window.syncSocialConnections = syncSocialConnections;
     bindSocialControls();
     syncSocialConnections();
     document.addEventListener("DOMContentLoaded", bindSocialControls, { once: true });

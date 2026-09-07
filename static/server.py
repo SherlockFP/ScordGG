@@ -1802,7 +1802,21 @@ def _owner_key_ok(room, body: dict | None, query, request: Request | None = None
         if account and _is_platform_admin(account["peer_id"]):
             return
     if room.owner_key is None:
-        return  # legacy
+        # Legacy rooms predate owner_key. They used to be world-writable
+        # (proven: anonymous channel/role injection into template rooms).
+        # Now the room owner (or a platform admin, handled above) must prove
+        # it with a token; current clients always send one via scordFetch.
+        token = (body.get("token") if body else "") or ""
+        if not token and request is not None:
+            auth = request.headers.get("authorization") or ""
+            if auth.lower().startswith("bearer "):
+                token = auth[7:].strip()
+            if not token:
+                token = request.query_params.get("token", "")
+        account = _account_by_token(token) if token else None
+        if account and account["peer_id"] == room.owner_id:
+            return
+        raise HTTPException(status_code=403, detail="forbidden")
     supplied = body.get("owner_key") if body else None
     if not supplied:
         supplied = query.get("owner_key")
@@ -1849,7 +1863,11 @@ async def save_history_message(room_id: str, body: dict, request: Request):
         raise HTTPException(status_code=403, detail="banned")
     if _active_timeout(room_id, account["peer_id"]):
         raise HTTPException(status_code=403, detail="timed_out")
-    
+    # History lives inside one JSON column per server: bound the damage a
+    # single oversized payload (or a pasted data-URL) can do.
+    if isinstance(msg.get("text"), str) and len(msg["text"]) > 4000:
+        msg["text"] = msg["text"][:4000]
+
     ch_id = msg.get("channelId", "general")
     slow_mode_seconds = int(room.channel_slow_modes.get(ch_id, 0) or 0)
     if slow_mode_seconds:
@@ -2375,7 +2393,12 @@ def restore_room(room_id: str, body: dict, request: Request):
     if not account:
         raise HTTPException(status_code=401, detail="unauthorized")
     if room_id in rooms:
-        _owner_key_ok(rooms[room_id], body, request.query_params, request)
+        try:
+            _owner_key_ok(rooms[room_id], body, request.query_params, request)
+        except HTTPException:
+            # Machine-readable (200 + error) so reconcile clients purge the
+            # ghost copy instead of choking on a bare 403 detail payload.
+            return {"error": "forbidden"}
         # An existing room's full state (channels, roles, message history)
         # must only go to actual members. Previously any client holding a
         # cached id could pull a legacy room's entire history via restore,
@@ -2670,7 +2693,11 @@ async def signaling_ws(websocket: WebSocket, room_id: str, peer_id: str):
                     if ws is not None and ws.client_state == WebSocketState.CONNECTED:
                         await ws.send_text(json.dumps(msg))
                     elif msg_type == "dm_call_offer":
+                        # Bound the offline queue: unanswered offers from raids
+                        # must not grow memory without limit.
                         _PENDING_CALLS.setdefault(target, []).append(msg)
+                        if len(_PENDING_CALLS[target]) > 20:
+                            del _PENDING_CALLS[target][:-20]
                     if msg_type in ("dm_call_answer", "dm_call_end") and call_id:
                         kept = [m for m in _PENDING_CALLS.get(target, [])
                                 if (m.get("call") or {}).get("callId") != call_id and m.get("callId") != call_id]
