@@ -2687,6 +2687,10 @@ def serve_favicon():
 
 @app.get("/{full_path:path}")
 def serve_spa(full_path: str):
+    # Unknown /api/* paths must stay machine-readable: returning index.html
+    # with 200 here used to make every client-side res.json() blow up.
+    if full_path == "api" or full_path.startswith("api/"):
+        raise HTTPException(status_code=404, detail="not_found")
     return FileResponse(str(PROJECT_ROOT / "index.html"))
 
 
@@ -2700,7 +2704,14 @@ def health_root():
 def startup_event():
     global _SUPABASE_SYNC_READY
     init_accounts_db()
-    restore_supabase_if_empty(ACCOUNTS_DB_FILE)
+    try:
+        # Remote restore must never kill the boot: a paused/rotated Supabase
+        # project (or no network on first deploy) used to raise out of this
+        # handler, uvicorn logged "Application startup failed. Exiting." and
+        # Render ended up serving a permanent 503 crash-loop.
+        restore_supabase_if_empty(ACCOUNTS_DB_FILE)
+    except Exception as exc:
+        log.warning("Supabase restore skipped, continuing with local SQLite: %s", exc)
     init_accounts_db()
     ensure_bootstrap_platform_admin()
     load_db()

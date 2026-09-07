@@ -138,16 +138,28 @@ def schedule_push(database_file: str, delay: float = 1.25) -> None:
 def restore_if_empty(database_file: str) -> bool:
     if not enabled() or not Path(database_file).exists():
         return False
-    local = sqlite3.connect(database_file)
     try:
-        account_count = local.execute("SELECT count(*) FROM accounts").fetchone()[0]
-        server_count = local.execute("SELECT count(*) FROM servers").fetchone()[0]
-    finally:
-        local.close()
+        local = sqlite3.connect(database_file)
+        try:
+            account_count = local.execute("SELECT count(*) FROM accounts").fetchone()[0]
+            server_count = local.execute("SELECT count(*) FROM servers").fetchone()[0]
+        finally:
+            local.close()
+    except sqlite3.Error as error:
+        # Fresh/partial DB without the expected tables: nothing to compare
+        # against, and definitely nothing to overwrite. Bail out quietly.
+        log.warning("Supabase restore skipped (local schema not ready): %s", error)
+        return False
     if account_count or server_count:
         return False
 
-    rows = _request("GET", f"scord_state_snapshots?id=eq.{SNAPSHOT_ID}&select=payload&limit=1") or []
+    try:
+        rows = _request("GET", f"scord_state_snapshots?id=eq.{SNAPSHOT_ID}&select=payload&limit=1") or []
+    except Exception as error:
+        # Unreachable/paused Supabase must not propagate into the lifespan
+        # startup handler (that kills the whole process on Render).
+        log.warning("Supabase restore skipped (remote unreachable): %s", error)
+        return False
     if not rows or not isinstance(rows[0].get("payload"), dict):
         return False
     snapshot = rows[0]["payload"]
