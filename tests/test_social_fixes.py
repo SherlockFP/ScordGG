@@ -267,6 +267,67 @@ class SocialFixesTests(unittest.TestCase):
         stored = self.server.rooms[room_id].messages[channel_id][-1]
         self.assertEqual(len(stored["text"]), 4000)
 
+    def test_sessions_are_capped(self):
+        account = self.register("Oturumcu", "oturumcu@example.com", password="sifre123")
+        tokens = [account["token"]]
+        for _ in range(25):
+            logged = self.client.post(
+                "/api/auth/login", json={"username": "Oturumcu", "password": "sifre123"}
+            ).json()
+            tokens.append(logged["token"])
+        # Oldest sessions are pruned; the newest one still works.
+        oldest = self.client.get(
+            "/api/account/me", headers={"Authorization": f"Bearer {tokens[0]}"}
+        ).json()
+        self.assertEqual(oldest.get("error"), "unauthorized")
+        newest = self.client.get(
+            "/api/account/me", headers={"Authorization": f"Bearer {tokens[-1]}"}
+        ).json()
+        self.assertTrue(newest.get("success"))
+
+    def test_room_creation_is_throttled(self):
+        owner = self.register("OdaSpamci", "odaspamci@example.com")
+        codes = []
+        for _ in range(11):
+            response = self.client.post("/api/rooms", json={"name": "Oda"}, headers=self.auth(owner))
+            codes.append(response.status_code)
+        self.assertEqual(codes[:10], [200] * 10)
+        self.assertEqual(codes[10], 429)
+
+    def test_friend_request_outbox_is_capped(self):
+        asker = self.register("Istekci", "istekci@example.com")
+        targets = []
+        for index in range(31):
+            # TestClient shares one IP, so reset the unrelated login/register
+            # bucket; this test targets the pending-outbox cap, not that one.
+            if index % 8 == 0:
+                self.server._login_attempts.clear()
+            targets.append(self.register(f"Hedef{index}", f"hedef{index}@example.com"))
+        for index, target in enumerate(targets):
+            response = self.client.post(
+                "/api/friends/requests",
+                json={"target_peer_id": target["peer_id"]},
+                headers=self.auth(asker),
+            )
+            if index < 30:
+                self.assertEqual(response.status_code, 200)
+            else:
+                self.assertEqual(response.status_code, 429)
+
+    def test_dm_sending_is_throttled(self):
+        first = self.register("DmSpamBir", "dmspir@example.com")
+        second = self.register("DmSpamIki", "dmspiki@example.com")
+        codes = []
+        for index in range(31):
+            response = self.client.post(
+                f"/api/dm/{second['peer_id']}/messages",
+                json={"message": {"id": f"s-{index}", "text": "selam"}},
+                headers=self.auth(first),
+            )
+            codes.append(response.status_code)
+        self.assertEqual(codes[:30], [200] * 30)
+        self.assertEqual(codes[30], 429)
+
     def test_durable_dm_roundtrip(self):
         first = self.register("DmBir", "dmbir@example.com")
         second = self.register("DmIki", "dmiki@example.com")

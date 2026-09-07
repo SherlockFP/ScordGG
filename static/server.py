@@ -64,6 +64,37 @@ LOGIN_RATE_WINDOW = 60.0
 LOGIN_RATE_MAX = 10
 _login_attempts: Dict[str, list] = {}
 _login_attempts_lock = threading.Lock()
+
+# Generic sliding-window throttle for spam-prone actions (room creation, DMs).
+# In-memory like the login limiter: a restart resets budgets, which is fine
+# for abuse mitigation (durability is not required here).
+_action_hits: Dict[str, list] = {}
+_action_lock = threading.Lock()
+
+
+def _throttle_check(key: str, max_hits: int, window_sec: float) -> bool:
+    """Return True and record a hit when under budget, else False."""
+    now = time.time()
+    with _action_lock:
+        stamps = [t for t in _action_hits.get(key, []) if now - t < window_sec]
+        if len(stamps) >= max_hits:
+            _action_hits[key] = stamps
+            return False
+        stamps.append(now)
+        _action_hits[key] = stamps
+        return True
+
+
+SESSION_CAP_PER_ACCOUNT = 20
+
+
+def _prune_sessions(conn: sqlite3.Connection, peer_id: str) -> None:
+    """Keep only the newest sessions so tokens cannot accumulate forever."""
+    conn.execute(
+        "DELETE FROM sessions WHERE peer_id = ? AND token NOT IN ("
+        "SELECT token FROM sessions WHERE peer_id = ? ORDER BY created_at DESC LIMIT ?)",
+        (peer_id, peer_id, SESSION_CAP_PER_ACCOUNT),
+    )
 # Kal─▒c─▒ disk deste─ƒi: Render'da SCORD_DATA_DIR ile persistent disk yolunu ver
 # (├╢rn. /var/data). Verilmezse repo k├╢k├╝ kullan─▒l─▒r ΓÇö free tier'da her
 # restart'ta s─▒f─▒rlan─▒r; istemci taraf─▒ndaki auto-reregister bunu telafi eder.
@@ -1241,6 +1272,7 @@ def register_account(body: dict, request: Request):
             "INSERT INTO sessions (token, peer_id, created_at) VALUES (?, ?, ?)",
             (token, peer_id, time.time()),
         )
+        _prune_sessions(conn, peer_id)
         row = conn.execute("SELECT * FROM accounts WHERE peer_id = ?", (peer_id,)).fetchone()
     log.info(f"Account registered: {username!r} ({peer_id})")
     return {"success": True, "token": token, **_account_private(row)}
@@ -1275,6 +1307,7 @@ def login_account(body: dict, request: Request):
             "INSERT INTO sessions (token, peer_id, created_at) VALUES (?, ?, ?)",
             (token, row["peer_id"], time.time()),
         )
+        _prune_sessions(conn, row["peer_id"])
     _clear_login_attempts(request)
     return {"success": True, "token": token, **_account_private(row)}
 
@@ -1453,6 +1486,12 @@ def _request_or_accept(conn: sqlite3.Connection, requester_id: str, target: sqli
         conn.execute("INSERT OR REPLACE INTO friendships (peer_id, friend_peer_id, status, created_at) VALUES (?, ?, 'accepted', ?)",
                      (target["peer_id"], requester_id, now))
         return {"success": True, "accepted": True, "friend": _account_public(target)}
+    pending_out = conn.execute(
+        "SELECT COUNT(*) FROM friend_requests WHERE requester_peer_id = ? AND status = 'pending'",
+        (requester_id,),
+    ).fetchone()[0]
+    if pending_out >= 30:
+        raise HTTPException(status_code=429, detail="too_many_requests")
     conn.execute(
         "INSERT INTO friend_requests (requester_peer_id, target_peer_id, status, created_at, updated_at) VALUES (?, ?, 'pending', ?, ?) "
         "ON CONFLICT(requester_peer_id, target_peer_id) DO UPDATE SET status = 'pending', updated_at = excluded.updated_at",
@@ -1611,6 +1650,8 @@ def dm_store(peer_id: str, body: dict, request: Request):
     account = _request_account(request, body)
     if not account:
         raise HTTPException(status_code=401, detail="unauthorized")
+    if not _throttle_check(f"dm:{account['peer_id']}", 30, 60):
+        raise HTTPException(status_code=429, detail="too_many_messages")
     peer_id = (peer_id or "").strip()
     if not peer_id or peer_id == account["peer_id"]:
         raise HTTPException(status_code=400, detail="invalid_dm_target")
@@ -1779,6 +1820,10 @@ def create_room(body: dict, request: Request):
     account = _account_by_token(token)
     if not account:
         raise HTTPException(status_code=401, detail="unauthorized")
+    # Room creation triggers a full synchronous state save; throttle it so
+    # one account cannot spam the disk/CPU.
+    if not _throttle_check(f"room-create:{account['peer_id']}", 10, 600):
+        raise HTTPException(status_code=429, detail="too_many_rooms")
     room_id = str(uuid.uuid4())
     name = body.get("name", "Unnamed Server")
     owner_id = account["peer_id"]
