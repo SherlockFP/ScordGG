@@ -341,6 +341,20 @@ def init_accounts_db():
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_server_message_reports_room ON server_message_reports(room_id, status, created_at DESC)")
+        # Direct messages: durable offline-capable history. Delivery itself
+        # stays P2P-first (DataChannel, then WS dm_relay); this table is the
+        # fallback so messages survive the recipient being offline and sync
+        # across the sender's/recipient's devices.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS dm_messages (
+                message_id TEXT PRIMARY KEY,
+                sender_peer_id TEXT NOT NULL,
+                recipient_peer_id TEXT NOT NULL,
+                payload_json TEXT NOT NULL DEFAULT '{}',
+                created_at REAL NOT NULL
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_dm_messages_pair ON dm_messages(sender_peer_id, recipient_peer_id, created_at)")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS deleted_servers (
                 room_id TEXT PRIMARY KEY,
@@ -1273,6 +1287,50 @@ def logout_account(body: dict):
     return {"success": True}
 
 
+@app.post("/api/auth/logout-all")
+def logout_all_devices(body: dict):
+    """Close every session of this account except the current one."""
+    row = _account_by_token(body.get("token") or "")
+    if not row:
+        return {"error": "unauthorized"}
+    with _db() as conn:
+        conn.execute(
+            "DELETE FROM sessions WHERE peer_id = ? AND token <> ?",
+            (row["peer_id"], body.get("token") or ""),
+        )
+    return {"success": True}
+
+
+@app.post("/api/account/change-password")
+def change_password(body: dict):
+    """Rotate the account password; other devices are signed out.
+
+    The peer_id (identity, ownerships, friendships) is untouched, so unlike
+    re-registering, nothing is lost.
+    """
+    token = body.get("token") or ""
+    row = _account_by_token(token)
+    if not row:
+        return {"error": "unauthorized"}
+    current = body.get("current_password") or ""
+    new_password = body.get("new_password") or ""
+    if _hash_password(current, row["salt"]) != row["password_hash"]:
+        return {"error": "wrong_password"}
+    if len(new_password) < 4:
+        return {"error": "invalid_password"}
+    salt = secrets.token_hex(16)
+    with _db() as conn:
+        conn.execute(
+            "UPDATE accounts SET password_hash = ?, salt = ? WHERE peer_id = ?",
+            (_hash_password(new_password, salt), salt, row["peer_id"]),
+        )
+        conn.execute(
+            "DELETE FROM sessions WHERE peer_id = ? AND token <> ?",
+            (row["peer_id"], token),
+        )
+    return {"success": True}
+
+
 @app.get("/api/account/me")
 def get_account_me(request: Request, token: str = ""):
     # Token ├Âncelikle Authorization: Bearer <token> header'─▒ndan (URL loglar─▒na
@@ -1359,6 +1417,50 @@ def _friend_target_from_body(conn: sqlite3.Connection, body: dict) -> Optional[s
     ).fetchone()
 
 
+def _blocked_either(conn: sqlite3.Connection, a: str, b: str) -> bool:
+    """True if either side blocked the other (requests/DMs must stay unavailable)."""
+    return bool(conn.execute(
+        "SELECT 1 FROM friend_blocks WHERE (blocker_peer_id = ? AND blocked_peer_id = ?) OR (blocker_peer_id = ? AND blocked_peer_id = ?)",
+        (a, b, b, a),
+    ).fetchone())
+
+
+def _request_or_accept(conn: sqlite3.Connection, requester_id: str, target: sqlite3.Row) -> dict:
+    """Shared consent flow: never creates a mutual friendship unilaterally.
+
+    Returns {"success": True, "already_friends": True, "friend": ...} when the
+    pair is already friends, {"success": True, "accepted": True, "friend": ...}
+    when an opposite pending request turns into a mutual friendship, otherwise
+    {"success": True, "request": {"peer_id": ..., "status": "pending"}}.
+    """
+    existing = conn.execute(
+        "SELECT status FROM friendships WHERE peer_id = ? AND friend_peer_id = ?",
+        (requester_id, target["peer_id"]),
+    ).fetchone()
+    if existing and existing["status"] == "accepted":
+        return {"success": True, "already_friends": True, "friend": _account_public(target)}
+    now = time.time()
+    # An opposite pending request becomes an accepted friendship directly.
+    reverse = conn.execute(
+        "SELECT 1 FROM friend_requests WHERE requester_peer_id = ? AND target_peer_id = ? AND status = 'pending'",
+        (target["peer_id"], requester_id),
+    ).fetchone()
+    if reverse:
+        conn.execute("DELETE FROM friend_requests WHERE (requester_peer_id = ? AND target_peer_id = ?) OR (requester_peer_id = ? AND target_peer_id = ?)",
+                     (requester_id, target["peer_id"], target["peer_id"], requester_id))
+        conn.execute("INSERT OR REPLACE INTO friendships (peer_id, friend_peer_id, status, created_at) VALUES (?, ?, 'accepted', ?)",
+                     (requester_id, target["peer_id"], now))
+        conn.execute("INSERT OR REPLACE INTO friendships (peer_id, friend_peer_id, status, created_at) VALUES (?, ?, 'accepted', ?)",
+                     (target["peer_id"], requester_id, now))
+        return {"success": True, "accepted": True, "friend": _account_public(target)}
+    conn.execute(
+        "INSERT INTO friend_requests (requester_peer_id, target_peer_id, status, created_at, updated_at) VALUES (?, ?, 'pending', ?, ?) "
+        "ON CONFLICT(requester_peer_id, target_peer_id) DO UPDATE SET status = 'pending', updated_at = excluded.updated_at",
+        (requester_id, target["peer_id"], now, now),
+    )
+    return {"success": True, "request": {"peer_id": target["peer_id"], "status": "pending"}}
+
+
 @app.post("/api/friends/requests")
 def create_friend_request(body: dict, request: Request):
     account = _request_account(request, body)
@@ -1370,38 +1472,9 @@ def create_friend_request(body: dict, request: Request):
             raise HTTPException(status_code=404, detail="account_not_found")
         if target["peer_id"] == account["peer_id"]:
             raise HTTPException(status_code=400, detail="cannot_friend_self")
-        blocked = conn.execute(
-            "SELECT 1 FROM friend_blocks WHERE (blocker_peer_id = ? AND blocked_peer_id = ?) OR (blocker_peer_id = ? AND blocked_peer_id = ?)",
-            (account["peer_id"], target["peer_id"], target["peer_id"], account["peer_id"]),
-        ).fetchone()
-        if blocked:
+        if _blocked_either(conn, account["peer_id"], target["peer_id"]):
             raise HTTPException(status_code=403, detail="friend_request_unavailable")
-        existing = conn.execute(
-            "SELECT status FROM friendships WHERE peer_id = ? AND friend_peer_id = ?",
-            (account["peer_id"], target["peer_id"]),
-        ).fetchone()
-        if existing and existing["status"] == "accepted":
-            return {"success": True, "already_friends": True, "friend": _account_public(target)}
-        now = time.time()
-        # An opposite pending request becomes an accepted friendship directly.
-        reverse = conn.execute(
-            "SELECT 1 FROM friend_requests WHERE requester_peer_id = ? AND target_peer_id = ? AND status = 'pending'",
-            (target["peer_id"], account["peer_id"]),
-        ).fetchone()
-        if reverse:
-            conn.execute("DELETE FROM friend_requests WHERE (requester_peer_id = ? AND target_peer_id = ?) OR (requester_peer_id = ? AND target_peer_id = ?)",
-                         (account["peer_id"], target["peer_id"], target["peer_id"], account["peer_id"]))
-            conn.execute("INSERT OR REPLACE INTO friendships (peer_id, friend_peer_id, status, created_at) VALUES (?, ?, 'accepted', ?)",
-                         (account["peer_id"], target["peer_id"], now))
-            conn.execute("INSERT OR REPLACE INTO friendships (peer_id, friend_peer_id, status, created_at) VALUES (?, ?, 'accepted', ?)",
-                         (target["peer_id"], account["peer_id"], now))
-            return {"success": True, "accepted": True, "friend": _account_public(target)}
-        conn.execute(
-            "INSERT INTO friend_requests (requester_peer_id, target_peer_id, status, created_at, updated_at) VALUES (?, ?, 'pending', ?, ?) "
-            "ON CONFLICT(requester_peer_id, target_peer_id) DO UPDATE SET status = 'pending', updated_at = excluded.updated_at",
-            (account["peer_id"], target["peer_id"], now, now),
-        )
-    return {"success": True, "request": {"peer_id": target["peer_id"], "status": "pending"}}
+        return _request_or_accept(conn, account["peer_id"], target)
 
 
 @app.post("/api/friends/requests/{requester_peer_id}/accept")
@@ -1463,6 +1536,11 @@ def unblock_friend(peer_id: str, request: Request):
 
 @app.post("/api/friends/confirm")
 def confirm_friend(body: dict, request: Request):
+    """Consent-based confirm: creates (or completes) a friend *request*.
+
+    Previously this wrote a mutual friendship unilaterally; now it shares the
+    same pending/accept flow as /api/friends/requests.
+    """
     account = _request_account(request, body)
     target_id = str(body.get("target_peer_id") or "").strip()
     if not account or not target_id or target_id == account["peer_id"]:
@@ -1471,20 +1549,18 @@ def confirm_friend(body: dict, request: Request):
         target = conn.execute("SELECT * FROM accounts WHERE peer_id = ?", (target_id,)).fetchone()
         if not target:
             raise HTTPException(status_code=404, detail="account_not_found")
-        now = time.time()
-        conn.execute(
-            "INSERT OR REPLACE INTO friendships (peer_id, friend_peer_id, status, created_at) VALUES (?, ?, 'accepted', ?)",
-            (account["peer_id"], target_id, now),
-        )
-        conn.execute(
-            "INSERT OR REPLACE INTO friendships (peer_id, friend_peer_id, status, created_at) VALUES (?, ?, 'accepted', ?)",
-            (target_id, account["peer_id"], now),
-        )
-    return {"success": True, "friend": _account_public(target)}
+        if _blocked_either(conn, account["peer_id"], target["peer_id"]):
+            raise HTTPException(status_code=403, detail="friend_request_unavailable")
+        return _request_or_accept(conn, account["peer_id"], target)
 
 
 @app.post("/api/friends/by-tag")
 def add_friend_by_tag(body: dict, request: Request):
+    """Send (or complete) a friend request by Kullanici#1234 tag.
+
+    Previously this force-added a mutual friendship without the target's
+    consent; now it goes through the shared pending/accept flow.
+    """
     account = _request_account(request, body)
     identifier = str(body.get("identifier") or "").strip()
     match = re.fullmatch(r"(.{2,32})#(\d{4})", identifier)
@@ -1500,16 +1576,9 @@ def add_friend_by_tag(body: dict, request: Request):
             raise HTTPException(status_code=404, detail="account_not_found")
         if target["peer_id"] == account["peer_id"]:
             raise HTTPException(status_code=400, detail="cannot_friend_self")
-        now = time.time()
-        conn.execute(
-            "INSERT OR REPLACE INTO friendships (peer_id, friend_peer_id, status, created_at) VALUES (?, ?, 'accepted', ?)",
-            (account["peer_id"], target["peer_id"], now),
-        )
-        conn.execute(
-            "INSERT OR REPLACE INTO friendships (peer_id, friend_peer_id, status, created_at) VALUES (?, ?, 'accepted', ?)",
-            (target["peer_id"], account["peer_id"], now),
-        )
-    return {"success": True, "friend": _account_public(target)}
+        if _blocked_either(conn, account["peer_id"], target["peer_id"]):
+            raise HTTPException(status_code=403, detail="friend_request_unavailable")
+        return _request_or_accept(conn, account["peer_id"], target)
 
 
 @app.delete("/api/friends/{friend_peer_id}")
@@ -1523,6 +1592,157 @@ def delete_friend(friend_peer_id: str, request: Request):
             (account["peer_id"], friend_peer_id, friend_peer_id, account["peer_id"]),
         )
     return {"success": True}
+
+
+DM_HISTORY_LIMIT = 200
+DM_PAIR_CAP = 1000
+
+
+def _dm_pair_filter(a: str, b: str) -> tuple[str, tuple]:
+    return (
+        "(sender_peer_id = ? AND recipient_peer_id = ?) OR (sender_peer_id = ? AND recipient_peer_id = ?)",
+        (a, b, b, a),
+    )
+
+
+@app.post("/api/dm/{peer_id}/messages")
+def dm_store(peer_id: str, body: dict, request: Request):
+    """Persist one outgoing DM so offline recipients/devices can catch up."""
+    account = _request_account(request, body)
+    if not account:
+        raise HTTPException(status_code=401, detail="unauthorized")
+    peer_id = (peer_id or "").strip()
+    if not peer_id or peer_id == account["peer_id"]:
+        raise HTTPException(status_code=400, detail="invalid_dm_target")
+    incoming = body.get("message") or {}
+    text = str(incoming.get("text") or "")[:2000]
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="empty_message")
+    with _db() as conn:
+        recipient = conn.execute("SELECT peer_id FROM accounts WHERE peer_id = ?", (peer_id,)).fetchone()
+        if not recipient:
+            raise HTTPException(status_code=404, detail="account_not_found")
+        if _blocked_either(conn, account["peer_id"], peer_id):
+            raise HTTPException(status_code=403, detail="dm_unavailable")
+        message_id = str(incoming.get("id") or f"{int(time.time() * 1000)}-{secrets.token_hex(8)}")[:64]
+        try:
+            created_at = float(incoming.get("timestamp", 0)) / 1000.0 or time.time()
+        except (TypeError, ValueError):
+            created_at = time.time()
+        # Avatar blobs stay out of the stored copy: they would bloat the DB
+        # (base64 data-URLs), live P2P delivery already carries them.
+        payload = {
+            "id": message_id,
+            "author": str(incoming.get("author") or _account_name(account))[:64],
+            "authorId": account["peer_id"],
+            "avatarColor": str(incoming.get("avatarColor") or "#7c3aed")[:32],
+            "text": text,
+            "time": str(incoming.get("time") or "")[:16],
+            "timestamp": int(created_at * 1000),
+        }
+        conn.execute(
+            "INSERT OR IGNORE INTO dm_messages (message_id, sender_peer_id, recipient_peer_id, payload_json, created_at) VALUES (?, ?, ?, ?, ?)",
+            (message_id, account["peer_id"], peer_id, json.dumps(payload, ensure_ascii=False), created_at),
+        )
+        where, params = _dm_pair_filter(account["peer_id"], peer_id)
+        conn.execute(
+            f"DELETE FROM dm_messages WHERE message_id IN (SELECT message_id FROM dm_messages WHERE {where} ORDER BY created_at DESC LIMIT -1 OFFSET ?)",
+            (*params, DM_PAIR_CAP),
+        )
+    return {"success": True, "message": payload}
+
+
+@app.get("/api/dm/{peer_id}/messages")
+def dm_history(peer_id: str, request: Request, since: float = 0, limit: int = DM_HISTORY_LIMIT):
+    """Catch-up history for a DM pair, oldest-first."""
+    account = _request_account(request)
+    if not account:
+        raise HTTPException(status_code=401, detail="unauthorized")
+    peer_id = (peer_id or "").strip()
+    if not peer_id:
+        raise HTTPException(status_code=400, detail="invalid_dm_target")
+    try:
+        limit = max(1, min(int(limit), DM_HISTORY_LIMIT))
+    except (TypeError, ValueError):
+        limit = DM_HISTORY_LIMIT
+    try:
+        since_ts = float(since or 0) / 1000.0
+    except (TypeError, ValueError):
+        since_ts = 0
+    with _db() as conn:
+        where, params = _dm_pair_filter(account["peer_id"], peer_id)
+        rows = conn.execute(
+            f"SELECT payload_json FROM dm_messages WHERE ({where}) AND created_at > ? ORDER BY created_at ASC LIMIT ?",
+            (*params, since_ts, limit),
+        ).fetchall()
+    messages = []
+    for row in rows:
+        try:
+            messages.append(json.loads(row[0]))
+        except (TypeError, ValueError):
+            continue
+    return {"messages": messages}
+
+
+@app.delete("/api/rooms/{room_id}/members/me")
+async def leave_room(room_id: str, request: Request):
+    """Leave a server: drops the durable membership row and the live role.
+
+    Previously leaving was localStorage-only, so the leaver stayed a member
+    server-side (member counts, rejoin, WS access). Owners cannot leave;
+    they must delete (or transfer) the server.
+    """
+    account = _request_account(request)
+    if not account:
+        raise HTTPException(status_code=401, detail="unauthorized")
+    room = rooms.get(room_id)
+    if not room or room_id in deleted_room_ids:
+        raise HTTPException(status_code=404, detail="not_found")
+    if room.owner_id == account["peer_id"] and not _is_platform_admin(account["peer_id"]):
+        raise HTTPException(status_code=400, detail="owner_must_delete")
+    with _db() as conn:
+        conn.execute(
+            "DELETE FROM server_members WHERE room_id = ? AND peer_id = ?",
+            (room_id, account["peer_id"]),
+        )
+    room.peer_roles.pop(account["peer_id"], None)
+    _remove_peer_from_voice(room, account["peer_id"])
+    _record_audit(room_id, account["peer_id"], "member_left")
+    schedule_save_db()
+    await broadcast_to_room(room, {
+        "type": "member_left",
+        "room_id": room_id,
+        "peer_id": account["peer_id"],
+    })
+    return {"success": True}
+
+
+@app.get("/api/me/rooms")
+def my_rooms(request: Request):
+    """Rooms the caller is a durable member of (multi-device recovery).
+
+    Previously memberships were invisible to the API: a fresh login only saw
+    public discovery rooms, so private servers could never be recovered on a
+    new device even though server_members rows existed.
+    """
+    account = _request_account(request)
+    if not account:
+        raise HTTPException(status_code=401, detail="unauthorized")
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT room_id FROM server_members WHERE peer_id = ? ORDER BY last_seen DESC LIMIT 200",
+            (account["peer_id"],),
+        ).fetchall()
+        member_ids = [row[0] for row in rows]
+    result = []
+    for rid in member_ids:
+        room = rooms.get(rid)
+        if not room or rid in deleted_room_ids:
+            continue
+        if _is_banned(rid, account["peer_id"]):
+            continue
+        result.append(room.to_discovery_dict())
+    return {"rooms": result}
 
 @app.get("/api/config")
 def get_runtime_config():
@@ -2130,7 +2350,9 @@ def sync_rooms(body: dict, request: Request):
     for rid in ids:
         if rid in rooms and _is_room_member(rid, account["peer_id"]) and not _is_banned(rid, account["peer_id"]):
             active.append(rooms[rid].to_dict())
-        elif rid in deleted_room_ids and _is_platform_admin(account["peer_id"]):
+        elif rid in deleted_room_ids:
+            # Tombstone ids are not sensitive (the requester already knows the
+            # id); every client needs them to purge local ghost copies.
             deleted.append(rid)
         else:
             unknown.append(rid)
@@ -2154,6 +2376,14 @@ def restore_room(room_id: str, body: dict, request: Request):
         raise HTTPException(status_code=401, detail="unauthorized")
     if room_id in rooms:
         _owner_key_ok(rooms[room_id], body, request.query_params, request)
+        # An existing room's full state (channels, roles, message history)
+        # must only go to actual members. Previously any client holding a
+        # cached id could pull a legacy room's entire history via restore,
+        # and kicked/banned users kept a working ghost copy.
+        if not _is_room_member(room_id, account["peer_id"]) and not _is_platform_admin(account["peer_id"]):
+            return {"error": "not_a_member"}
+        if _is_banned(room_id, account["peer_id"]):
+            return {"error": "banned"}
         return {"success": True, "room": rooms[room_id].to_dict()}
     name = body.get("name", "Unnamed Server")
     owner_id = body.get("owner_id") or account["peer_id"]

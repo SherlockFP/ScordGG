@@ -2457,7 +2457,78 @@ function startApp() {
     if (typeof window.ServerRailComponent !== "undefined") {
         window.ServerRailComponent.mount("#server-icons");
     }
+    // Multi-device recovery: pull durable memberships the local cache may
+    // be missing (fresh login / new browser). Never touches left servers.
+    pullMyServers();
 }
+
+async function pullMyServers() {
+    let leftIds = [];
+    try { leftIds = JSON.parse(localStorage.getItem("scord_left_servers") || "[]"); } catch (e) {}
+    let mine = [];
+    try {
+        const res = await scordFetch(`${API_BASE}/me/rooms`);
+        if (!res.ok) return;
+        const data = await res.json();
+        mine = (data && data.rooms) || [];
+    } catch (e) {
+        console.warn("[MyRooms] pull failed:", e);
+        return;
+    }
+    let added = 0;
+    for (const card of mine) {
+        const id = card.room_id;
+        if (!id || leftIds.includes(id)) continue;
+        if ((state.servers || []).some(s => s.id === id)) continue;
+        try {
+            const res = await scordFetch(`${API_BASE}/rooms/${encodeURIComponent(id)}`);
+            if (!res.ok) continue;
+            const data = await res.json();
+            if (!data || data.error || !data.room_id) continue;
+            const peerList = (data.peers || []).map(p => ({
+                peer_id: p.peer_id,
+                username: p.username,
+                avatar_color: p.avatar_color,
+                avatar_image: p.avatar_image ?? null,
+            }));
+            if (!peerList.some(m => m.peer_id === state.peerId)) {
+                peerList.push({
+                    peer_id: state.peerId,
+                    username: state.username,
+                    avatar_color: state.avatarColor,
+                    avatar_image: state.avatarImage,
+                });
+            }
+            const server = {
+                id: data.room_id,
+                name: data.name,
+                ownerId: data.owner_id,
+                channels: data.channels || [],
+                members: peerList,
+                roles: data.roles || {},
+                peer_roles: data.peer_roles || {},
+                pinned_messages: data.pinned_messages || [],
+                messages: data.messages || {},
+                inviteCode: data.invite_code,
+                icon_url: data.icon_url,
+                voiceMembers: {},
+                voiceSessionHost: {},
+                unread: {},
+                channel_backgrounds: data.channel_backgrounds || {},
+            };
+            state.servers.push(server);
+            if (typeof saveServerToStorage === "function") saveServerToStorage(server);
+            added++;
+        } catch (e) {
+            console.warn("[MyRooms] fetch failed for", id, e);
+        }
+    }
+    if (added > 0) {
+        if (typeof renderServerRail === "function") renderServerRail();
+        toast(`${added} sunucu hesabından geri yüklendi.`, "success");
+    }
+}
+window.pullMyServers = pullMyServers;
 
 let _runtimeCfgLoaded = false;
 async function loadRuntimeConfig() {
@@ -7113,6 +7184,7 @@ function assignRole(peerId, role, server) {
 function leaveServer(serverId) {
     const idx = state.servers.findIndex(s => s.id === serverId);
     if (idx === -1) return;
+    leaveServerRemote(serverId);
     if (state.voiceChannelId) {
         try { leaveVoiceChannel(); } catch (e) {}
     }
@@ -7163,6 +7235,17 @@ function leaveServer(serverId) {
     renderServerRail();
     showHomeView();
     toast("Sunucudan ayrıldın.", "info");
+}
+
+async function leaveServerRemote(serverId) {
+    // Best-effort durable leave: drops the server_members row so counts,
+    // rejoin rights and WS access end server-side too. Local cleanup above
+    // already ran; a failure here only logs (offline leave still works).
+    try {
+        await scordFetch(`${API_BASE}/rooms/${encodeURIComponent(serverId)}/members/me`, { method: "DELETE" });
+    } catch (e) {
+        console.warn("[Leave] server persist failed:", e);
+    }
 }
 
 function toggleBlockStatus(peerId, username) {
@@ -7681,6 +7764,7 @@ function openDM(peerId, name, avatarColor = null, avatarImage = null) {
     addToRecentDMs(peerId, peer.name, peer.avatarColor, peer.avatarImage);
     showDMMainView(peerId, peer.name, peer.avatarColor, peer.avatarImage);
     renderDMMessages(peerId);
+    pullDMHistory(peerId);
     setTimeout(() => {
         const input = document.getElementById("dm-main-input");
         if (input) {
@@ -7690,6 +7774,39 @@ function openDM(peerId, name, avatarColor = null, avatarImage = null) {
         }
     }, 80);
 }
+
+async function pullDMHistory(peerId) {
+    // Offline/öteki-cihaz mesajlarını sunucu deposundan yakala: id'ye göre
+    // birleştir, sırala, yerelde sakla, açıksa yeniden çiz.
+    if (!peerId) return;
+    try {
+        const res = await scordFetch(`${API_BASE}/dm/${encodeURIComponent(peerId)}/messages?limit=200`);
+        if (!res.ok) return;
+        const data = await res.json().catch(() => ({}));
+        const remote = (data && data.messages) || [];
+        if (!remote.length) return;
+        if (!state.dms) state.dms = {};
+        const local = state.dms[peerId] || [];
+        const seen = new Set(local.map(m => m && m.id).filter(Boolean));
+        let added = 0;
+        for (const m of remote) {
+            if (!m) continue;
+            if (m.id && seen.has(m.id)) continue;
+            if (!m.id && local.some(l => l.text === m.text && Math.abs((l.timestamp || 0) - (m.timestamp || 0)) < 2000)) continue;
+            local.push(m);
+            if (m.id) seen.add(m.id);
+            added++;
+        }
+        if (!added) return;
+        local.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+        state.dms[peerId] = local.slice(-500);
+        try { localStorage.setItem("scord_dms", JSON.stringify(state.dms)); } catch (e) {}
+        if (state.activeDM === peerId && typeof renderDMMessages === "function") renderDMMessages(peerId);
+    } catch (e) {
+        console.warn("[DM] history pull failed:", e);
+    }
+}
+window.pullDMHistory = pullDMHistory;
 
 function addToRecentDMs(peerId, name, avatarColor, avatarImage) {
     if (!state.recentDMs) state.recentDMs = [];
@@ -8090,19 +8207,36 @@ async function addFriend(peerId, name) {
     if (!state.friends) state.friends = [];
     if (state.friends.find(f => f.peerId === peerId)) return;
 
-    state.friends.push({
-        peerId,
-        name,
-        avatarColor: m?.avatar_color,
-        avatarImage: m?.avatar_image
-    });
-    scordFetch(`${API_BASE}/friends/confirm`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ target_peer_id: peerId }),
-    }).catch(e => console.warn("[Friends] persist failed:", e));
-    localStorage.setItem("scord_friends", JSON.stringify(state.friends));
-    toast(`${name} arkadaş olarak eklendi! ✨`, "success");
+    // Consent flow: this sends a *request*; the other side accepts from
+    // their inbox. Only a mutual accept lands in the friends list.
+    let data = {};
+    try {
+        const res = await scordFetch(`${API_BASE}/friends/requests`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ target_peer_id: peerId }),
+        });
+        data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.success) throw new Error(data.detail || "request_failed");
+    } catch (e) {
+        console.warn("[Friends] request failed:", e);
+        toast("Arkadaşlık isteği gönderilemedi.", "error");
+        return;
+    }
+    if (data.accepted || data.already_friends) {
+        const f = data.friend || {};
+        state.friends.push({
+            peerId,
+            name: f.username || name,
+            avatarColor: f.avatar_color || m?.avatar_color,
+            avatarImage: f.avatar_image ?? m?.avatar_image
+        });
+        localStorage.setItem("scord_friends", JSON.stringify(state.friends));
+        toast(`${name} arkadaşlara eklendi!`, "success");
+    } else {
+        toast(`${name} adlı kullanıcıya arkadaşlık isteği gönderildi.`, "info");
+    }
+    if (typeof syncSocialConnections === "function") { try { await syncSocialConnections(); } catch (e) {} }
 }
 
 async function removeFriend(peerId) {
@@ -8173,6 +8307,7 @@ function sendDM() {
     if (!text || !state.activeDM) return;
 
     const msg = {
+        id: (typeof genId === "function" ? genId() : ("dm-" + Date.now() + "-" + Math.random().toString(36).slice(2))),
         author: state.username,
         authorId: state.peerId,
         avatarColor: state.avatarColor,
@@ -8196,9 +8331,20 @@ function sendDM() {
             // sunucudaki dm_relay handler'ına gider, SADECE hedefe iletilir.
             state.mesh.sendSignal({ type: "dm_relay", target: state.activeDM, payload: msg });
         } else {
-            toast("DM şu an gönderilemedi: bağlantı hazır değil.", "warning");
+            toast("DM �Yu an g��nderilemedi: ba�Ylant�� haz��r de�Yil.", "warning");
         }
     }
+    // Durable copy (avatar blob hariç): alıcı çevrimdışıyken bile sunucuda
+    // durur, history çekişte birleşir. Başarısızlık sessizdir (P2P yol denenir).
+    try {
+        const storeCopy = { ...msg };
+        delete storeCopy.avatarImage;
+        scordFetch(`${API_BASE}/dm/${encodeURIComponent(state.activeDM)}/messages`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: storeCopy }),
+        }).catch(() => {});
+    } catch (e) {}
     if (mainInput) mainInput.value = "";
     if (overlayInput) overlayInput.value = "";
     if (state.activeDM) localStorage.removeItem("scord_draft_" + state.activeDM);
@@ -11658,7 +11804,7 @@ async function reconcileServerRegistry() {
                 body: JSON.stringify(payload),
             });
             const data = await res.json();
-            if (data.error === "deleted") {
+            if (data.error === "deleted" || data.error === "not_a_member" || data.error === "banned" || data.error === "forbidden") {
                 purgeLocalServer(id);
             } else if (data.room) {
                 normalizeServerLivePayload(server, data.room);
@@ -11711,7 +11857,7 @@ async function handleRoomNotFound(roomId) {
                 body: JSON.stringify(payload),
             });
             const data = await res.json();
-            if (data.error === "deleted") { purgeLocalServer(roomId); return; }
+            if (data.error === "deleted" || data.error === "not_a_member" || data.error === "banned" || data.error === "forbidden") { purgeLocalServer(roomId); return; }
             if (data.room) normalizeServerLivePayload(server, data.room);
         } catch (e) {
             console.warn("[Reconcile] restore-on-reconnect failed:", e);
@@ -23347,6 +23493,16 @@ function showUserSettingsModal() {
     html += '      <label>Avatar Rengi<input class="modal-input" type="color" id="settings-avatar-color" value="' + (state.avatarColor || '#7c3aed') + '" onchange="syncProfileField({avatarColor:this.value});applyAvatarToElement(document.getElementById(\'user-bar-avatar\'),state.avatarColor,state.avatarImage,state.username)" style="height:40px;padding:2px;"></label>';
     html += '      <label>Banner URL<input class="modal-input" id="settings-banner-url" value="' + escapeHtml(state.bannerUrl || '') + '" placeholder="https://..." onchange="syncProfileField({bannerUrl:this.value})"></label>';
     html += '      <label>Banner Rengi<input class="modal-input" type="color" id="settings-banner-color" value="' + (state.bannerColor || '#5865f2') + '" onchange="syncProfileField({bannerColor:this.value})" style="height:40px;padding:2px;"></label>';
+    html += '      <div class="settings-security-block" style="margin-top:16px;border-top:1px solid rgba(255,255,255,0.08);padding-top:12px;">';
+    html += '        <h4 style="margin:0 0 8px;font-size:14px;">Guvenlik</h4>';
+    html += '        <label>Mevcut Sifre<input class="modal-input" type="password" id="settings-current-pass" autocomplete="current-password" maxlength="64"></label>';
+    html += '        <label>Yeni Sifre<input class="modal-input" type="password" id="settings-new-pass" autocomplete="new-password" maxlength="64"></label>';
+    html += '        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">';
+    html += '          <button class="btn-secondary" type="button" onclick="changeAccountPassword()">Sifreyi Degistir</button>';
+    html += '          <button class="btn-secondary" type="button" onclick="logoutAllDevices()">Tum Cihazlardan Cik</button>';
+    html += '        </div>';
+    html += '        <p class="settings-hint">Sifre degisince diger cihazlardaki oturumlar kapatilir, kimligin ve sunuculuklarin aynen kalir.</p>';
+    html += '      </div>';
     html += '      <p class="settings-hint">Banner URL boşsa profil kartında banner rengi gösterilir.</p>';
     html += '    </div>';
 
@@ -23550,6 +23706,40 @@ function copyUniqueId() {
     if (navigator.clipboard?.writeText) { navigator.clipboard.writeText(tag).then(function() { toast("Unique ID kopyalandi: " + tag, "success"); }); }
 }
 
+async function changeAccountPassword() {
+    const cur = document.getElementById("settings-current-pass");
+    const nxt = document.getElementById("settings-new-pass");
+    const current = (cur?.value || "");
+    const next = (nxt?.value || "");
+    if (next.length < 4) { toast("Yeni sifre en az 4 karakter olmali.", "error"); return; }
+    try {
+        const res = await scordFetch(`${API_BASE}/account/change-password`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ token: state.authToken || localStorage.getItem("scord_token") || "", current_password: current, new_password: next }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.success) {
+            toast(data.error === "wrong_password" ? "Mevcut sifre yanlis." : "Sifre degistirilemedi.", "error");
+            return;
+        }
+        if (cur) cur.value = ""; if (nxt) nxt.value = "";
+        toast("Sifren degisti, diger cihazlardan cikis yapildi.", "success");
+    } catch (e) { toast("Sunucuya ulasilamadi.", "error"); }
+}
+
+async function logoutAllDevices() {
+    if (!confirm("Tum cihazlardaki oturumlar kapatilsin mi? Bu cihazdaki girisin surecek.")) return;
+    try {
+        await scordFetch(`${API_BASE}/auth/logout-all`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ token: state.authToken || localStorage.getItem("scord_token") || "" }),
+        });
+        toast("Diger cihazlardaki oturumlar kapatildi.", "success");
+    } catch (e) { toast("Sunucuya ulasilamadi.", "error"); }
+}
+
 function showAddFriendModal() {
     var body = '<div style="padding:10px;"><label style="display:block;margin-bottom:8px;font-size:13px;color:#ccc;">Arkadaş Unique ID: (Örnek: Kullanici#1234)</label><input type="text" id="friend-tag-input" placeholder="Kullanici#1234" style="width:100%;padding:12px;background:#2a2a3e;border:1px solid #444;border-radius:8px;color:#fff;font-size:14px;box-sizing:border-box;" onkeydown="if(event.key==\'Enter\')addFriendByTag(this.value)"></div>';
     showModal("👥 Arkadaş Ekle", body, '<button class="btn-primary" onclick="addFriendByTag(document.getElementById(\'friend-tag-input\').value)">Ekle</button><button class="btn-secondary" onclick="hideModal()">İptal</button>');
@@ -23564,7 +23754,14 @@ async function addFriendByTag(tag) {
             body: JSON.stringify({ identifier: tag.trim() }),
         });
         const data = await response.json().catch(() => ({}));
-        if (!response.ok || !data.success || !data.friend) throw new Error(data.detail || "not_found");
+        if (!response.ok || !data.success) throw new Error(data.detail || "not_found");
+        if (data.request && !data.friend) {
+            // Pending consent flow: the target accepts from their inbox.
+            hideModal();
+            if (typeof syncSocialConnections === "function") { try { await syncSocialConnections(); } catch (e) {} }
+            toast(`${tag.trim()} adlı kullanıcıya arkadaşlık isteği gönderildi.`, "info");
+            return;
+        }
         const friend = data.friend;
         if (!state.friends) state.friends = [];
         const entry = {

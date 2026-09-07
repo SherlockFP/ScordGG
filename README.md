@@ -44,7 +44,7 @@ Windows'ta `run.bat` aynısını yapıyor. `http://localhost:8000` açılınca g
 `Procfile` ve `requirements.txt` hazır. Render ayarları:
 
 - Build Command: `pip install -r requirements.txt`
-- Start Command: `uvicorn app:app --host 0.0.0.0 --port $PORT`
+- Start Command: `uvicorn app:app --host 0.0.0.0 --port $PORT --proxy-headers` (`--proxy-headers` şart: yoksa login rate-limit tüm kullanıcıları tek IP kovasına koyar)
 - Persistent Disk mount path: `/var/data`
 - Environment: `SCORD_DATA_DIR=/var/data`
 - Environment: `SCORD_BOOTSTRAP_ADMIN_USERNAME=sherlock`

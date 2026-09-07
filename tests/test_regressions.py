@@ -77,7 +77,10 @@ class FrontendContractTests(unittest.TestCase):
         self.assertIn('@app.get("/api/friends")', server)
         self.assertIn("administrator_snapshot", server)
         self.assertIn("loadPersistentFriends", app)
-        self.assertIn("/friends/confirm", app)
+        # Consent flow: quick-add goes through friend *requests*; the legacy
+        # confirm endpoint stays server-side only as a compat alias.
+        self.assertIn("/friends/requests", app)
+        self.assertIn('@app.post("/api/friends/confirm")', server)
         self.assertIn("CREATE TABLE IF NOT EXISTS servers", server)
         self.assertIn("CREATE TABLE IF NOT EXISTS server_members", server)
         self.assertIn("to_discovery_dict", server)
