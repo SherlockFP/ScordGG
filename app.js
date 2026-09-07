@@ -7,8 +7,34 @@
 "use strict";
 
 /* ── Constants ────────────────────────────────────────────── */
-const WS_BASE = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`;
-const API_BASE = (location.protocol === "file:" ? "http://localhost:8000" : "") + "/api";
+/* Backend base URL: same-origin by default. For split hosting (static
+   frontend on Netlify/Vercel + Python backend on Render), pass
+   ?api=https://scord.onrender.com once — it is remembered in localStorage.
+   ?api=local (or empty value) clears the override. */
+function resolveApiBase() {
+    try {
+        const params = new URLSearchParams(location.search);
+        if (params.has("api")) {
+            const raw = (params.get("api") || "").trim().replace(/\/+$/, "");
+            try {
+                if (!raw || raw === "local" || raw === "same-origin") localStorage.removeItem("scord_api_base");
+                else if (/^https?:\/\//i.test(raw)) localStorage.setItem("scord_api_base", raw);
+            } catch (e) {}
+        }
+    } catch (e) {}
+    let base = "";
+    try { base = localStorage.getItem("scord_api_base") || ""; } catch (e) {}
+    base = base.trim().replace(/\/+$/, "");
+    if (base) return base + "/api";
+    return (location.protocol === "file:" ? "http://localhost:8000" : "") + "/api";
+}
+const API_BASE = resolveApiBase();
+function resolveWsBase() {
+    const m = API_BASE.match(/^(https?):\/\/([^/]+)\/api$/);
+    if (m) return (m[1] === "https" ? "wss" : "ws") + "://" + m[2] + "/ws";
+    return `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`;
+}
+const WS_BASE = resolveWsBase();
 
 const CHAT_INITIAL_LIMIT = 200;
 const CHAT_LOAD_MORE_STEP = 150;
@@ -2110,6 +2136,28 @@ function hideAuthError() {
     document.getElementById("auth-error")?.classList.add("hidden");
 }
 
+async function checkBackendOnBoot() {
+    // Reachability badge for the setup card. On a static host without /api
+    // (or a sleeping backend) login/register silently fail; this says why.
+    const el = document.getElementById("backend-status");
+    if (!el) return;
+    try {
+        const ctrl = ("AbortController" in window) ? new AbortController() : null;
+        const timer = ctrl ? setTimeout(() => ctrl.abort(), 8000) : null;
+        const res = await fetch(`${API_BASE}/config`, {
+            cache: "no-store",
+            ...(ctrl ? { signal: ctrl.signal } : {}),
+        });
+        if (timer) clearTimeout(timer);
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        el.classList.add("hidden");
+    } catch (e) {
+        el.textContent = "Sunucuya (API) ulaşılamıyor: " + API_BASE +
+            " — giriş/kayıt çalışmaz. Backend adresin farklıysa site URL'sine ?api=https://backend-adresin ekle.";
+        el.classList.remove("hidden");
+    }
+}
+
 function legacyIdentityStorageKey(username, password) {
     var hash = 0;
     var source = String(username || "").toLowerCase().trim() + ":" + String(password || "");
@@ -2263,6 +2311,8 @@ async function initSetup() {
             input.focus({ preventScroll: true });
         });
     });
+
+    checkBackendOnBoot();
 
     const token = localStorage.getItem("scord_token");
     const savedId = localStorage.getItem("scord_peer_id");

@@ -50,6 +50,25 @@ _SUPABASE_SYNC_READY = False
 
 app = FastAPI(title="SCORD Signaling Server")
 
+# Split hosting (static frontend on Netlify/Vercel + this backend on Render)
+# is cross-origin: browsers block API calls without CORS headers. Auth uses
+# Bearer tokens (no cookies), so a permissive CORS policy is sufficient.
+# Tighten via SCORD_CORS_ORIGINS="https://app.example.com,https://x.netlify.app".
+try:
+    from fastapi.middleware.cors import CORSMiddleware
+
+    _cors_env = (os.environ.get("SCORD_CORS_ORIGINS") or "").strip()
+    _cors_origins = [o.strip() for o in _cors_env.split(",") if o.strip()] or ["*"]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins,
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+except Exception as _cors_exc:  # pragma: no cover - never fail boot for CORS
+    log.warning("CORS middleware disabled: %s", _cors_exc)
+
 # ΓöÇΓöÇ Global State ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 rooms: Dict[str, "Room"] = {}
