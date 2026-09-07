@@ -2192,6 +2192,63 @@ function syncProfileField(fields) {
 }
 window.syncProfileField = syncProfileField;
 
+/* Single guarded Enter-to-send binding. Previously initSetup() AND the
+   patch pack each added their own chat-input keydown listener (one calling
+   sendMessage() directly, one via sendBtn.click()), so a single Enter
+   dispatched 2-3 sends with different ids (proven: 3x POST /messages).
+   Every path must go through bindChatInputOnce(). */
+function handleChatInputKeydown(e) {
+    const chatInput = document.getElementById("chat-input");
+    if (!chatInput) return;
+    // Handle mention popup navigation
+    const mentionPopup = document.getElementById("mention-popup");
+    if (mentionPopup && !mentionPopup.classList.contains("hidden") && _mentionSuggestions.length > 0) {
+        if (e.key === "ArrowDown") {
+            e.preventDefault();
+            _mentionActiveIndex = (_mentionActiveIndex + 1) % _mentionSuggestions.length;
+            renderMentionSuggestions(chatInput, chatInput.value.lastIndexOf("@"), "");
+            return;
+        }
+        if (e.key === "ArrowUp") {
+            e.preventDefault();
+            _mentionActiveIndex = (_mentionActiveIndex - 1 + _mentionSuggestions.length) % _mentionSuggestions.length;
+            renderMentionSuggestions(chatInput, chatInput.value.lastIndexOf("@"), "");
+            return;
+        }
+        if (e.key === "Enter" || e.key === "Tab") {
+            e.preventDefault();
+            const member = _mentionSuggestions[_mentionActiveIndex];
+            if (member) {
+                insertMention(chatInput, chatInput.value.lastIndexOf("@"), member.username);
+            }
+            return;
+        }
+        if (e.key === "Escape") {
+            hideMentionSuggestions();
+            return;
+        }
+    }
+
+    if (e.key === "ArrowUp" && chatInput.selectionStart === 0 && !e.shiftKey && !chatInput.value.trim()) {
+        e.preventDefault();
+        fillLastOwnChatLine();
+        return;
+    }
+    if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        console.log("[ChatInput] Enter pressed. Calling sendMessage()...");
+        sendMessage();
+    }
+}
+
+function bindChatInputOnce() {
+    const chatInput = document.getElementById("chat-input");
+    if (!chatInput || chatInput.dataset.sendBound === "1") return false;
+    chatInput.dataset.sendBound = "1";
+    chatInput.addEventListener("keydown", handleChatInputKeydown);
+    return true;
+}
+
 async function initSetup() {
     document.querySelectorAll(".auth-password-toggle[data-password-target]").forEach(toggle => {
         if (toggle.dataset.bound === "true") return;
@@ -3768,9 +3825,22 @@ async function sendMessage() {
     }
     if (!state.activeServerId || !state.activeChannelId) {
         console.error("[sendMessage] Aborting: Missing active identifiers", { srv: state.activeServerId, ch: state.activeChannelId });
-        toast("Kanal bilgisi eksik, lütfen tekrar kanala tıklayın.", "warning");
+        toast("Kanal bilgisi eksik, lǬtfen tekrar kanala t��klay��n.", "warning");
         return;
     }
+
+    // Snapshot + clear FIRST: a second Enter (double binding, fast retype,
+    // translation round-trip) must never resend the same text.
+    input.value = "";
+    input.style.height = "auto";
+    // In-flight duplicate guard: identical send within 800ms is dropped.
+    const _sendAt = Date.now();
+    const _sendKey = state.activeServerId + ":" + state.activeChannelId + ":" + state.peerId + ":" + text;
+    if (state._lastSendKey === _sendKey && (_sendAt - (state._lastSendAt || 0)) < 800) {
+        return;
+    }
+    state._lastSendKey = _sendKey;
+    state._lastSendAt = _sendAt;
 
     // Check if it's a music bot command (/music)
     if (typeof handleMusicCommand === 'function' && handleMusicCommand(text)) {
@@ -3782,8 +3852,14 @@ async function sendMessage() {
 
     let finalJoinText = text;
     if (state.translationEnabled) {
-        toast("Çeviriliyor...", "info");
-        finalJoinText = await translateText(text, state.targetLang);
+        toast("Çevriliyor...", "info");
+        try {
+            finalJoinText = await translateText(text, state.targetLang);
+        } catch (err) {
+            console.warn("[sendMessage] Translation failed, restoring input", err);
+            input.value = text;
+            return;
+        }
     }
 
 const msg = {
@@ -3823,9 +3899,6 @@ const msg = {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: msg })
     });
-
-    input.value = "";
-    input.style.height = "auto";
 
     clearReplyTarget();
     saveMessage(state.activeServerId, msg);
@@ -4067,7 +4140,16 @@ function mergeMessageHistoryIntoServer(server, incoming) {
                 seen.add(m.id);
             }
         }
-        target.sort((a, b) => String(a.time || "").localeCompare(String(b.time || ""), "tr"));
+        // Chronological by epoch timestamp (Discord-style: oldest at top,
+        // newest at bottom). Previously this sorted by the "HH:MM" display
+        // string, which scrambled cross-midnight history and floated
+        // timeless messages to the top after every refresh/resync.
+        target.sort((a, b) => {
+            const ta = Number(a.timestamp) || 0;
+            const tb = Number(b.timestamp) || 0;
+            if (ta !== tb) return ta - tb;
+            return String(a.time || "").localeCompare(String(b.time || ""), "tr");
+        });
     });
 }
 
@@ -8606,50 +8688,10 @@ document.addEventListener("DOMContentLoaded", () => {
         if (e.target === mBackdrop) hideModal();
     };
 
-    // Chat input
+    // Chat input (single guarded binding — see bindChatInputOnce)
+    bindChatInputOnce();
+
     const chatInput = document.getElementById("chat-input");
-    chatInput.addEventListener("keydown", (e) => {
-        // Handle mention popup navigation
-        const mentionPopup = document.getElementById("mention-popup");
-        if (mentionPopup && !mentionPopup.classList.contains("hidden") && _mentionSuggestions.length > 0) {
-            if (e.key === "ArrowDown") {
-                e.preventDefault();
-                _mentionActiveIndex = (_mentionActiveIndex + 1) % _mentionSuggestions.length;
-                renderMentionSuggestions(chatInput, chatInput.value.lastIndexOf("@"), "");
-                return;
-            }
-            if (e.key === "ArrowUp") {
-                e.preventDefault();
-                _mentionActiveIndex = (_mentionActiveIndex - 1 + _mentionSuggestions.length) % _mentionSuggestions.length;
-                renderMentionSuggestions(chatInput, chatInput.value.lastIndexOf("@"), "");
-                return;
-            }
-            if (e.key === "Enter" || e.key === "Tab") {
-                e.preventDefault();
-                const member = _mentionSuggestions[_mentionActiveIndex];
-                if (member) {
-                    insertMention(chatInput, chatInput.value.lastIndexOf("@"), member.username);
-                }
-                return;
-            }
-            if (e.key === "Escape") {
-                hideMentionSuggestions();
-                return;
-            }
-        }
-
-        if (e.key === "ArrowUp" && chatInput.selectionStart === 0 && !e.shiftKey && !chatInput.value.trim()) {
-            e.preventDefault();
-            fillLastOwnChatLine();
-            return;
-        }
-        if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            console.log("[ChatInput] Enter pressed. Calling sendMessage()...");
-            sendMessage();
-        }
-    });
-
     if (chatInput) {
         chatInput.addEventListener("input", () => {
             chatInput.style.height = "auto";
@@ -21907,20 +21949,15 @@ console.log("[App] Performance + Mobile optimization loaded");
       };
     }
 
-    // 3) chatInput null check güvencesi
+    // 3) chatInput Enter binding is owned by bindChatInputOnce() (single
+    // guarded listener). The old safety-net listener called sendBtn.click()
+    // alongside initSetup's direct sendMessage(), dispatching 2-3 sends
+    // with different ids per Enter (proven: 3x POST /messages).
     var _safeChatInterval = setInterval(function () {
       var ci = document.getElementById("chat-input");
       if (!ci) return;
       clearInterval(_safeChatInterval);
-      if (!ci.dataset._fixChecked) {
-        ci.dataset._fixChecked = "1";
-        ci.addEventListener("keydown", function (e) {
-          if (e.key === "Enter" && !e.shiftKey) {
-            var sendBtn = document.getElementById("send-btn");
-            if (sendBtn) sendBtn.click();
-          }
-        });
-      }
+      if (typeof bindChatInputOnce === "function") bindChatInputOnce();
     }, 1000);
 
     // 4) handleIncomingP2P wrapper chain - app.js'deki local değişken fix

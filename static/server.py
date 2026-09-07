@@ -1932,6 +1932,11 @@ async def save_history_message(room_id: str, body: dict, request: Request):
             )
     if ch_id not in room.messages:
         room.messages[ch_id] = []
+    # Same-id reposts (double Enter, client retries) must not duplicate
+    # history: receivers dedup by id, so must the durable store.
+    msg_id = msg.get("id")
+    if msg_id and any(m.get("id") == msg_id for m in room.messages[ch_id][-200:]):
+        return {"success": True, "duplicate": True}
     
     msg["timestamp"] = msg.get("timestamp") or int(time.time() * 1000)
     # Store last 10000 messages per channel

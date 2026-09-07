@@ -328,6 +328,19 @@ class SocialFixesTests(unittest.TestCase):
         self.assertEqual(codes[:30], [200] * 30)
         self.assertEqual(codes[30], 429)
 
+    def test_duplicate_message_id_is_ignored(self):
+        owner = self.register("Tekrarci", "tekrarci@example.com")
+        created = self.client.post("/api/rooms", json={"name": "Oda"}, headers=self.auth(owner)).json()
+        room_id = created["room_id"]
+        channel_id = self.server.rooms[room_id].channels[0]["id"]
+        payload = {"message": {"id": "dup-1", "channelId": channel_id, "authorId": owner["peer_id"], "text": "h"}}
+        first = self.client.post(f"/api/rooms/{room_id}/messages", json=payload, headers=self.auth(owner)).json()
+        second = self.client.post(f"/api/rooms/{room_id}/messages", json=payload, headers=self.auth(owner)).json()
+        self.assertTrue(first["success"])
+        self.assertTrue(second.get("duplicate"))
+        stored = [m for m in self.server.rooms[room_id].messages[channel_id] if m.get("id") == "dup-1"]
+        self.assertEqual(len(stored), 1)
+
     def test_durable_dm_roundtrip(self):
         first = self.register("DmBir", "dmbir@example.com")
         second = self.register("DmIki", "dmiki@example.com")
